@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Potatoblock runtime
+var/
+uploads/
+*.b64.txt
+.deploy-*.js
+.env
+.env.*

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>{{ game.name }}</title>
+  <link rel="stylesheet" href="/static/css/site.css">
+  <link rel="stylesheet" href="/static/games/avatar-lobby/css/theme.css?v=1">
+  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=16">
+</head>
+<body>
+  <canvas id="lobbyCanvas"></canvas>
+
+  <div
+    class="stage-ui"
+    data-user-id="{{ user_id }}"
+    data-nickname="{{ nickname }}"
+  >
+    <header class="stage-topbar">
+      <div class="mp-bar" aria-label="多人房间">
+        <span id="mpStatus" class="mp-status is-offline">连接中</span>
+        <span id="mpRoom" class="mp-room">公共大厅</span>
+        <span id="mpCount" class="mp-count">0/10</span>
+        <button type="button" id="mpCreateButton" class="topbar-button">创建房间</button>
+        <label class="mp-join">
+          <input id="mpJoinInput" type="text" maxlength="16" placeholder="房间码" autocomplete="off" spellcheck="false">
+          <button type="button" id="mpJoinButton" class="topbar-button">加入</button>
+        </label>
+        <button type="button" id="mpInviteButton" class="topbar-button" disabled>邀请</button>
+        <button type="button" id="mpPublicButton" class="topbar-button" disabled>公共大厅</button>
+        <span id="mpFeedback" class="mp-feedback" aria-live="polite"></span>
+      </div>
+      <nav class="topbar-actions">
+        <span class="lobby-user">{{ nickname }}</span>
+        <a href="/" class="topbar-button" aria-label="返回游戏菜单">返回游戏</a>
+        <button type="button" class="topbar-button" data-panel-toggle="bindingsPanel">键位</button>
+        <button type="button" class="topbar-button" data-panel-toggle="skinPanel">皮套</button>
+      </nav>
+    </header>
+
+    <section id="bindingsPanel" class="overlay-panel hidden">
+      <div class="panel-heading">
+        <h2>键位</h2>
+        <button type="button" id="resetBindingsButton" class="secondary-button">恢复默认</button>
+      </div>
+      <div class="binding-list">
+        <label>
+          <span>向左移动</span>
+          <span class="binding-buttons">
+            <button type="button" data-binding-action="left" data-binding-slot="0">A</button>
+            <button type="button" data-binding-action="left" data-binding-slot="1">←</button>
+          </span>
+        </label>
+        <label>
+          <span>向右移动</span>
+          <span class="binding-buttons">
+            <button type="button" data-binding-action="right" data-binding-slot="0">D</button>
+            <button type="button" data-binding-action="right" data-binding-slot="1">→</button>
+          </span>
+        </label>
+        <label>
+          <span>跳跃</span>
+          <span class="binding-buttons">
+            <button type="button" data-binding-action="jump" data-binding-slot="0">空格</button>
+            <button type="button" data-binding-action="jump" data-binding-slot="1">添加</button>
+          </span>
+        </label>
+        <label>
+          <span>单膝跪地</span>
+          <span class="binding-buttons">
+            <button type="button" data-binding-action="kneel" data-binding-slot="0">S</button>
+            <button type="button" data-binding-action="kneel" data-binding-slot="1">↓</button>
+          </span>
+        </label>
+      </div>
+      <p id="bindingStatus" class="binding-status">每项最多两个键位，支持 Shift / Ctrl / Alt 组合键</p>
+    </section>
+
+    <section id="skinPanel" class="overlay-panel hidden">
+      <div class="panel-heading">
+        <h2>皮套</h2>
+        <button type="button" id="openSkinEditorButton" class="secondary-button">打开编辑器</button>
+      </div>
+      <form id="skinUploadForm">
+        <input type="file" id="skinFileInput" accept="image/png,image/webp" required>
+        <input type="text" id="skinNameInput" placeholder="皮套名称（可选）" maxlength="32">
+        <button type="submit">上传</button>
+      </form>
+      <p id="skinUploadStatus" class="skin-status"></p>
+      <ul id="skinList" class="skin-list"></ul>
+    </section>
+
+    <section id="skinEditor" class="skin-editor hidden" aria-label="皮套编辑器">
+      <div class="editor-preview-space" aria-hidden="true"></div>
+      <div class="editor-content">
+      <header class="editor-heading">
+        <h2>皮套编辑器</h2>
+        <button type="button" id="closeSkinEditorButton" class="secondary-button">关闭</button>
+      </header>
+
+      <div class="editor-section">
+        <div class="editor-section-heading">
+          <h3>1. 素材图片</h3>
+          <div>
+            <label class="editor-import-button">
+              导入素材<input type="file" id="editorImportInput" accept="image/*" multiple hidden>
+            </label>
+            <button type="button" id="editorDownloadTemplateButton" class="editor-import-button">下载模板</button>
+            <label class="editor-import-button">
+              导入完整 UV<input type="file" id="editorAtlasImportInput" accept="image/png,image/webp" hidden>
+            </label>
+          </div>
+        </div>
+        <ul id="editorSourceList" class="editor-source-list"></ul>
+      </div>
+
+      <div class="editor-section">
+        <div class="editor-section-heading">
+          <h3>2. 裁剪（在图上拖拽框选）</h3>
+          <button type="button" id="editorCropFullscreenButton" class="secondary-button">全屏裁剪</button>
+        </div>
+        <canvas id="editorCropCanvas" width="480" height="300"></canvas>
+        <button type="button" id="editorCropExitButton" class="crop-exit-button hidden">完成裁剪（Esc）</button>
+        <p id="editorCropHint" class="editor-hint">导入并选中一张图片后开始裁剪</p>
+      </div>
+
+      <div class="editor-section">
+        <h3>3. 选择匹配部位</h3>
+        <div id="editorPartList" class="editor-part-list"></div>
+        <div class="editor-pan-controls">
+          <span>对准关节</span>
+          <button type="button" data-editor-pan="0,-1" aria-label="上移">▲</button>
+          <button type="button" data-editor-pan="0,1" aria-label="下移">▼</button>
+          <button type="button" data-editor-pan="-1,0" aria-label="左移">◀</button>
+          <button type="button" data-editor-pan="1,0" aria-label="右移">▶</button>
+          <button type="button" id="editorResetPositionButton">位置复位</button>
+          <output id="editorPositionValue">X 0 · Y 0</output>
+          <button type="button" id="editorClearPartButton" class="secondary-button">清除部位</button>
+        </div>
+        <div class="editor-transform-controls">
+          <label>
+            <span>整体大小 <output id="editorPartScaleValue">100%</output></span>
+            <input type="range" id="editorPartScaleInput" min="25" max="300" value="100">
+          </label>
+          <label>
+            <span>横向拉伸 <output id="editorPartStretchXValue">100%</output></span>
+            <input type="range" id="editorPartStretchXInput" min="25" max="300" value="100">
+          </label>
+          <label>
+            <span>纵向拉伸 <output id="editorPartStretchYValue">100%</output></span>
+            <input type="range" id="editorPartStretchYInput" min="25" max="300" value="100">
+          </label>
+          <button type="button" id="editorResetTransformButton" class="secondary-button">尺寸复位</button>
+        </div>
+        <p id="editorPartHint" class="editor-hint">先在步骤 2 选择裁剪区，再点击对应部位；左侧实时预览</p>
+      </div>
+
+      <div class="editor-section">
+        <h3>4. 生成皮套</h3>
+        <label class="editor-height-control" for="editorHeightScaleInput">
+          <span>人物身高比例 <output id="editorHeightScaleValue">116%</output></span>
+          <input
+            type="range"
+            id="editorHeightScaleInput"
+            min="80"
+            max="150"
+            step="1"
+            value="116"
+          >
+        </label>
+        <canvas id="editorAtlasCanvas" width="512" height="512"></canvas>
+        <form id="editorExportForm" class="editor-export-form">
+          <input type="text" id="editorSkinNameInput" placeholder="皮套名称（可选）" maxlength="32">
+          <div class="editor-export-actions">
+            <button type="submit" data-save-mode="update">更新当前</button>
+            <button type="submit" data-save-mode="new" class="is-secondary">另存为新</button>
+          </div>
+        </form>
+        <p id="editorStatus" class="skin-status"></p>
+      </div>
+      </div>
+    </section>
+
+    <p id="controlHint" class="stage-hint">A / ← 向左，D / → 向右，空格跳跃</p>
+
+    <div id="mobileControls" class="mobile-controls" aria-label="触控操作">
+      <div
+        id="moveJoystick"
+        class="move-joystick"
+        role="slider"
+        aria-label="水平移动"
+        aria-valuemin="-1"
+        aria-valuemax="1"
+        aria-valuenow="0"
+      >
+        <span id="moveJoystickKnob" class="move-joystick-knob"></span>
+      </div>
+      <div class="mobile-action-buttons">
+        <button type="button" id="mobileKneelButton" class="mobile-kneel-button">跪地</button>
+        <button type="button" id="mobileJumpButton" class="mobile-jump-button">跳跃</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="contentPolicyPrompt" class="content-policy-modal hidden" role="dialog" aria-modal="true" aria-labelledby="contentPolicyPromptTitle">
+    <section class="content-policy-panel">
+      <h2 id="contentPolicyPromptTitle">欢迎游玩！请先阅读内容规范</h2>
+      <p>本游戏的昵称与皮套均由玩家创作，进入游戏前请确认遵守：</p>
+      <ul>
+        <li>不发布违法、色情、血腥暴力或恐吓内容；</li>
+        <li>不发布涉及政治人物、政党或敏感时政的内容与言论；</li>
+        <li>不发布歧视、仇恨、辱骂或骚扰他人的内容；</li>
+        <li>不冒用他人身份，不发布侵犯他人版权或隐私的内容。</li>
+      </ul>
+      <p>违反规范的内容可能被清除，相关玩家可能被限制游玩。</p>
+      <button type="button" id="contentPolicyPromptConfirm" class="content-policy-confirm">我已阅读并同意</button>
+    </section>
+  </div>
+
+  <script src="/static/games/avatar-lobby/js/stage-ui.js"></script>
+  <script src="/static/games/avatar-lobby/js/input-bindings.js?v=4"></script>
+  <script src="/static/games/avatar-lobby/js/touch-controls.js?v=3"></script>
+  <script src="/static/games/avatar-lobby/js/network-session.js?v=6"></script>
+  <script src="/static/games/avatar-lobby/js/multiplayer-ui.js?v=3"></script>
+  <script src="/static/games/avatar-lobby/js/uv-layout.js?v=3"></script>
+  <script src="/static/games/avatar-lobby/js/uv-template.js?v=1"></script>
+  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=1"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=5"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-lobby.js?v=20"></script>
+  <script src="/static/games/avatar-lobby/js/skin-editor-utils.js?v=2"></script>
+  <script src="/static/games/avatar-lobby/js/skin-editor.js?v=15"></script>
+</body>
+</html>

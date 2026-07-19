@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site_title }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.css">
+    <script src="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.js"></script>
+    <script>
+    // 提前解析主题模式并应用，避免刷新时闪烁。
+    // pb-theme-mode: auto(按时间) / system(跟随系统) / light / dark；
+    // 解析出的实际主题写回 pb-theme，与各游戏页共用同一套存储键。
+    (function () {
+      let mode = localStorage.getItem('pb-theme-mode');
+      if (!mode) {
+        const legacy = localStorage.getItem('pb-theme');
+        mode = (legacy === 'light' || legacy === 'dark') ? legacy : 'auto';
+        localStorage.setItem('pb-theme-mode', mode);
+      }
+      if (!['auto', 'system', 'light', 'dark'].includes(mode)) { mode = 'auto'; localStorage.setItem('pb-theme-mode', mode); }
+      let theme = mode;
+      if (mode === 'system') theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      else if (mode === 'auto') { const h = new Date().getHours(); theme = (h >= 7 && h < 19) ? 'light' : 'dark'; }
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem('pb-theme', theme);
+    })();
+    </script>
+    <style>
+    /* 主页只用到少量 Tailwind 灰阶类，浅色模式在这里逐个覆盖 */
+    html[data-theme='light'] body { background-color: #eef1f6; color: #0f172a; }
+    html[data-theme='light'] .bg-gray-900 { background-color: #ffffff; }
+    html[data-theme='light'] .bg-gray-800 { background-color: #f1f5f9; }
+    html[data-theme='light'] .hover\:bg-gray-800:hover { background-color: #f8fafc; }
+    html[data-theme='light'] .text-white\/80 { color: rgb(15 23 42 / .82); }
+    html[data-theme='light'] .text-gray-400 { color: rgb(15 23 42 / .62); }
+    html[data-theme='light'] .text-gray-500 { color: rgb(15 23 42 / .5); }
+    html[data-theme='light'] .hover\:text-white:hover { color: #0f172a; }
+
+    /* 系统设置弹窗 */
+    .settings-button {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; margin-left: 8px; vertical-align: middle;
+      border: 1px solid rgb(148 163 184 / .35); border-radius: 999px;
+      background: transparent; font-size: 15px; cursor: pointer; transition: background .15s;
+    }
+    .settings-button:hover { background: rgb(148 163 184 / .18); }
+    .settings-overlay {
+      position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+      padding: 16px; background: rgb(8 8 8 / .6); backdrop-filter: blur(3px);
+    }
+    html[data-theme='light'] .settings-overlay { background: rgb(15 23 42 / .4); }
+    .settings-panel {
+      width: 100%; max-width: 400px; padding: 22px;
+      border: 1px solid rgb(148 163 184 / .25); border-radius: 16px;
+      background: #1c1c1c; color: inherit; box-shadow: 0 16px 48px rgb(0 0 0 / .45);
+    }
+    html[data-theme='light'] .settings-panel { background: #ffffff; box-shadow: 0 16px 48px rgb(15 23 42 / .18); }
+    .settings-title { display: flex; align-items: center; justify-content: space-between; font-size: 17px; font-weight: 700; }
+    .settings-close { width: 30px; height: 30px; border-radius: 999px; font-size: 14px; cursor: pointer; }
+    .settings-close:hover { background: rgb(148 163 184 / .18); }
+    .settings-section { margin-top: 18px; }
+    .settings-label { font-size: 12px; letter-spacing: .06em; opacity: .6; }
+    .settings-link {
+      display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 11px 14px;
+      border: 1px solid rgb(148 163 184 / .3); border-radius: 10px;
+      font-size: 14px; transition: background .15s;
+    }
+    .settings-link:hover { background: rgb(148 163 184 / .12); }
+    .theme-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .theme-mode-option {
+      padding: 10px 8px; border: 1px solid rgb(148 163 184 / .3); border-radius: 10px;
+      font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; transition: background .15s, border-color .15s;
+    }
+    .theme-mode-option:hover { background: rgb(148 163 184 / .12); }
+    .theme-mode-option.is-selected { border-color: #f59e0b; background: rgb(245 158 11 / .16); }
+    /* 手动深浅色：用白天黑夜动画开关，替代原来的「深色」「浅色」两个按钮 */
+    .theme-manual-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-top: 8px; padding: 10px 14px;
+      border: 1px solid rgb(148 163 184 / .3); border-radius: 10px;
+      transition: background .15s, border-color .15s;
+    }
+    .theme-manual-row.is-selected { border-color: #f59e0b; background: rgb(245 158 11 / .16); }
+    .theme-manual-label { font-size: 13px; font-weight: 600; }
+    .theme-flip { width: 72px; flex: none; cursor: pointer; }
+    /* 弹窗有 backdrop-filter 时，控件内部 position:fixed 会错位溢出；改为 absolute 并强制裁剪 */
+    .theme-flip,
+    .theme-button-container {
+      overflow: hidden !important;
+      border-radius: 999px;
+      isolation: isolate;
+    }
+    .theme-button-container .components {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+    }
+    /* 切到白天时云朵从按钮下方升起 */
+    .theme-button-container .cloud,
+    .theme-button-container .cloud-light {
+      transition: transform .7s cubic-bezier(0.56, 1.35, 0.52, 1) !important;
+    }
+    .theme-mode-hint { margin-top: 8px; font-size: 12px; opacity: .55; }
+    .hidden { display: none !important; }
+    /* 深浅色切换时的柔和过渡；排除动画开关本体，避免干扰其自身过渡 */
+    html.theme-fading,
+    html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
+      transition: background-color .45s ease, color .45s ease, border-color .45s ease,
+        box-shadow .45s ease !important;
+    }
+    </style>
+</head>
+<body class="bg-gray-950 text-white min-h-screen flex flex-col items-center justify-center p-8">
+    <!-- 用户状态栏（可选） -->
+    <div class="absolute top-4 right-4 text-sm text-gray-400">
+        {% if user_id %}
+            <span>用户ID: {{ user_id }}</span>
+            <form method="post" action="/logout" class="inline ml-2">
+                <button type="submit" class="text-gray-500 hover:text-white">登出</button>
+            </form>
+        {% else %}
+            <a href="/login" class="hover:text-white">登录</a>
+        {% endif %}
+        <button id="settingsButton" type="button" class="settings-button" title="系统设置" aria-label="系统设置">⚙️</button>
+    </div>
+
+    <div class="w-full max-w-4xl">
+        {% if logo or site_title %}
+        <div class="text-center mb-12">
+            {% if logo %}
+            <img src="{{ logo }}" alt="{{ site_title }}" class="h-16 mx-auto mb-4 object-contain">
+            {% endif %}
+            {% if site_title %}
+            <h1 class="text-2xl font-light tracking-wider text-white/80">{{ site_title }}</h1>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if games %}
+        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
+            {% for game in games %}
+            <a href="{{ game.url }}" class="block bg-gray-900 rounded-xl p-6 hover:bg-gray-800 transition-colors">
+                <div class="w-full h-40 flex items-center justify-center rounded-lg bg-gray-800 mb-4">
+                    {% if game.logo %}
+                    <img src="{{ game.logo }}" alt="{{ game.name }}" class="max-h-full max-w-full object-contain">
+                    {% endif %}
+                </div>
+                <h2 class="text-lg text-center">{{ game.name }}</h2>
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 系统设置弹窗 -->
+    <div id="settingsOverlay" class="settings-overlay hidden">
+        <div class="settings-panel" role="dialog" aria-modal="true" aria-label="系统设置">
+            <div class="settings-title">
+                <span>系统设置</span>
+                <button id="settingsCloseButton" type="button" class="settings-close" aria-label="关闭">✕</button>
+            </div>
+            <div class="settings-section">
+                <div class="settings-label">账号</div>
+                <a href="https://passport.potatoblock.com/" target="_blank" rel="noopener" class="settings-link">
+                    <span>管理通行证账号</span><span aria-hidden="true">↗</span>
+                </a>
+            </div>
+            <div class="settings-section">
+                <div class="settings-label">深浅色模式</div>
+                <div class="theme-mode-grid">
+                    <button type="button" class="theme-mode-option" data-mode="auto">🕒 自动切换</button>
+                    <button type="button" class="theme-mode-option" data-mode="system">💻 跟随系统</button>
+                </div>
+                <div id="themeManualRow" class="theme-manual-row">
+                    <span class="theme-manual-label">手动切换</span>
+                    <div id="themeFlip" class="theme-flip" title="切换深浅色"></div>
+                </div>
+                <div id="themeModeHint" class="theme-mode-hint"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+    <script>
+    // 系统设置弹窗 + 主题模式（与游戏页共用 pb-theme-mode / pb-theme 存储键）
+    // 自动/系统用上方两个按钮；手动深浅色用白天黑夜动画开关。
+    (function () {
+      const overlay = document.getElementById('settingsOverlay');
+      const openButton = document.getElementById('settingsButton');
+      const closeButton = document.getElementById('settingsCloseButton');
+      const hint = document.getElementById('themeModeHint');
+      const manualRow = document.getElementById('themeManualRow');
+      const flipEl = document.getElementById('themeFlip');
+      const options = Array.from(document.querySelectorAll('.theme-mode-option'));
+      const systemThemeQuery = matchMedia('(prefers-color-scheme: light)');
+
+      const MODE_HINTS = {
+        auto: '7:00–19:00 浅色，其余时间深色',
+        system: '跟随操作系统的深浅色设置',
+        dark: '始终使用深色（拨动开关可改）',
+        light: '始终使用浅色（拨动开关可改）',
+      };
+
+      // 读取当前模式（页首脚本已保证存在且合法）
+      function themeMode() {
+        const mode = localStorage.getItem('pb-theme-mode');
+        return ['auto', 'system', 'light', 'dark'].includes(mode) ? mode : 'auto';
+      }
+
+      // 由模式解析出实际深浅色
+      function resolveTheme(mode) {
+        if (mode === 'light' || mode === 'dark') return mode;
+        if (mode === 'system') return systemThemeQuery.matches ? 'light' : 'dark';
+        const h = new Date().getHours();
+        return (h >= 7 && h < 19) ? 'light' : 'dark';
+      }
+
+      let themeFadeTimer = null;
+      let syncingThemeFlip = false;
+      let themeFlip = null;
+
+      // 切换主题时短暂挂上过渡类，让颜色渐变而不是瞬间跳变
+      function setThemeSmoothly(theme) {
+        const rootEl = document.documentElement;
+        if (rootEl.dataset.theme === theme) return;
+        rootEl.classList.add('theme-fading');
+        rootEl.dataset.theme = theme;
+        clearTimeout(themeFadeTimer);
+        themeFadeTimer = setTimeout(() => rootEl.classList.remove('theme-fading'), 500);
+      }
+
+      // 应用当前模式：设置页面主题、刷新选中态、同步动画开关位置
+      function applyThemeMode() {
+        const mode = themeMode();
+        const theme = resolveTheme(mode);
+        setThemeSmoothly(theme);
+        localStorage.setItem('pb-theme', theme);
+        options.forEach(button => button.classList.toggle('is-selected', button.dataset.mode === mode));
+        manualRow.classList.toggle('is-selected', mode === 'light' || mode === 'dark');
+        hint.textContent = MODE_HINTS[mode];
+        if (themeFlip) {
+          syncingThemeFlip = true;
+          themeFlip.setTheme(theme);
+          syncingThemeFlip = false;
+        }
+      }
+
+      options.forEach(button => button.addEventListener('click', () => {
+        localStorage.setItem('pb-theme-mode', button.dataset.mode);
+        applyThemeMode();
+      }));
+
+      // 切到白天前先把云朵放到按钮下方，再过渡到可见位置，保证从下方升起
+      function patchThemeFlipCloudEnter(api) {
+        const root = api.container;
+        const components = root.querySelector('.components');
+        const clouds = [root.querySelector('.cloud'), root.querySelector('.cloud-light')].filter(Boolean);
+        if (!components || !clouds.length) return api;
+        components.addEventListener('click', () => {
+          if (api.getTheme() !== 'dark') return;
+          clouds.forEach((el) => {
+            el.style.transition = 'none';
+            el.style.transform = 'translateY(80em)';
+          });
+          void root.offsetWidth;
+          clouds.forEach((el) => { el.style.transition = ''; });
+        }, true);
+        return api;
+      }
+
+      // 把云朵摆到当前主题的静止位置（白天 10em / 黑夜 80em），避免首屏错位
+      function snapCloudsToTheme(theme) {
+        const y = theme === 'dark' ? '80em' : '10em';
+        flipEl.querySelectorAll('.cloud, .cloud-light').forEach((el) => {
+          el.style.transition = 'none';
+          el.style.transform = 'translateY(' + y + ')';
+        });
+        flipEl.querySelectorAll('.cloud-son').forEach((el) => {
+          el.style.transform = '';
+        });
+        void flipEl.offsetWidth;
+        flipEl.querySelectorAll('.cloud, .cloud-light').forEach((el) => {
+          el.style.transition = '';
+        });
+      }
+
+      // 弹窗隐藏时 clientWidth=0，此时初始化会导致 em 尺寸错乱、云朵被裁切。
+      // 等第一次打开设置后再创建开关。
+      function ensureThemeFlip() {
+        if (themeFlip || typeof createThemeButton !== 'function') return;
+        const theme = resolveTheme(themeMode());
+        syncingThemeFlip = true;
+        themeFlip = patchThemeFlipCloudEnter(createThemeButton(flipEl, {
+          initialTheme: theme,
+          onChange: (next) => {
+            if (syncingThemeFlip) return;
+            localStorage.setItem('pb-theme-mode', next);
+            applyThemeMode();
+          },
+        }));
+        syncingThemeFlip = false;
+        snapCloudsToTheme(theme);
+      }
+
+      function openSettings() {
+        overlay.classList.remove('hidden');
+        // 等弹窗完成布局后再初始化 / 校正云朵
+        requestAnimationFrame(() => {
+          ensureThemeFlip();
+          snapCloudsToTheme(resolveTheme(themeMode()));
+        });
+      }
+
+      openButton.addEventListener('click', openSettings);
+      closeButton.addEventListener('click', () => overlay.classList.add('hidden'));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('hidden'); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') overlay.classList.add('hidden'); });
+
+      systemThemeQuery.addEventListener('change', applyThemeMode);
+      setInterval(applyThemeMode, 60 * 1000);
+      applyThemeMode();
+    })();
+    </script>
+</body>
+</html>
