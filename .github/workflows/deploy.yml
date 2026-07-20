@@ -1,0 +1,49 @@
+name: CD — Deploy to MCSManager
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      # 跳过纯文档/配置变更，避免无意义部署
+      - "README.md"
+      - "LICENSE"
+      - ".gitignore"
+      - ".github/**"
+  workflow_dispatch:
+    # 允许手动触发
+    inputs:
+      dry_run:
+        description: "仅校验连接（不实际部署）"
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  deploy:
+    name: Deploy to MCSManager
+    runs-on: ubuntu-latest
+    # 如需部署到内网 MCSM，改为 self-hosted runner：
+    # runs-on: self-hosted
+
+    steps:
+      - name: ⬇️ 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 🚀 执行部署
+        env:
+          MCSM_PANEL_URL: ${{ secrets.MCSM_PANEL_URL }}
+          MCSM_API_KEY: ${{ secrets.MCSM_API_KEY }}
+          MCSM_DAEMON_ID: ${{ secrets.MCSM_DAEMON_ID }}
+          MCSM_INSTANCE_UUID: ${{ secrets.MCSM_INSTANCE_UUID }}
+          MCSM_UPLOAD_DIR: ${{ vars.MCSM_UPLOAD_DIR || '/app' }}
+          MCSM_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+        run: python deploy.py
