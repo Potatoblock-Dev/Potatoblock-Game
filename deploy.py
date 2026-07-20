@@ -207,13 +207,11 @@ class MCSMClient:
     def request_upload(self) -> dict:
         """请求上传配置（第一步），返回 {password, addr}。
 
-        MCSM v10 响应可能嵌套在 data 字段中，此处做兼容处理。
+        daemonId/uuid 作为 query 参数传递（此版本 MCSM 的 validator 要求 query 中必须有 uuid）。
         """
         resp = self._post("api/files/upload", body={
-            "daemonId": DAEMON_ID,
-            "uuid": INSTANCE_UUID,
             "upload_dir": UPLOAD_DIR,
-        })
+        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
         # 兼容嵌套与平铺两种响应格式
         cfg = resp.get("data", resp)
         if "addr" not in cfg or "password" not in cfg:
@@ -255,21 +253,17 @@ class MCSMClient:
     def decompress(self, archive_path: str, target_dir: str) -> dict:
         """在服务器上解压 zip 文件（覆盖已有文件）。"""
         return self._post("api/files/compress", body={
-            "daemonId": DAEMON_ID,
-            "uuid": INSTANCE_UUID,
             "type": 2,          # 2 = 解压
             "source": archive_path,
             "targets": target_dir,
             "code": "utf-8",
-        })
+        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
 
     def delete_file(self, file_path: str) -> dict:
         """删除服务器上的文件。"""
         return self._delete("api/files", body={
-            "daemonId": DAEMON_ID,
-            "uuid": INSTANCE_UUID,
             "targets": [file_path],
-        })
+        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
 
     def list_files(self, directory: str = "/") -> list[dict]:
         """列出实例目录下的文件。"""
@@ -296,10 +290,8 @@ class MCSMClient:
     def send_command(self, command: str) -> dict:
         """向实例控制台发送命令。"""
         return self._post("api/protected_instance/command", body={
-            "daemonId": DAEMON_ID,
-            "uuid": INSTANCE_UUID,
             "command": command,
-        })
+        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
 
 
 # ---------------------------------------------------------------------------
