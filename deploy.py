@@ -91,6 +91,15 @@ import requests
 # API 客户端
 # ---------------------------------------------------------------------------
 
+class MCSMError(Exception):
+    """MCSManager API 错误。"""
+    def __init__(self, status_code: int, url: str, detail: str) -> None:
+        self.status_code = status_code
+        self.url = url
+        self.detail = detail
+        super().__init__(f"HTTP {status_code}: {detail}")
+
+
 class MCSMClient:
     """MCSManager v10 REST API 轻量客户端。"""
 
@@ -122,22 +131,23 @@ class MCSMClient:
 
     @staticmethod
     def _handle(r: requests.Response) -> dict:
-        """统一处理响应；非 2xx 打印详情并退出。"""
-        if r.status_code == 500:
-            # MCSM 某些接口返回 500 但实际成功（如文件写入）
-            pass
-        if not r.ok and r.status_code != 500:
-            print(f"❌ API 错误 HTTP {r.status_code}: {r.url}", file=sys.stderr)
+        """统一处理响应；非 2xx 抛出 MCSMError（500 除外，部分接口返回 500 但实际成功）。"""
+        if r.ok:
             try:
-                detail = r.json()
-            except Exception:
-                detail = r.text[:2000]
-            print(f"  响应: {detail}", file=sys.stderr)
-            sys.exit(2)
+                return r.json()
+            except ValueError:
+                return {"_raw_status": r.status_code, "_raw_text": r.text}
+        if r.status_code == 500:
+            try:
+                return r.json()
+            except ValueError:
+                return {"_raw_status": 500, "_raw_text": r.text}
+        # 非 500 错误 → 抛异常
         try:
-            return r.json()
-        except ValueError:
-            return {"_raw_status": r.status_code, "_raw_text": r.text}
+            detail = r.json()
+        except Exception:
+            detail = r.text[:2000]
+        raise MCSMError(r.status_code, r.url, str(detail))
 
     # ---- 工具方法 ----
 
@@ -146,16 +156,47 @@ class MCSMClient:
         try:
             self._get("api/overview")
             return True
-        except SystemExit:
+        except MCSMError as e:
+            print(f"❌ 面板连接失败: {e}", file=sys.stderr)
             return False
 
     def list_instances(self) -> list[dict]:
         """列出当前 daemon 下的所有实例。"""
-        data = self._get("api/instance", daemonId=DAEMON_ID)
-        return data.get("data", [])
+        # 尝试 1: api/instance?daemonId=X
+        try:
+            data = self._get("api/instance", daemonId=DAEMON_ID)
+        except MCSMError:
+            data = {}
+        items = data.get("data", [])
+        if isinstance(items, list):
+            return items
+        if isinstance(items, dict):
+            return [items]
+
+        # 尝试 2: 远程服务实例列表
+        try:
+            data = self._get("api/service/remote_service_instances", daemonId=DAEMON_ID)
+        except MCSMError:
+            return []
+        items = data.get("data", [])
+        if isinstance(items, list):
+            return items
+        if isinstance(items, dict):
+            return [items]
+        return []
 
     def find_instance(self) -> dict | None:
-        """查找目标实例。"""
+        """查找目标实例。先尝试直接获取，再走列表查询。"""
+        # MCSM v10: 直接通过 uuid 获取实例信息
+        try:
+            data = self._get("api/instance", daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+            inst = data.get("data", data)
+            if isinstance(inst, dict) and (inst.get("instanceUuid") or inst.get("uuid")):
+                return inst
+        except MCSMError:
+            pass  # 直接查询失败，走列表回退
+
+        # 回退：遍历所有实例
         for inst in self.list_instances():
             if inst.get("instanceUuid") == INSTANCE_UUID or inst.get("uuid") == INSTANCE_UUID:
                 return inst
@@ -364,7 +405,11 @@ def main() -> None:
     try:
         # 4. 请求上传 URL
         print("\n📤 请求上传配置 …")
-        upload_cfg = client.request_upload()
+        try:
+            upload_cfg = client.request_upload()
+        except MCSMError as e:
+            print(f"❌ 获取上传令牌失败: {e}", file=sys.stderr)
+            sys.exit(2)
         print(f"   获取到上传令牌: addr={upload_cfg.get('addr', '?')}")
 
         # 5. 上传文件
@@ -379,21 +424,35 @@ def main() -> None:
 
         # 6. 解压（覆盖已有文件）
         print(f"\n📂 解压文件到 {UPLOAD_DIR} …")
-        client.decompress(remote_zip, UPLOAD_DIR)
+        try:
+            client.decompress(remote_zip, UPLOAD_DIR)
+        except MCSMError as e:
+            print(f"❌ 解压失败: {e}", file=sys.stderr)
+            # 尝试清理远端 zip
+            try:
+                client.delete_file(remote_zip)
+            except Exception:
+                pass
+            sys.exit(2)
         print("✅ 文件解压完成")
 
         # 7. 清理远端 zip
-        print(f"\n🧹 清理远端临时文件 …")
+        print("\n🧹 清理远端临时文件 …")
         try:
             client.delete_file(remote_zip)
             print(f"✅ 已删除 {DEPLOY_ARCHIVE}")
-        except Exception:
+        except (MCSMError, Exception):
             print(f"⚠️  无法删除远端 zip（可能已自动清理）")
 
         # 8. 重启实例
         print("")
-        client.restart_instance()
-        print("✅ 重启指令已发送")
+        try:
+            client.restart_instance()
+            print("✅ 重启指令已发送")
+        except MCSMError as e:
+            print(f"❌ 重启失败: {e}", file=sys.stderr)
+            print("⚠️  文件已上传解压，但实例未重启。请手动重启。", file=sys.stderr)
+            sys.exit(2)
 
     finally:
         # 清理本地临时文件
