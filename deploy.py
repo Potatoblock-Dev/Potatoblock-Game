@@ -265,9 +265,12 @@ class MCSMClient:
 
     def decompress(self, archive_path: str, target_dir: str) -> dict:
         """在服务器上解压 zip 文件（覆盖已有文件）。"""
-        return self._post("api/files/compress", body=None,
-                          daemonId=DAEMON_ID, uuid=INSTANCE_UUID,
-                          type="2", source=archive_path, targets=target_dir, code="utf-8")
+        return self._post("api/files/compress", body={
+            "type": 2,          # 2 = 解压
+            "source": archive_path,
+            "targets": target_dir,
+            "code": "utf-8",
+        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
 
     def delete_file(self, file_path: str) -> dict:
         """删除服务器上的文件。"""
