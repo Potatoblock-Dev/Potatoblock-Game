@@ -221,7 +221,10 @@ class MCSMClient:
         return cfg
 
     def upload_file(self, file_path: str, upload_config: dict) -> bool:
-        """将本地文件上传到 daemon（第二步）。"""
+        """将本地文件上传到 daemon（第二步）。
+
+        若 daemon 返回的 addr 是 localhost/127.0.0.1，自动替换为面板的公网地址。
+        """
         addr: str = upload_config.get("addr", "")
         password: str = upload_config.get("password", "")
 
@@ -229,15 +232,24 @@ class MCSMClient:
             print(f"❌ 上传配置缺失 addr 或 password: {upload_config}", file=sys.stderr)
             return False
 
-        # 推断协议：addr 通常是 host:port（如 192.168.1.100:24444）
+        # 分离协议与 host:port；addr 通常为 host:port（如 localhost:24444）
         if "://" in addr:
             protocol = "https" if addr.startswith("https://") else "http"
-            host = addr.split("://", 1)[1].rstrip("/")
+            host_port = addr.split("://", 1)[1]
         else:
             protocol = "http"
-            host = addr.rstrip("/")
+            host_port = addr
 
-        upload_url = f"{protocol}://{host}/upload/{password}"
+        # 如果 daemon 返回 localhost，替换为面板 host
+        panel_host = PANEL_URL.split("://", 1)[1].split("/")[0]  # 例: example.com:23333
+        daemon_host, _, daemon_port = host_port.partition(":")
+        if daemon_host in ("localhost", "127.0.0.1", "0.0.0.0"):
+            # 保留原端口，host 从面板地址取
+            panel_host_no_port = panel_host.split(":")[0]
+            host_port = f"{panel_host_no_port}:{daemon_port}" if daemon_port else panel_host_no_port
+            print(f"   🔧 daemon addr 是 {addr}，已替换为 {host_port}")
+
+        upload_url = f"{protocol}://{host_port}/upload/{password}"
 
         with open(file_path, "rb") as fh:
             # MCSM daemon 的上传接口接受 multipart
