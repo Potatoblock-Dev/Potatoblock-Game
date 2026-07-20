@@ -279,6 +279,25 @@ class MCSMClient:
             "targets": [file_path],
         }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
 
+    def delete_files(self, paths: list[str]) -> dict:
+        """批量删除服务器上的文件。"""
+        if not paths:
+            return {}
+        return self._delete("api/files", body={
+            "targets": paths,
+        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+
+    def read_text_file(self, file_path: str) -> str | None:
+        """读取实例上的文本文件，失败返回 None。"""
+        try:
+            # MCSM v10: PUT api/files 读取文件内容
+            data = self._post("api/files", body={
+                "target": file_path,
+            }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+            return data.get("data", data.get("content", ""))
+        except MCSMError:
+            return None
+
     def list_files(self, directory: str = "/") -> list[dict]:
         """列出实例目录下的文件。"""
         data = self._get(
@@ -312,10 +331,14 @@ class MCSMClient:
 # 打包
 # ---------------------------------------------------------------------------
 
-def build_archive() -> Path:
-    """将 git 跟踪的文件打成 zip，返回临时文件路径。
+MANIFEST_FILE = ".deploy-files.json"
+
+
+def build_archive() -> tuple[Path, list[str]]:
+    """将 git 跟踪的文件打成 zip，返回 (zip 路径, 部署文件列表)。
 
     排除 .gitignore 中的文件和服务器本地文件。
+    zip 内同时包含 MANIFEST_FILE，用于下次部署时比对清理已删除的文件。
     """
     # 获取 git 跟踪的文件列表
     result = subprocess.run(
@@ -349,16 +372,22 @@ def build_archive() -> Path:
     zip_path = Path(tmp.name)
     tmp.close()
 
+    # 去重排序，并加入 manifest
+    deploy_files = sorted(set(deploy_files))
+    manifest = json.dumps(deploy_files, ensure_ascii=False, indent=2)
+
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel in sorted(set(deploy_files)):
+        for rel in deploy_files:
             abs_path = APP_ROOT / rel
             if not abs_path.exists():
                 continue
             zf.write(abs_path, rel)
+        # 写入 manifest（不依赖 git 跟踪）
+        zf.writestr(MANIFEST_FILE, manifest)
 
     size_kb = zip_path.stat().st_size / 1024
-    print(f"📦 打包完成: {len(deploy_files)} 个文件 → {zip_path.name} ({size_kb:.1f} KB)")
-    return zip_path
+    print(f"📦 打包完成: {len(deploy_files) + 1} 个条目 → {zip_path.name} ({size_kb:.1f} KB)")
+    return zip_path, deploy_files
 
 
 # ---------------------------------------------------------------------------
@@ -406,10 +435,29 @@ def main() -> None:
 
     # 3. 打包
     print("\n📦 打包项目文件 …")
-    archive_path = build_archive()
+    archive_path, deploy_files = build_archive()
 
     try:
-        # 4. 请求上传 URL
+        # 4. 读取旧 manifest，清理已从仓库删除的文件
+        old_manifest_path = f"{UPLOAD_DIR.rstrip('/')}/{MANIFEST_FILE}"
+        print(f"\n🔍 检查上次部署的文件清单 …")
+        old_raw = client.read_text_file(old_manifest_path)
+        if old_raw:
+            try:
+                old_files: list[str] = json.loads(old_raw)
+                removed = [f for f in old_files if f not in deploy_files and f != MANIFEST_FILE]
+                if removed:
+                    print(f"   🧹 清理 {len(removed)} 个已删除的文件 …")
+                    client.delete_files([f"{UPLOAD_DIR.rstrip('/')}/{f}" for f in removed])
+                    print(f"   ✅ 已清理")
+                else:
+                    print(f"   ✅ 无已删除文件")
+            except (json.JSONDecodeError, TypeError):
+                print(f"   ⚠️  清单解析失败，跳过清理")
+        else:
+            print(f"   ℹ️  首次部署，无需清理")
+
+        # 5. 请求上传 URL
         print("\n📤 请求上传配置 …")
         try:
             upload_cfg = client.request_upload()
@@ -418,7 +466,7 @@ def main() -> None:
             sys.exit(2)
         print(f"   获取到上传令牌: addr={upload_cfg.get('addr', '?')}")
 
-        # 5. 上传文件
+        # 6. 上传文件
         print("\n📤 上传文件到 daemon …")
         ok = client.upload_file(str(archive_path), upload_cfg)
         if not ok:
@@ -428,13 +476,12 @@ def main() -> None:
         # 远端 zip 路径
         remote_zip = f"{UPLOAD_DIR.rstrip('/')}/{DEPLOY_ARCHIVE}"
 
-        # 6. 解压（覆盖已有文件）
+        # 7. 解压（覆盖已有文件 + 写入新 manifest）
         print(f"\n📂 解压文件到 {UPLOAD_DIR} …")
         try:
             client.decompress(remote_zip, UPLOAD_DIR)
         except MCSMError as e:
             print(f"❌ 解压失败: {e}", file=sys.stderr)
-            # 尝试清理远端 zip
             try:
                 client.delete_file(remote_zip)
             except Exception:
@@ -442,7 +489,7 @@ def main() -> None:
             sys.exit(2)
         print("✅ 文件解压完成")
 
-        # 7. 清理远端 zip
+        # 8. 清理远端 zip
         print("\n🧹 清理远端临时文件 …")
         try:
             client.delete_file(remote_zip)
@@ -450,7 +497,7 @@ def main() -> None:
         except (MCSMError, Exception):
             print(f"⚠️  无法删除远端 zip（可能已自动清理）")
 
-        # 8. 重启实例
+        # 9. 重启实例
         print("")
         try:
             client.restart_instance()
