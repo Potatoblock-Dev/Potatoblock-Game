@@ -122,11 +122,13 @@ class MCSMClient:
         return self._handle(r)
 
     def _post(self, path: str, body: dict | None = None, **params: str) -> dict:
-        r = self.session.post(self._url(path, **params), json=body or {})
+        kwargs = {"json": body} if body is not None else {}
+        r = self.session.post(self._url(path, **params), **kwargs)
         return self._handle(r)
 
     def _delete(self, path: str, body: dict | None = None, **params: str) -> dict:
-        r = self.session.delete(self._url(path, **params), json=body or {})
+        kwargs = {"json": body} if body is not None else {}
+        r = self.session.delete(self._url(path, **params), **kwargs)
         return self._handle(r)
 
     @staticmethod
@@ -207,11 +209,10 @@ class MCSMClient:
     def request_upload(self) -> dict:
         """请求上传配置（第一步），返回 {password, addr}。
 
-        daemonId/uuid 作为 query 参数传递（此版本 MCSM 的 validator 要求 query 中必须有 uuid）。
+        此版本 MCSM 的 validator 要求所有参数均为 query 参数。
         """
-        resp = self._post("api/files/upload", body={
-            "upload_dir": UPLOAD_DIR,
-        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+        resp = self._post("api/files/upload", body=None,
+                          daemonId=DAEMON_ID, uuid=INSTANCE_UUID, upload_dir=UPLOAD_DIR)
         # 兼容嵌套与平铺两种响应格式
         cfg = resp.get("data", resp)
         if "addr" not in cfg or "password" not in cfg:
@@ -252,15 +253,13 @@ class MCSMClient:
 
     def decompress(self, archive_path: str, target_dir: str) -> dict:
         """在服务器上解压 zip 文件（覆盖已有文件）。"""
-        return self._post("api/files/compress", body={
-            "type": 2,          # 2 = 解压
-            "source": archive_path,
-            "targets": target_dir,
-            "code": "utf-8",
-        }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+        return self._post("api/files/compress", body=None,
+                          daemonId=DAEMON_ID, uuid=INSTANCE_UUID,
+                          type="2", source=archive_path, targets=target_dir, code="utf-8")
 
     def delete_file(self, file_path: str) -> dict:
         """删除服务器上的文件。"""
+        # delete 的 targets 是数组，需放在 body 中
         return self._delete("api/files", body={
             "targets": [file_path],
         }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
