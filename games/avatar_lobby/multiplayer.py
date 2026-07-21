@@ -35,6 +35,8 @@ JUMP_SPEED = 520.0
 GRAVITY = 1400.0
 AVATAR_SIZE = 72.0
 AVATAR_DRAW_SCALE = 1.35
+# 水平碰撞宽（未乘 draw scale）：贴近躯干+垂臂，不含整身头发画布。
+AVATAR_COLLISION_WIDTH = 40.0
 # 归一化横坐标：0 = 左缘，1 = 右缘（已扣除角色半宽边距）。
 DEFAULT_NX = 0.5
 MAX_MESSAGE_BYTES = 4096
@@ -55,7 +57,7 @@ def _edge_margin_ratio() -> float:
     """角色半宽相对舞台宽度的归一化边距，客户端按 viewW 还原。"""
     # 服务端不持有真实像素宽，用固定参考宽 1280 估算边距比例。
     reference_width = 1280.0
-    margin = (AVATAR_SIZE * AVATAR_DRAW_SCALE) / 2.0
+    margin = (AVATAR_COLLISION_WIDTH * AVATAR_DRAW_SCALE) / 2.0
     return margin / reference_width
 
 

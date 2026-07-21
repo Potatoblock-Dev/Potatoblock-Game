@@ -4,7 +4,31 @@
 (() => {
   const AVATAR_SIZE = 72;
   const AVATAR_DRAW_SCALE = 1.35;
-  const DEFAULT_HEIGHT_SCALE = 1.16;
+  // 水平碰撞宽（未乘 draw scale）：贴近躯干+垂臂，不含整身头发画布。
+  const AVATAR_COLLISION_WIDTH = 40;
+
+  /**
+   * UV 四肢读取区外扩时，小腿远端会画出推荐脚底以下。
+   * 返回角色局部坐标中、脚底以下的额外长度（未乘 draw/height scale）。
+   */
+  function uvFootOverhangLocal(atlas) {
+    if (!atlas || atlas.width === window.UVLayout.LEGACY_ATLAS_SIZE) return 0;
+    const lower = window.UVLayout.PARTS.frontLegLower;
+    if (!lower?.rect || !lower?.coreRect || !lower?.drawSize) return 0;
+    const [, ry, , rh] = lower.rect;
+    const [, cy, , ch] = lower.coreRect;
+    const length = lower.drawSize[1];
+    const bottomPad = (ry + rh) - (cy + ch);
+    return Math.max(0, bottomPad * (length / ch));
+  }
+
+  /** 站立时为让可视脚底贴地，需要把实体上移的屏幕像素。 */
+  function footGroundLiftPx(entity) {
+    const local = uvFootOverhangLocal(entity.uvAtlas);
+    if (local <= 0) return 0;
+    return local * AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash);
+  }
+  const DEFAULT_HEIGHT_SCALE = 1.0;
   const MOVE_SPEED = 260;
   const textureCache = new Map();
 
@@ -212,7 +236,8 @@
   function drawAvatarBody(ctx, entity, atlas) {
     const isLegacyAtlas = atlas && atlas.width === window.UVLayout.LEGACY_ATLAS_SIZE;
     const parts = isLegacyAtlas ? window.UVLayout.LEGACY_PARTS : window.UVLayout.PARTS;
-    const kneelOffset = entity.kneel * 9;
+    const rig = window.UVLayout.RIG || { shoulderX: 14, shoulderY: -14, hipX: 7, hipY: 11 };
+    const kneelOffset = entity.kneel * 11;
     const joints = entity.joints;
     const style = (partId, fill) =>
       atlas ? { atlas, part: parts[partId] } : { fill };
@@ -220,23 +245,23 @@
       const size = parts[partId] && parts[partId].drawSize;
       return size ? size : [fallbackW, fallbackLen];
     };
-    const [backLegUW, backLegUL] = limbSize('backLegUpper', 9, 12);
-    const [, backLegLL] = limbSize('backLegLower', 9, 13);
-    const [backArmUW, backArmUL] = limbSize('backArmUpper', 7, 13);
-    const [, backArmLL] = limbSize('backArmLower', 7, 14);
-    const [frontLegUW, frontLegUL] = limbSize('frontLegUpper', 9, 12);
-    const [, frontLegLL] = limbSize('frontLegLower', 9, 13);
-    const [frontArmUW, frontArmUL] = limbSize('frontArmUpper', 7, 13);
-    const [, frontArmLL] = limbSize('frontArmLower', 7, 14);
-    const bodyDraw = (parts.body && parts.body.drawRect) || [-14, -17, 28, 30];
+    const [backLegUW, backLegUL] = limbSize('backLegUpper', 8, 16);
+    const [, backLegLL] = limbSize('backLegLower', 8, 17);
+    const [backArmUW, backArmUL] = limbSize('backArmUpper', 7, 15);
+    const [, backArmLL] = limbSize('backArmLower', 7, 16);
+    const [frontLegUW, frontLegUL] = limbSize('frontLegUpper', 8, 16);
+    const [, frontLegLL] = limbSize('frontLegLower', 8, 17);
+    const [frontArmUW, frontArmUL] = limbSize('frontArmUpper', 7, 15);
+    const [, frontArmLL] = limbSize('frontArmLower', 7, 16);
+    const bodyDraw = (parts.body && parts.body.drawRect) || [-10, -16, 20, 20];
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#111827';
     if (atlas) ctx.imageSmoothingEnabled = false;
 
     drawSegmentedLimb(ctx, style('backLegUpper', '#3b82f6'), style('backLegLower', '#3b82f6'),
-      -7, 11 + kneelOffset, backLegUW, backLegUL, backLegLL, joints.backHip.angle, joints.backKnee.angle);
+      -rig.hipX, rig.hipY + kneelOffset, backLegUW, backLegUL, backLegLL, joints.backHip.angle, joints.backKnee.angle);
     drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
-      -14, -14 + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
+      -rig.shoulderX, rig.shoulderY + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
     drawPartRect(
       ctx,
       style('body', '#22c55e'),
@@ -246,13 +271,13 @@
       bodyDraw[3]
     );
     drawSegmentedLimb(ctx, style('frontLegUpper', '#8b5cf6'), style('frontLegLower', '#8b5cf6'),
-      7, 11 + kneelOffset, frontLegUW, frontLegUL, frontLegLL, joints.frontHip.angle, joints.frontKnee.angle);
+      rig.hipX, rig.hipY + kneelOffset, frontLegUW, frontLegUL, frontLegLL, joints.frontHip.angle, joints.frontKnee.angle);
     drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
-      14, -14 + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
+      rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
 
     const headDrawRect = atlas && parts.head.drawRect
       ? parts.head.drawRect
-      : [-11, -35, 22, 18];
+      : [-9, -33, 18, 15];
     drawPartRect(
       ctx,
       style('head', '#facc15'),
@@ -263,7 +288,7 @@
     );
     if (!atlas) {
       ctx.fillStyle = '#111827';
-      ctx.fillRect(5, -29 + kneelOffset, 4, 4);
+      ctx.fillRect(4, -28 + kneelOffset, 3, 3);
     }
   }
 
@@ -326,7 +351,7 @@
   }
 
   // 与服务端一致的归一化可用宽度（参考宽 1280），外推时把 vx 换算回 nx。
-  const REF_USABLE = 1280 - AVATAR_SIZE * AVATAR_DRAW_SCALE;
+  const REF_USABLE = 1280 - AVATAR_COLLISION_WIDTH * AVATAR_DRAW_SCALE;
   const MAX_EXTRAPOLATE_S = 0.25;
 
   // 快照挂在服务器时间轴（serverMs）上；只保留插值所需字段。
@@ -391,12 +416,14 @@
   window.AvatarEntity = {
     AVATAR_SIZE,
     AVATAR_DRAW_SCALE,
+    AVATAR_COLLISION_WIDTH,
     DEFAULT_HEIGHT_SCALE,
     MOVE_SPEED,
     createAvatarEntity,
     updateEntityMotion,
     loadAppearance,
     drawAvatar,
+    footGroundLiftPx,
     pushSnapshot,
     sampleRemote,
   };

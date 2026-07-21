@@ -1,0 +1,64 @@
+/** 通行证弹窗登录：打开 /login?popup=1，完成后由 /pwa/login-done 通知父页。 */
+(function () {
+  'use strict';
+
+  const POPUP_NAME = 'potatoblock-passport-login';
+  const MESSAGE_TYPE = 'pb-login-done';
+
+  function loginPopup(nextPath) {
+    const next = nextPath || window.location.pathname + window.location.search;
+    const done = '/pwa/login-done?return=' + encodeURIComponent(next);
+    const url = '/login?popup=1&next=' + encodeURIComponent(done);
+    const w = 420;
+    const h = 560;
+    const left = Math.max(0, (window.screen.width - w) / 2);
+    const top = Math.max(0, (window.screen.height - h) / 2);
+    const features = 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top;
+    const popup = window.open(url, POPUP_NAME, features);
+    if (!popup) {
+      window.location.href = '/login?next=' + encodeURIComponent(next);
+      return Promise.reject(new Error('popup blocked'));
+    }
+    return new Promise((resolve, reject) => {
+      function onMessage(event) {
+        if (event.origin !== window.location.origin) return;
+        const data = event.data || {};
+        if (data.type !== MESSAGE_TYPE) return;
+        window.removeEventListener('message', onMessage);
+        if (data.ok) {
+          resolve(data);
+        } else {
+          reject(new Error(data.error || 'login failed'));
+        }
+      }
+      window.addEventListener('message', onMessage);
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer);
+          window.removeEventListener('message', onMessage);
+          reject(new Error('popup closed'));
+        }
+      }, 500);
+    });
+  }
+
+  function bindLoginButtons() {
+    document.querySelectorAll('[data-passport-login]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        const next = el.getAttribute('data-next') || '/';
+        loginPopup(next).then(() => {
+          window.location.reload();
+        }).catch(() => {});
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindLoginButtons);
+  } else {
+    bindLoginButtons();
+  }
+
+  window.PotatoblockPassportLogin = { loginPopup, MESSAGE_TYPE };
+})();

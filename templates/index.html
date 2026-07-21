@@ -3,6 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Potatoblock">
+    <link rel="manifest" href="/static/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <title>{{ site_title }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.css">
@@ -102,6 +109,9 @@
       transition: transform .7s cubic-bezier(0.56, 1.35, 0.52, 1) !important;
     }
     .theme-mode-hint { margin-top: 8px; font-size: 12px; opacity: .55; }
+    .pwa-hint { margin-top: 8px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; opacity: .85; border: 1px solid rgb(148 163 184 / .25); }
+    .pwa-action { margin-top: 8px; width: 100%; padding: 11px 14px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid rgb(148 163 184 / .3); background: rgb(245 158 11 / .15); }
+    .pwa-action:hover { background: rgb(245 158 11 / .25); }
     .hidden { display: none !important; }
     /* 深浅色切换时的柔和过渡；排除动画开关本体，避免干扰其自身过渡 */
     html.theme-fading,
@@ -120,7 +130,7 @@
                 <button type="submit" class="text-gray-500 hover:text-white">登出</button>
             </form>
         {% else %}
-            <a href="/login" class="hover:text-white">登录</a>
+            <button type="button" data-passport-login data-next="/" class="hover:text-white bg-transparent border-0 cursor-pointer p-0 text-inherit text-sm">登录</button>
         {% endif %}
         <button id="settingsButton" type="button" class="settings-button" title="系统设置" aria-label="系统设置">⚙️</button>
     </div>
@@ -162,8 +172,24 @@
             </div>
             <div class="settings-section">
                 <div class="settings-label">账号</div>
+                {% if not user_id %}
+                <button type="button" data-passport-login data-next="/" class="settings-link w-full text-left bg-transparent cursor-pointer">
+                    <span>通行证登录（弹窗）</span><span aria-hidden="true">↗</span>
+                </button>
+                {% endif %}
                 <a href="https://passport.potatoblock.com/" target="_blank" rel="noopener" class="settings-link">
                     <span>管理通行证账号</span><span aria-hidden="true">↗</span>
+                </a>
+            </div>
+            <div class="settings-section">
+                <div class="settings-label">安装应用（PWA）</div>
+                <button id="pwaInstallButton" type="button" class="pwa-action hidden">📲 添加到主屏幕 / 安装应用</button>
+                <button id="pwaUpdateButton" type="button" class="pwa-action hidden">⬆️ 更新应用</button>
+                <p id="pwaUpdateHint" class="pwa-hint hidden"></p>
+                <p id="pwaIosHint" class="pwa-hint hidden">iPhone / iPad：Safari 打开本页 → 分享 →「添加到主屏幕」。</p>
+                <p id="pwaAndroidHint" class="pwa-hint hidden">Android：Chrome 菜单 →「安装应用」或「添加到主屏幕」。</p>
+                <a href="/static/manifest.webmanifest" class="settings-link">
+                    <span>查看应用清单</span><span aria-hidden="true">↗</span>
                 </a>
             </div>
             <div class="settings-section">
@@ -181,6 +207,8 @@
         </div>
     </div>
 
+    <script src="/static/js/pwa.js"></script>
+    <script src="/static/js/passport-login.js"></script>
     <script src="/static/js/main.js"></script>
     <script>
     // 系统设置弹窗 + 主题模式（与游戏页共用 pb-theme-mode / pb-theme 存储键）

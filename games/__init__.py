@@ -51,7 +51,12 @@ def register_routers(fastapi_app):
             name=mount_name,
         )
     try:
-        from app.auto_update import attach_auto_update
+        from app.pwa_routes import attach_pwa_routes
+        attach_pwa_routes(fastapi_app)
     except ImportError:
-        return
-    attach_auto_update(fastapi_app)
+        pass
+    try:
+        from app.auto_update import attach_auto_update
+        attach_auto_update(fastapi_app)
+    except ImportError:
+        pass

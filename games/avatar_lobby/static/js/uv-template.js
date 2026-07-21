@@ -1,11 +1,11 @@
 /**
- * UV 模板图：只含骨骼节点与节点间色块，读取区留白与槽位一致，槽间有分割线。
- * 与 UVLayout.PARTS 同源，下载的 PNG 可被「导入完整 UV」直接按 rect 解析。
+ * UV 绘画参考模板：关节节点 + 矩形连线 + 分色标注。
+ * 与 UVLayout.PARTS 同源；下载的 PNG 可被「导入完整 UV」按 rect 解析。
  */
 (() => {
   const JOINT_FILL = '#111827';
-  const LINE = '#94a3b8';
-  const LABEL = '#64748b';
+  const JOINT_RING = '#f8fafc';
+  const GUIDE = '#94a3b8';
 
   function hexToRgb(hex) {
     return [
@@ -15,62 +15,116 @@
     ];
   }
 
-  /** 在推荐区内画上下关节圆与中间色块（四肢）。 */
+  function withAlpha(hex, alpha) {
+    const [r, g, b] = hexToRgb(hex);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  function paintJoint(ctx, x, y, radius) {
+    ctx.fillStyle = JOINT_FILL;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = JOINT_RING;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  /** 四肢：上下关节 + 中间色块矩形连线。 */
   function paintLimb(ctx, part) {
     const [cx, cy, cw, ch] = part.coreRect;
-    const [r, g, b] = hexToRgb(part.color);
-    ctx.fillStyle = `rgb(${r} ${g} ${b})`;
-    const blockX = cx + Math.floor(cw * 0.2);
-    const blockW = Math.max(4, Math.floor(cw * 0.6));
-    const jointR = Math.max(3, Math.floor(cw * 0.18));
-    const topY = cy + jointR;
-    const botY = cy + ch - jointR;
-    ctx.fillRect(blockX, topY, blockW, Math.max(4, botY - topY));
+    const midX = cx + cw / 2;
+    const jointR = Math.max(4, Math.floor(cw * 0.2));
+    const topY = cy + jointR + 1;
+    const botY = cy + ch - jointR - 1;
+    const boneW = Math.max(6, Math.floor(cw * 0.42));
 
-    ctx.fillStyle = JOINT_FILL;
-    ctx.beginPath();
-    ctx.arc(cx + cw / 2, topY, jointR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(cx + cw / 2, botY, jointR, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle = withAlpha(part.color, 0.92);
+    ctx.fillRect(midX - boneW / 2, topY, boneW, Math.max(4, botY - topY));
+
+    paintJoint(ctx, midX, topY, jointR);
+    paintJoint(ctx, midX, botY, jointR);
   }
 
-  /** 身体：色块 + 肩/髋节点。 */
+  /** 身体：色块 + 肩/髋关节。 */
   function paintBody(ctx, part) {
     const [cx, cy, cw, ch] = part.coreRect;
-    ctx.fillStyle = part.color;
+    ctx.fillStyle = withAlpha(part.color, 0.88);
     ctx.fillRect(cx, cy, cw, ch);
-    const jointR = 5;
-    ctx.fillStyle = JOINT_FILL;
-    // 双肩
-    ctx.beginPath();
-    ctx.arc(cx + cw * 0.2, cy + 8, jointR, 0, Math.PI * 2);
-    ctx.arc(cx + cw * 0.8, cy + 8, jointR, 0, Math.PI * 2);
-    ctx.fill();
-    // 双髋
-    ctx.beginPath();
-    ctx.arc(cx + cw * 0.28, cy + ch - 10, jointR, 0, Math.PI * 2);
-    ctx.arc(cx + cw * 0.72, cy + ch - 10, jointR, 0, Math.PI * 2);
-    ctx.fill();
+
+    const jointR = 6;
+    const shoulderY = cy + 10;
+    const hipY = cy + ch - 12;
+    paintJoint(ctx, cx + cw * 0.22, shoulderY, jointR);
+    paintJoint(ctx, cx + cw * 0.78, shoulderY, jointR);
+    paintJoint(ctx, cx + cw * 0.3, hipY, jointR);
+    paintJoint(ctx, cx + cw * 0.7, hipY, jointR);
+
+    // 肩→髋的示意矩形（躯干中轴）
+    const spineW = Math.max(10, Math.floor(cw * 0.18));
+    ctx.fillStyle = withAlpha(part.color, 0.55);
+    ctx.fillRect(cx + (cw - spineW) / 2, shoulderY, spineW, Math.max(4, hipY - shoulderY));
   }
 
-  /** 头部：推荐脸部色块 + 颈关节；整身读取区其余留白。 */
+  /** 头部：脸部色块 + 颈关节；朝右眼点。 */
   function paintHead(ctx, part) {
     const [cx, cy, cw, ch] = part.coreRect;
-    ctx.fillStyle = part.color;
+    ctx.fillStyle = withAlpha(part.color, 0.92);
     ctx.fillRect(cx, cy, cw, ch);
-    // 眼睛标记，方便辨认朝向
+
     ctx.fillStyle = JOINT_FILL;
-    ctx.fillRect(cx + cw * 0.62, cy + ch * 0.32, Math.max(6, cw * 0.12), Math.max(6, ch * 0.14));
-    // 颈关节（脸部下沿中点）
-    ctx.beginPath();
-    ctx.arc(cx + cw / 2, cy + ch - 4, 5, 0, Math.PI * 2);
-    ctx.fill();
+    const eyeW = Math.max(5, cw * 0.12);
+    const eyeH = Math.max(5, ch * 0.14);
+    ctx.fillRect(cx + cw * 0.62, cy + ch * 0.32, eyeW, eyeH);
+
+    paintJoint(ctx, cx + cw / 2, cy + ch - 3, 5);
+  }
+
+  function paintSlotGuides(ctx, part) {
+    const [x, y, w, h] = part.rect;
+    // 读取区淡底，提示可画留白范围
+    ctx.fillStyle = withAlpha(part.color, 0.08);
+    ctx.fillRect(x, y, w, h);
+
+    ctx.strokeStyle = part.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+
+    if (part.coreRect) {
+      const [cx, cy, cw, ch] = part.coreRect;
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = withAlpha(part.color, 0.75);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx + 0.5, cy + 0.5, cw - 1, ch - 1);
+      ctx.restore();
+    }
+  }
+
+  function paintLabels(ctx, part) {
+    const [x, y, w] = part.rect;
+    const code = part.code || '';
+    const line = part.tagLine || part.label;
+
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = part.color;
+    ctx.font = 'bold 13px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillText(code, x + 6, y + 6);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '10px system-ui, sans-serif';
+    // 长标注在窄槽里换行感：单行截断到槽宽
+    const maxWidth = w - 12;
+    let text = line;
+    while (text.length > 3 && ctx.measureText(text).width > maxWidth) {
+      text = text.slice(0, -2);
+    }
+    if (text !== line) text = `${text}…`;
+    ctx.fillText(text, x + 6, y + 22);
   }
 
   /**
-   * 把标准模板画到 512×512 canvas（透明底）。
+   * 把标准绘画模板画到 512×512 canvas（透明底）。
    * @returns {HTMLCanvasElement}
    */
   function renderTemplateCanvas() {
@@ -81,45 +135,31 @@
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.lineWidth = 2;
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.textBaseline = 'top';
-
     for (const part of Object.values(layout.PARTS)) {
-      const [x, y, w, h] = part.rect;
-      // 槽位分割线（读取范围边界）
-      ctx.strokeStyle = LINE;
-      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
-
-      // 推荐区虚线框
-      if (part.coreRect) {
-        const [cx, cy, cw, ch] = part.coreRect;
-        ctx.save();
-        ctx.setLineDash([4, 3]);
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.85)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(cx + 0.5, cy + 0.5, cw - 1, ch - 1);
-        ctx.restore();
-      }
-
+      paintSlotGuides(ctx, part);
       if (part.kind === 'limb') paintLimb(ctx, part);
       else if (part.kind === 'body') paintBody(ctx, part);
       else if (part.kind === 'head') paintHead(ctx, part);
-
-      ctx.fillStyle = LABEL;
-      ctx.fillText(part.label, x + 4, y + 4);
+      paintLabels(ctx, part);
     }
 
-    // 页脚说明（画在空白区）
-    ctx.fillStyle = LABEL;
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText('UV 模板 v2 · 实线=读取范围 · 虚线=推荐区 · 圆点=骨骼节点', 8, 492);
+    // 图例区（头身之间右下空白：身体槽下方到臂槽上方）
+    ctx.fillStyle = GUIDE;
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    const legendX = 262;
+    const legendY = 162;
+    ctx.fillText('绘画模板 v4 · 约 8 头身', legendX, legendY);
+    ctx.fillText('实线框 = 读取范围（可画留白）', legendX, legendY + 16);
+    ctx.fillText('虚线框 = 推荐区（基础体型）', legendX, legendY + 32);
+    ctx.fillText('圆点 = 关节 · 色块矩形 = 骨骼连线', legendX, legendY + 48);
+    ctx.fillText('朝右：RA/RL=右侧 · LA/LL=左侧', legendX, legendY + 64);
 
     return canvas;
   }
 
   /** 触发浏览器下载模板 PNG。 */
-  function downloadTemplate(filename = 'avatar-uv-template-v2.png') {
+  function downloadTemplate(filename = 'avatar-uv-paint-template-v4.png') {
     const canvas = renderTemplateCanvas();
     canvas.toBlob((blob) => {
       if (!blob) return;

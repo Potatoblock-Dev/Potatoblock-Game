@@ -18,6 +18,7 @@
   const GRAVITY = 1400;
   const AVATAR_SIZE = Entity.AVATAR_SIZE;
   const AVATAR_DRAW_SCALE = Entity.AVATAR_DRAW_SCALE;
+  const AVATAR_COLLISION_WIDTH = Entity.AVATAR_COLLISION_WIDTH;
   const DEFAULT_AVATAR_HEIGHT_SCALE = Entity.DEFAULT_HEIGHT_SCALE;
   const DELETE_CONFIRM_MS = 3000;
   // 远端按服务器时间轴延迟渲染：约两个快照间隔，抖动时插值区间仍然可用。
@@ -73,7 +74,11 @@
   let groundY = 0;
 
   function edgeMargin() {
-    return (AVATAR_SIZE * AVATAR_DRAW_SCALE) / 2;
+    return (AVATAR_COLLISION_WIDTH * AVATAR_DRAW_SCALE) / 2;
+  }
+
+  function stageYFromPhysics(physicsY, entity) {
+    return groundY + physicsY - Entity.footGroundLiftPx(entity);
   }
 
   function clampX(x) {
@@ -86,10 +91,6 @@
     const margin = edgeMargin();
     const usable = Math.max(1, viewW - margin * 2);
     return margin + Math.max(0, Math.min(1, nx)) * usable;
-  }
-
-  function serverYToLocal(y) {
-    return groundY + y;
   }
 
   function resizeStage() {
@@ -109,14 +110,14 @@
       const t = (local.x - prevMargin) / prevUsable;
       local.x = clampX(nxToX(Math.max(0, Math.min(1, t))));
       avatar.x = local.x;
-      avatar.y = groundY + local.y;
+      avatar.y = stageYFromPhysics(local.y, avatar);
     }
   }
 
   resizeStage();
   local.x = clampX(viewW / 2);
   avatar.x = local.x;
-  avatar.y = groundY;
+  avatar.y = stageYFromPhysics(0, avatar);
   window.addEventListener('resize', resizeStage);
 
   const camera = { blend: 0, target: 0, focusX: FOCUS_SCREEN_X };
@@ -225,7 +226,7 @@
     avatar.kneel = local.kneel;
     Entity.updateEntityMotion(avatar, dt);
     avatar.x = local.x;
-    avatar.y = groundY + local.y;
+    avatar.y = stageYFromPhysics(local.y, avatar);
   }
 
   // 进房出生：把服务端 nx 映到当前屏宽，只执行一次。
@@ -237,7 +238,7 @@
     local.onGround = Boolean(serverPlayer.onGround ?? true);
     local.kneel = serverPlayer.kneel ?? 0;
     avatar.x = local.x;
-    avatar.y = groundY + local.y;
+    avatar.y = stageYFromPhysics(local.y, avatar);
     avatar.facing = serverPlayer.facing || avatar.facing;
   }
 
@@ -248,8 +249,8 @@
         id: playerId,
         nickname: snapshot.nickname || '玩家',
         x: nxToX(snapshot.nx ?? 0.5),
-        y: serverYToLocal(snapshot.y ?? 0),
       });
+      remote.y = stageYFromPhysics(snapshot.y ?? 0, remote);
       remotePlayers.set(playerId, remote);
     }
     return remote;
@@ -258,7 +259,7 @@
   function applyRemoteSample(remote, sample) {
     remote.nickname = sample.nickname || remote.nickname;
     remote.x = nxToX(sample.nx);
-    remote.y = serverYToLocal(sample.y);
+    remote.y = stageYFromPhysics(sample.y ?? 0, remote);
     remote.vx = sample.vx;
     remote.vy = sample.vy;
     remote.facing = sample.facing || remote.facing;

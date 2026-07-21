@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录成功</title>
+    <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var ret = params.get('return') || '/';
+      if (window.opener) {
+        window.opener.postMessage({ type: 'pb-login-done', ok: true, return: ret }, location.origin);
+        window.close();
+      } else {
+        location.replace(ret);
+      }
+    })();
+    </script>
+</head>
+<body></body>
+</html>

@@ -5,8 +5,10 @@
  * 弹簧负责平滑。坐标约定：+y 向下，骨骼初始方向朝下。
  */
 (() => {
-  const UPPER_LEG_LENGTH = 12;
-  const LOWER_LEG_LENGTH = 13;
+  // 与 UVLayout.PARTS 腿段 drawSize 同步（约 8 头身）。
+  const UPPER_LEG_LENGTH = 16;
+  const LOWER_LEG_LENGTH = 17;
+  const STAND_FOOT_Y = UPPER_LEG_LENGTH + LOWER_LEG_LENGTH; // 33
 
   function clamp(value, minimum, maximum) {
     return Math.max(minimum, Math.min(maximum, value));
@@ -41,16 +43,16 @@
 
   // 脚在摆动半程抬起，支撑半程贴近地面；两腿相差半个周期。
   function solveWalkingLeg(phase, speedRatio) {
-    const strideX = Math.sin(phase) * 7.5 * speedRatio;
-    const lift = Math.max(0, -Math.cos(phase)) * 5 * speedRatio;
-    return solveTwoBone(strideX, 24.7 - lift);
+    const strideX = Math.sin(phase) * 10 * speedRatio;
+    const lift = Math.max(0, -Math.cos(phase)) * 6.5 * speedRatio;
+    return solveTwoBone(strideX, STAND_FOOT_Y - 0.4 - lift);
   }
 
   function computeLegPose(state) {
     const frontWalk = solveWalkingLeg(state.walkPhase, state.speedRatio);
     const backWalk = solveWalkingLeg(state.walkPhase + Math.PI, state.speedRatio);
-    const frontAir = solveTwoBone(-3, 17.5);
-    const backAir = solveTwoBone(4, 16.5);
+    const frontAir = solveTwoBone(-4, STAND_FOOT_Y * 0.7);
+    const backAir = solveTwoBone(5, STAND_FOOT_Y * 0.66);
     const airborne = state.onGround ? 0 : 1;
     const frontBase = {
       upper: lerp(frontWalk.upper, frontAir.upper, airborne),
