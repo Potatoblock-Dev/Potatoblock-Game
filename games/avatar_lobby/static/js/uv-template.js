@@ -82,10 +82,6 @@
 
   function paintSlotGuides(ctx, part) {
     const [x, y, w, h] = part.rect;
-    // 读取区淡底，提示可画留白范围
-    ctx.fillStyle = withAlpha(part.color, 0.08);
-    ctx.fillRect(x, y, w, h);
-
     ctx.strokeStyle = part.color;
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);

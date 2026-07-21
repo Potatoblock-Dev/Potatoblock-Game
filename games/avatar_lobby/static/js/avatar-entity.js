@@ -253,7 +253,7 @@
     const [, frontLegLL] = limbSize('frontLegLower', 8, 17);
     const [frontArmUW, frontArmUL] = limbSize('frontArmUpper', 7, 15);
     const [, frontArmLL] = limbSize('frontArmLower', 7, 16);
-    const bodyDraw = (parts.body && parts.body.drawRect) || [-10, -16, 20, 20];
+    const bodyDraw = (parts.body && parts.body.drawRect) || [-11, -17, 22, 26];
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#111827';
     if (atlas) ctx.imageSmoothingEnabled = false;

@@ -82,9 +82,9 @@
         code: 'BD',
         tagLine: 'BD  body  身体',
         rect: bodyRect,
-        // 世界约 20×20 → atlas 4×
-        coreRect: coreIn(bodyRect, 80, 80),
-        drawRect: [-10, -16, 20, 20],
+        // 世界约 22×26 竖长方形（肩到髋）
+        coreRect: coreIn(bodyRect, 88, 104),
+        drawRect: [-11, -17, 22, 26],
         color: '#22c55e',
         kind: 'body',
       },
