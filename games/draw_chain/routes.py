@@ -1778,10 +1778,28 @@ async def evict_player_for_other_game(player_id: str) -> None:
             pass
 
 
+def get_reconnect_session(player_id: str) -> Optional[Dict[str, str]]:
+    """若玩家仍在房间内（含断线宽限期），返回首页可跳转的重连目标。"""
+    room_id = player_rooms.get(player_id)
+    if not room_id:
+        return None
+    if timed_out_rooms.get(player_id) == room_id:
+        return None
+    room = rooms.get(room_id)
+    if not room or player_id not in room["players"]:
+        return None
+    return {
+        "game_id": GAME_ID,
+        "room_id": room_id,
+        "url": "/draw-chain/" + quote(room_id, safe=""),
+    }
+
+
 register_game(
     GAME_ID,
     get_player_room=player_rooms.get,
     evict_player=evict_player_for_other_game,
+    get_reconnect_session=get_reconnect_session,
 )
 
 

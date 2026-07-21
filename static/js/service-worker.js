@@ -1,11 +1,10 @@
 /* Potatoblock PWA service worker — network-first HTML, stale-while-revalidate static. */
-const CACHE = 'potatoblock-pwa-v2';
+const CACHE = 'potatoblock-pwa-v1';
 const PRECACHE = [
   '/',
   '/static/manifest.webmanifest',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
-  '/static/icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {

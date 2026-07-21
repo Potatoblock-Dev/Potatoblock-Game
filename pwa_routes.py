@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+
+from app.games.common.room_registry import find_reconnect_session
+from app.routers.auth import get_optional_identity
 
 APP_ROOT = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_ROOT / "templates"))
@@ -35,3 +38,12 @@ def attach_pwa_routes(app: FastAPI) -> None:
             "login_popup_done.html",
             {"request": request},
         )
+
+    @app.get("/api/active-session", include_in_schema=False)
+    async def active_session(identity=Depends(get_optional_identity)) -> JSONResponse:
+        """返回当前登录用户可重连的游戏房间，供首页自动跳转。"""
+        if identity is None:
+            return JSONResponse({"session": None})
+        user_id, _ = identity
+        session = find_reconnect_session(str(user_id))
+        return JSONResponse({"session": session})

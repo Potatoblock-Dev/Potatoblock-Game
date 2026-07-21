@@ -12,6 +12,7 @@ import string
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import quote
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect, WebSocketState
@@ -573,8 +574,26 @@ class AvatarLobbyManager:
 
 
 lobby_manager = AvatarLobbyManager()
+
+
+def get_reconnect_session(user_id: str) -> Optional[Dict[str, str]]:
+    """若玩家在私有房间（含断线宽限期），返回首页可跳转的重连目标。"""
+    room_id = lobby_manager.player_rooms.get(user_id)
+    if not room_id or room_id == PUBLIC_ROOM_ID:
+        return None
+    room = lobby_manager.rooms.get(room_id)
+    if not room or user_id not in room.players:
+        return None
+    return {
+        "game_id": GAME_ID,
+        "room_id": room_id,
+        "url": "/avatar-lobby?room=" + quote(room_id, safe=""),
+    }
+
+
 register_game(
     GAME_ID,
     get_player_room=lobby_manager.player_rooms.get,
     evict_player=lobby_manager.evict_player_for_other_game,
+    get_reconnect_session=get_reconnect_session,
 )
