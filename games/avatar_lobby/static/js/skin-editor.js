@@ -31,8 +31,8 @@
   const partStretchYValue = document.getElementById('editorPartStretchYValue');
   const resetTransformButton = document.getElementById('editorResetTransformButton');
   const atlasCanvas = document.getElementById('editorAtlasCanvas');
-  atlasCanvas.width = layout.ATLAS_SIZE;
-  atlasCanvas.height = layout.ATLAS_SIZE;
+  atlasCanvas.width = layout.ATLAS_WIDTH;
+  atlasCanvas.height = layout.ATLAS_HEIGHT;
   const atlasCtx = atlasCanvas.getContext('2d');
   const exportForm = document.getElementById('editorExportForm');
   const skinNameInput = document.getElementById('editorSkinNameInput');
@@ -42,8 +42,8 @@
 
   // 导出用的干净合成图；可见的 atlasCanvas 上还会叠加槽位参考线。
   const atlasBuffer = document.createElement('canvas');
-  atlasBuffer.width = layout.ATLAS_SIZE;
-  atlasBuffer.height = layout.ATLAS_SIZE;
+  atlasBuffer.width = layout.ATLAS_WIDTH;
+  atlasBuffer.height = layout.ATLAS_HEIGHT;
   const bufferCtx = atlasBuffer.getContext('2d');
 
   const sources = [];       // { id, name, image }
@@ -170,8 +170,10 @@
     if (!file) return;
     const image = new Image();
     image.onload = () => {
-      if (image.width !== layout.ATLAS_SIZE || image.height !== layout.ATLAS_SIZE) {
-        setStatus(`完整 UV 必须是 ${layout.ATLAS_SIZE}×${layout.ATLAS_SIZE}`, true);
+      const squareLegacy = image.width === 512 && image.height === 512;
+      const matchesLayout = image.width === layout.ATLAS_WIDTH && image.height === layout.ATLAS_HEIGHT;
+      if (!matchesLayout && !squareLegacy) {
+        setStatus(`完整 UV 须为 ${layout.ATLAS_WIDTH}×${layout.ATLAS_HEIGHT}（4:3）或旧版 512×512`, true);
         URL.revokeObjectURL(image.src);
         return;
       }

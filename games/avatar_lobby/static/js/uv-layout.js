@@ -1,5 +1,5 @@
 /**
- * UV 皮套图版式（v4）：约 8 头身真人比例；编辑器 / 模板 / 舞台共用。
+ * UV 皮套图版式（v5）：4:3 画幅（683×512），左侧为部位槽，右侧留白。
  *
  * rect      — 读取范围（含留白；四肢留白加大，便于臂甲等）
  * coreRect  — 推荐绘制区（模板色块与骨骼；舞台上对齐到 drawSize/drawRect）
@@ -12,7 +12,10 @@
  * 旧 256×256 皮套继续使用 LEGACY_PARTS。
  */
 (() => {
-  const ATLAS_SIZE = 512;
+  const ATLAS_HEIGHT = 512;
+  const ATLAS_WIDTH = Math.round((ATLAS_HEIGHT * 4) / 3); // 683，4:3 横画幅
+  // 部位槽位落在左侧 512px 内，右侧为留白/图例区。
+  const CONTENT_WIDTH = 512;
 
   /** 在读取区内居中放置推荐区。 */
   function coreIn(rect, coreW, coreH) {
@@ -25,9 +28,20 @@
     ];
   }
 
-  // 头/身在上；四肢在下方整宽排布，单槽约 122×118，相对推荐区有大幅留白。
+  /** 在读取区内靠上放置推荐区（与头部脸部类似，下方留斗篷/披风空间）。 */
+  function coreAtTop(rect, coreW, coreH, topMargin = 10) {
+    const [x, y, w] = rect;
+    return [
+      x + Math.floor((w - coreW) / 2),
+      y + topMargin,
+      coreW,
+      coreH,
+    ];
+  }
+
+  // 头/身在上；四肢在下方整宽排布。身体槽与头部同高，躯干靠上、下方大留白（斗篷可盖至腿区）。
   const headRect = [4, 4, 250, 250];
-  const bodyRect = [262, 4, 246, 150];
+  const bodyRect = [262, 4, 246, 250];
   const limbW = 122;
   const limbGap = 4;
   const armY = 258;
@@ -55,8 +69,10 @@
   ];
 
   window.UVLayout = {
-    ATLAS_SIZE,
-    LAYOUT_VERSION: 4,
+    ATLAS_WIDTH,
+    ATLAS_HEIGHT,
+    CONTENT_WIDTH,
+    LAYOUT_VERSION: 6,
     LEGACY_ATLAS_SIZE: 256,
     // 关节锚点（角色局部坐标，+y 向下）
     RIG: {
@@ -82,8 +98,8 @@
         code: 'BD',
         tagLine: 'BD  body  身体',
         rect: bodyRect,
-        // 世界约 22×26 竖长方形（肩到髋）
-        coreRect: coreIn(bodyRect, 88, 104),
+        // 世界约 22×26 竖长方形（肩到髋）；推荐区靠上，下方留白≈头部比例
+        coreRect: coreAtTop(bodyRect, 88, 104, 10),
         drawRect: [-11, -17, 22, 26],
         color: '#22c55e',
         kind: 'body',

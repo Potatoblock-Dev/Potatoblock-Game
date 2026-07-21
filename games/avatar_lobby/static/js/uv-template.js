@@ -120,14 +120,14 @@
   }
 
   /**
-   * 把标准绘画模板画到 512×512 canvas（透明底）。
+   * 把标准绘画模板画到 4:3 canvas（透明底，右侧留白）。
    * @returns {HTMLCanvasElement}
    */
   function renderTemplateCanvas() {
     const layout = window.UVLayout;
     const canvas = document.createElement('canvas');
-    canvas.width = layout.ATLAS_SIZE;
-    canvas.height = layout.ATLAS_SIZE;
+    canvas.width = layout.ATLAS_WIDTH;
+    canvas.height = layout.ATLAS_HEIGHT;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -139,23 +139,27 @@
       paintLabels(ctx, part);
     }
 
-    // 图例区（头身之间右下空白：身体槽下方到臂槽上方）
+    // 图例放在右侧留白区
     ctx.fillStyle = GUIDE;
     ctx.font = '11px system-ui, sans-serif';
     ctx.textBaseline = 'top';
-    const legendX = 262;
-    const legendY = 162;
-    ctx.fillText('绘画模板 v4 · 约 8 头身', legendX, legendY);
-    ctx.fillText('实线框 = 读取范围（可画留白）', legendX, legendY + 16);
-    ctx.fillText('虚线框 = 推荐区（基础体型）', legendX, legendY + 32);
-    ctx.fillText('圆点 = 关节 · 色块矩形 = 骨骼连线', legendX, legendY + 48);
-    ctx.fillText('朝右：RA/RL=右侧 · LA/LL=左侧', legendX, legendY + 64);
+    const legendX = layout.CONTENT_WIDTH + 12;
+    const legendY = 24;
+    ctx.fillText('绘画模板 v5 · 4:3', legendX, legendY);
+    ctx.fillText('左侧 = 部位槽', legendX, legendY + 16);
+    ctx.fillText('右侧 = 留白', legendX, legendY + 32);
+    ctx.fillText('实线框 = 读取范围', legendX, legendY + 56);
+    ctx.fillText('虚线框 = 推荐区', legendX, legendY + 72);
+    ctx.fillText('圆点 = 关节', legendX, legendY + 88);
+    ctx.fillText('色块矩形 = 骨骼连线', legendX, legendY + 104);
+    ctx.fillText('朝右：RA/RL=右侧', legendX, legendY + 128);
+    ctx.fillText('LA/LL=左侧', legendX, legendY + 144);
 
     return canvas;
   }
 
   /** 触发浏览器下载模板 PNG。 */
-  function downloadTemplate(filename = 'avatar-uv-paint-template-v4.png') {
+  function downloadTemplate(filename = 'avatar-uv-paint-template-v5.png') {
     const canvas = renderTemplateCanvas();
     canvas.toBlob((blob) => {
       if (!blob) return;
