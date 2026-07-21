@@ -1,6 +1,6 @@
 {
   "name": "Potatoblock Game",
-  "short_name": "Potatoblock",
+  "short_name": "Potatoblock Game",
   "description": "土豆方块游戏中心：avatar、你画我猜、画画接龙",
   "start_url": "/?source=pwa",
   "scope": "/",
