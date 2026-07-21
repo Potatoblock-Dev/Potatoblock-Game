@@ -100,7 +100,10 @@
 
     if (isIOS() && iosHint) {
       iosHint.classList.remove('hidden');
-    } else if (isAndroid() && androidHint && !deferredPrompt) {
+    } else if (iosHint) {
+      iosHint.classList.add('hidden');
+    }
+    if (isAndroid() && androidHint && !deferredPrompt) {
       androidHint.classList.remove('hidden');
     }
   }
