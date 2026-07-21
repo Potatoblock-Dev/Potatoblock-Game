@@ -108,6 +108,7 @@ class MCSMClient:
         self.api_key = api_key
         self.session = requests.Session()
         self.session.headers.setdefault("Content-Type", "application/json; charset=utf-8")
+        self.session.headers.setdefault("X-Requested-With", "XMLHttpRequest")
 
     def _url(self, path: str, **params: str) -> str:
         """构建完整 URL，自动附带 apikey。"""
@@ -126,30 +127,43 @@ class MCSMClient:
         r = self.session.post(self._url(path, **params), **kwargs)
         return self._handle(r)
 
+    def _put(self, path: str, body: dict | None = None, **params: str) -> dict:
+        kwargs = {"json": body} if body is not None else {}
+        r = self.session.put(self._url(path, **params), **kwargs)
+        return self._handle(r)
+
+    @staticmethod
+    def _api_ok(resp: dict) -> bool:
+        """MCS JSON 响应体 status==200 视为成功（与 HTTP 状态码独立）。"""
+        if not isinstance(resp, dict):
+            return False
+        status = resp.get("status")
+        return status is None or status == 200
+
+    @staticmethod
+    def _handle(r: requests.Response) -> dict:
+        """统一处理响应；校验 JSON status，避免 HTTP 500 包成功体却被当成失败/成功混淆。"""
+        try:
+            payload = r.json()
+        except ValueError:
+            payload = {"_raw_status": r.status_code, "_raw_text": r.text}
+        if isinstance(payload, dict) and payload.get("status") not in (None, 200):
+            detail = payload.get("data", payload)
+            raise MCSMError(r.status_code, r.url, str(detail))
+        if r.ok:
+            return payload
+        if r.status_code == 500 and isinstance(payload, dict):
+            return payload
+        try:
+            detail = payload if isinstance(payload, dict) else r.text[:2000]
+        except Exception:
+            detail = r.text[:2000]
+        raise MCSMError(r.status_code, r.url, str(detail))
+
     def _delete(self, path: str, body: dict | None = None, **params: str) -> dict:
         kwargs = {"json": body} if body is not None else {}
         r = self.session.delete(self._url(path, **params), **kwargs)
         return self._handle(r)
-
-    @staticmethod
-    def _handle(r: requests.Response) -> dict:
-        """统一处理响应；非 2xx 抛出 MCSMError（500 除外，部分接口返回 500 但实际成功）。"""
-        if r.ok:
-            try:
-                return r.json()
-            except ValueError:
-                return {"_raw_status": r.status_code, "_raw_text": r.text}
-        if r.status_code == 500:
-            try:
-                return r.json()
-            except ValueError:
-                return {"_raw_status": 500, "_raw_text": r.text}
-        # 非 500 错误 → 抛异常
-        try:
-            detail = r.json()
-        except Exception:
-            detail = r.text[:2000]
-        raise MCSMError(r.status_code, r.url, str(detail))
 
     # ---- 工具方法 ----
 
@@ -220,11 +234,8 @@ class MCSMClient:
             sys.exit(2)
         return cfg
 
-    def upload_file(self, file_path: str, upload_config: dict) -> bool:
-        """将本地文件上传到 daemon（第二步）。
-
-        若 daemon 返回的 addr 是 localhost/127.0.0.1，自动替换为面板的公网地址。
-        """
+    def upload_file(self, file_path: str, upload_config: dict, *, remote_name: str) -> bool:
+        """将本地 zip 上传到 daemon；multipart 文件名必须为远端解压路径上的 basename。"""
         addr: str = upload_config.get("addr", "")
         password: str = upload_config.get("password", "")
 
@@ -252,25 +263,27 @@ class MCSMClient:
         upload_url = f"{protocol}://{host_port}/upload/{password}"
 
         with open(file_path, "rb") as fh:
-            # MCSM daemon 的上传接口接受 multipart
             r = requests.post(
                 upload_url,
-                files={"file": (Path(file_path).name, fh, "application/zip")},
+                files={"file": (remote_name, fh, "application/zip")},
             )
         if r.status_code not in (200, 201, 204):
             print(f"❌ 文件上传失败 HTTP {r.status_code}: {r.text[:500]}", file=sys.stderr)
             return False
-        print(f"✅ 文件已上传: {Path(file_path).name}")
+        print(f"✅ 文件已上传: {remote_name} → {UPLOAD_DIR}/")
         return True
 
     def decompress(self, archive_path: str, target_dir: str) -> dict:
-        """在服务器上解压 zip 文件（覆盖已有文件）。"""
-        return self._post("api/files/compress", body={
-            "type": 2,          # 2 = 解压
+        """在服务器上解压 zip（type=2）；archive_path 须为实例内绝对路径。"""
+        resp = self._post("api/files/compress", body={
+            "type": 2,
             "source": archive_path,
             "targets": target_dir,
             "code": "utf-8",
         }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+        if not self._api_ok(resp):
+            raise MCSMError(0, "api/files/compress", str(resp.get("data", resp)))
+        return resp
 
     def delete_file(self, file_path: str) -> dict:
         """删除服务器上的文件。"""
@@ -288,13 +301,14 @@ class MCSMClient:
         }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
 
     def read_text_file(self, file_path: str) -> str | None:
-        """读取实例上的文本文件，失败返回 None。"""
+        """读取实例上的文本文件（PUT /api/files，见官方文件管理 API）。"""
         try:
-            # MCSM v10: PUT api/files 读取文件内容
-            data = self._post("api/files", body={
-                "target": file_path,
-            }, daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
-            return data.get("data", data.get("content", ""))
+            data = self._put("api/files", body={"target": file_path},
+                             daemonId=DAEMON_ID, uuid=INSTANCE_UUID)
+            if not self._api_ok(data):
+                return None
+            content = data.get("data", data.get("content", ""))
+            return content if isinstance(content, str) else None
         except MCSMError:
             return None
 
@@ -305,8 +319,13 @@ class MCSMClient:
             daemonId=DAEMON_ID,
             uuid=INSTANCE_UUID,
             target=directory,
+            page="0",
+            page_size="100",
         )
-        return data.get("data", [])
+        payload = data.get("data", {})
+        if isinstance(payload, dict):
+            return payload.get("items", [])
+        return payload if isinstance(payload, list) else []
 
     # ---- 实例操作 ----
 
@@ -468,7 +487,7 @@ def main() -> None:
 
         # 6. 上传文件
         print("\n📤 上传文件到 daemon …")
-        ok = client.upload_file(str(archive_path), upload_cfg)
+        ok = client.upload_file(str(archive_path), upload_cfg, remote_name=DEPLOY_ARCHIVE)
         if not ok:
             print("❌ 上传失败，终止部署。", file=sys.stderr)
             sys.exit(1)
@@ -477,7 +496,7 @@ def main() -> None:
         remote_zip = f"{UPLOAD_DIR.rstrip('/')}/{DEPLOY_ARCHIVE}"
 
         # 7. 解压（覆盖已有文件 + 写入新 manifest）
-        print(f"\n📂 解压文件到 {UPLOAD_DIR} …")
+        print(f"\n📂 解压 {remote_zip} → {UPLOAD_DIR} …")
         try:
             client.decompress(remote_zip, UPLOAD_DIR)
         except MCSMError as e:
@@ -488,6 +507,22 @@ def main() -> None:
                 pass
             sys.exit(2)
         print("✅ 文件解压完成")
+
+        # 7.5 部署后校验：确认 PWA 模板已写入实例
+        print("\n🔍 校验部署结果 …")
+        probe_path = f"{UPLOAD_DIR.rstrip('/')}/templates/index.html"
+        probe_text = client.read_text_file(probe_path)
+        if not probe_text:
+            print(f"❌ 校验失败：无法读取 {probe_path}", file=sys.stderr)
+            sys.exit(2)
+        if "安装应用（PWA）" not in probe_text:
+            print(
+                f"❌ 校验失败：{probe_path} 未包含 PWA 区块。"
+                " 请确认 MCSM_INSTANCE_UUID / MCSM_UPLOAD_DIR 指向 game.potatoblock.com 所在实例。",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        print("✅ PWA 模板校验通过")
 
         # 8. 清理远端 zip
         print("\n🧹 清理远端临时文件 …")
