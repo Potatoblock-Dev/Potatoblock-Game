@@ -515,9 +515,10 @@ def main() -> None:
         if not probe_text:
             print(f"❌ 校验失败：无法读取 {probe_path}", file=sys.stderr)
             sys.exit(2)
-        if "安装应用（PWA）" not in probe_text:
+        # 用稳定 DOM id，避免文案改版（如「安装应用（PWA）」→「安装应用」）误杀部署。
+        if 'id="pwaInstallButton"' not in probe_text and "id='pwaInstallButton'" not in probe_text:
             print(
-                f"❌ 校验失败：{probe_path} 未包含 PWA 区块。"
+                f"❌ 校验失败：{probe_path} 未包含 PWA 安装按钮。"
                 " 请确认 MCSM_INSTANCE_UUID / MCSM_UPLOAD_DIR 指向 game.potatoblock.com 所在实例。",
                 file=sys.stderr,
             )
