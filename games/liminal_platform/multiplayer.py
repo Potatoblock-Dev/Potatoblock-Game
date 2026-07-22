@@ -1,7 +1,7 @@
-"""阈限月台联机：服务端权威房间，同步角色姿态与共享列车/燃料。
+"""阈限月台联机：姿态转发 + 共享列车/燃料。
 
-协议对齐 Avatar 大厅风格；世界坐标使用车厢像素 X（非 nx）。
-个人物品栏仍为客户端本地；开火仅广播特效。
+角色物理由客户端权威（含瞄准朝向）；服务端钳制坐标并广播快照。
+个人物品栏仍为本地；开火仅广播曳光特效。
 """
 
 from __future__ import annotations
@@ -28,25 +28,20 @@ PROTOCOL_VERSION = 1
 PUBLIC_ROOM_ID = "public"
 MAX_PLAYERS_PER_ROOM = 10
 DISCONNECT_GRACE_SECONDS = 30
-PHYSICS_HZ = 30
 SNAPSHOT_HZ = 15
-INPUT_IDLE_SECONDS = 0.6
-MOVE_SPEED = 260.0
-RUN_SPEED = 420.0
-JUMP_SPEED = 520.0
-GRAVITY = 1400.0
 HALF_W = (40.0 * 1.35) / 2.0
 FLOOR_Y = 979.0
 WALK_LEFT = 456.0
 WALK_RIGHT = 1793.0
 COUPLER_JOIN = 1516.0
 MAX_MESSAGE_BYTES = 4096
-MAX_INPUT_HZ = 30
+MAX_POSE_HZ = 30
 ROOM_CODE_ALPHABET = string.ascii_uppercase + string.digits
 ROOM_CODE_LENGTH = 6
 DEFAULT_FUEL = 35.0
 FUEL_MAX = 100.0
 FUEL_PER_ADD = 18.0
+CHAT_MAX_LEN = 40
 
 CLOSE_REPLACED = 4002
 CLOSE_ROOM_FULL = 4005
@@ -93,15 +88,6 @@ WORLD_RIGHT = PLATFORMS[-1]["right"] - HALF_W
 DEFAULT_X = (WALK_LEFT + WALK_RIGHT) / 2.0
 
 
-def _floor_at(x: float) -> Optional[float]:
-    best = None
-    for platform in PLATFORMS:
-        if platform["left"] <= x <= platform["right"]:
-            if best is None or platform["y"] < best:
-                best = platform["y"]
-    return best
-
-
 class PlayerConnection:
     """单个 WebSocket 连接及其发送队列。"""
 
@@ -111,9 +97,9 @@ class PlayerConnection:
         self.nickname = nickname
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=64)
         self.sender_task: Optional[asyncio.Task] = None
-        self.last_input_at = _now()
-        self.input_window_start = _now()
-        self.input_count_window = 0
+        self.last_pose_at = _now()
+        self.pose_window_start = _now()
+        self.pose_count_window = 0
 
     async def start(self) -> None:
         self.sender_task = asyncio.create_task(self._sender_loop())
@@ -155,18 +141,18 @@ class PlayerConnection:
             except Exception:
                 pass
 
-    def accept_input_rate(self) -> bool:
+    def accept_pose_rate(self) -> bool:
         now = _now()
-        if now - self.input_window_start >= 1.0:
-            self.input_window_start = now
-            self.input_count_window = 0
-        self.input_count_window += 1
-        self.last_input_at = now
-        return self.input_count_window <= MAX_INPUT_HZ
+        if now - self.pose_window_start >= 1.0:
+            self.pose_window_start = now
+            self.pose_count_window = 0
+        self.pose_count_window += 1
+        self.last_pose_at = now
+        return self.pose_count_window <= MAX_POSE_HZ
 
 
 class LiminalPlayer:
-    """房间内一名玩家。"""
+    """房间内一名玩家（姿态由客户端上报）。"""
 
     def __init__(self, user_id: str, nickname: str, connection: PlayerConnection):
         self.user_id = user_id
@@ -180,15 +166,12 @@ class LiminalPlayer:
         self.vy = 0.0
         self.facing = 1
         self.on_ground = True
-        self.ack_sequence = 0
-        self.direction = 0
-        self.jump_held = False
-        self.sprint_held = False
+        self.gait = "walk"
         self.head_look = 0.0
+        self.ack_sequence = 0
         self.appearance = _default_appearance(user_id)
 
     def snapshot(self) -> Dict[str, Any]:
-        gait = "run" if self.sprint_held and abs(self.vx) > 40 else "walk"
         return {
             "id": self.user_id,
             "nickname": self.nickname,
@@ -198,7 +181,7 @@ class LiminalPlayer:
             "vy": round(self.vy, 3),
             "facing": self.facing,
             "onGround": self.on_ground,
-            "gait": gait,
+            "gait": self.gait if self.gait in ("walk", "run") else "walk",
             "headLook": round(self.head_look, 3),
             "appearance": dict(self.appearance),
             "connected": self.connected,
@@ -206,7 +189,7 @@ class LiminalPlayer:
 
 
 class LiminalRoom:
-    """阈限月台房间：角色物理 + 共享列车/燃料。"""
+    """阈限月台房间：姿态广播 + 共享列车/燃料。"""
 
     def __init__(self, room_id: str, is_public: bool = False):
         self.room_id = room_id
@@ -218,6 +201,7 @@ class LiminalRoom:
         self.train = {"throttle": 0.0, "brake": 0.0, "speed": 0.0}
         self.fuel_level = DEFAULT_FUEL
         self._fuel_add_times: Dict[str, float] = {}
+        self._train_set_times: Dict[str, float] = {}
 
     def connected_count(self) -> int:
         return sum(1 for player in self.players.values() if player.connected)
@@ -254,6 +238,7 @@ class LiminalRoom:
             "type": "world_snapshot",
             "protocolVersion": PROTOCOL_VERSION,
             "serverTick": self.server_tick,
+            "serverTimeMs": int(time.time() * 1000),
             "roomId": self.room_id,
             "isPublic": self.is_public,
             "playerCount": self.connected_count(),
@@ -294,57 +279,16 @@ class LiminalRoom:
             speed = max(speed - rate * dt, desired)
         self.train["speed"] = _clamp(speed, -5.0, 5.0)
 
-    def step_physics(self, dt: float) -> None:
-        now = _now()
-        for player in self.players.values():
-            if not player.connected:
-                continue
-            if now - player.connection.last_input_at > INPUT_IDLE_SECONDS:
-                player.direction = 0
-                player.jump_held = False
-                player.sprint_held = False
-            direction = player.direction
-            if direction != 0:
-                player.facing = direction
-            sprinting = player.sprint_held and direction != 0
-            move_speed = RUN_SPEED if sprinting else MOVE_SPEED
-            target_vx = direction * move_speed
-            accel = 1100.0 if direction == 0 else (1900.0 if sprinting else 1500.0)
-            if player.vx < target_vx:
-                player.vx = min(player.vx + accel * dt, target_vx)
-            else:
-                player.vx = max(player.vx - accel * dt, target_vx)
-            player.x = _clamp(player.x + player.vx * dt, WORLD_LEFT, WORLD_RIGHT)
-
-            if player.jump_held and player.on_ground:
-                player.vy = -JUMP_SPEED
-                player.on_ground = False
-                player.jump_held = False
-
-            player.vy += GRAVITY * dt
-            player.y += player.vy * dt
-            floor_y = _floor_at(player.x)
-            if floor_y is not None and player.y >= 0.0:
-                player.y = 0.0
-                player.vy = 0.0
-                player.on_ground = True
-            else:
-                player.on_ground = False
-
-        self.step_train(dt)
-
     async def _tick_loop(self) -> None:
-        physics_step = 1.0 / PHYSICS_HZ
-        snapshot_every = max(1, PHYSICS_HZ // SNAPSHOT_HZ)
+        step = 1.0 / SNAPSHOT_HZ
         try:
             while self.running:
                 started = _now()
                 self.server_tick += 1
-                self.step_physics(physics_step)
-                if self.server_tick % snapshot_every == 0:
-                    await self.broadcast_snapshot()
+                self.step_train(step)
+                await self.broadcast_snapshot()
                 elapsed = _now() - started
-                await asyncio.sleep(max(0.0, physics_step - elapsed))
+                await asyncio.sleep(max(0.0, step - elapsed))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -436,6 +380,7 @@ class LiminalLobbyManager:
                 "roomId": room.room_id,
                 "isPublic": room.is_public,
                 "playerCount": room.connected_count(),
+                "maxPlayers": MAX_PLAYERS_PER_ROOM,
             }
         )
         await connection.enqueue(room.world_snapshot())
@@ -451,34 +396,41 @@ class LiminalLobbyManager:
         )
         return room
 
-    async def handle_input(self, user_id: str, payload: Dict[str, Any]) -> None:
+    async def handle_pose(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
-        if not player.connection.accept_input_rate():
+        if not player.connection.accept_pose_rate():
             return
         if int(payload.get("protocolVersion") or 0) != PROTOCOL_VERSION:
             return
         sequence = int(payload.get("sequence") or 0)
         if sequence < player.ack_sequence:
             return
-        direction = int(payload.get("direction") or 0)
-        if direction not in (-1, 0, 1):
-            direction = 0
-        player.direction = direction
-        player.jump_held = bool(payload.get("jump"))
-        player.sprint_held = bool(payload.get("sprint"))
         try:
-            head_look = float(payload.get("headLook") or 0.0)
+            player.x = _clamp(float(payload.get("x") or player.x), WORLD_LEFT, WORLD_RIGHT)
+            player.y = _clamp(float(payload.get("y") or 0.0), -800.0, 80.0)
+            player.vx = _clamp(float(payload.get("vx") or 0.0), -800.0, 800.0)
+            player.vy = _clamp(float(payload.get("vy") or 0.0), -1200.0, 1200.0)
+            player.head_look = _clamp(float(payload.get("headLook") or 0.0), -0.6, 0.6)
         except (TypeError, ValueError):
-            head_look = 0.0
-        player.head_look = _clamp(head_look, -0.6, 0.6)
+            return
+        facing = int(payload.get("facing") or player.facing)
+        player.facing = 1 if facing >= 0 else -1
+        player.on_ground = bool(payload.get("onGround"))
+        gait = str(payload.get("gait") or "walk")
+        player.gait = "run" if gait == "run" else "walk"
         player.ack_sequence = sequence
 
     async def handle_train(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
+        now = _now()
+        last = room._train_set_times.get(user_id, 0.0)
+        if now - last < 0.04:
+            return
+        room._train_set_times[user_id] = now
         if "throttle" in payload:
             try:
                 room.train["throttle"] = _clamp(float(payload["throttle"]), -5.0, 5.0)
@@ -503,7 +455,13 @@ class LiminalLobbyManager:
         room._fuel_add_times[user_id] = now
         if room.fuel_level >= FUEL_MAX - 0.01:
             return
-        room.fuel_level = min(FUEL_MAX, room.fuel_level + FUEL_PER_ADD)
+        amount = FUEL_PER_ADD
+        try:
+            if payload.get("amount") is not None:
+                amount = _clamp(float(payload["amount"]), 1.0, FUEL_PER_ADD * 2)
+        except (TypeError, ValueError):
+            amount = FUEL_PER_ADD
+        room.fuel_level = min(FUEL_MAX, room.fuel_level + amount)
         await room.broadcast(
             {
                 "type": "fuel_changed",
@@ -531,6 +489,25 @@ class LiminalLobbyManager:
                 "facing": payload.get("facing", player.facing),
             },
             exclude_id=user_id,
+        )
+
+    async def handle_chat(self, user_id: str, payload: Dict[str, Any]) -> None:
+        room, player = self._room_player(user_id)
+        if room is None or player is None or not player.connected:
+            return
+        text = str(payload.get("text") or "").strip()
+        text = " ".join(text.split())[:CHAT_MAX_LEN]
+        if not text:
+            return
+        await room.broadcast(
+            {
+                "type": "chat",
+                "protocolVersion": PROTOCOL_VERSION,
+                "roomId": room.room_id,
+                "playerId": user_id,
+                "nickname": player.nickname,
+                "text": text,
+            }
         )
 
     async def handle_appearance(self, user_id: str, payload: Dict[str, Any]) -> None:
