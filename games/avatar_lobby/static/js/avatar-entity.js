@@ -75,7 +75,24 @@
       appearanceKey: '',
       joints: createJoints(),
       snapshots: [],
+      speechText: '',
+      speechUntil: 0,
     };
+  }
+
+  const SPEECH_DURATION_MS = 4500;
+  const SPEECH_MAX_CHARS = 40;
+
+  /** 在角色头顶显示气泡文案。 */
+  function setSpeechBubble(entity, text, durationMs = SPEECH_DURATION_MS) {
+    const cleaned = String(text || '').replace(/\s+/g, ' ').trim().slice(0, SPEECH_MAX_CHARS);
+    if (!cleaned) return;
+    entity.speechText = cleaned;
+    entity.speechUntil = performance.now() + durationMs;
+  }
+
+  function speechBubbleVisible(entity, now = performance.now()) {
+    return Boolean(entity.speechText) && now < entity.speechUntil;
   }
 
   function stepAngularSpring(joint, target, dt, stiffness = 85, damping = 13) {
@@ -327,6 +344,65 @@
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.fillText(label, screenX, screenY);
+
+    if (speechBubbleVisible(entity)) {
+      drawSpeechBubble(ctx, entity.speechText, screenX, screenY - labelHeight / 2 - 10);
+    }
+  }
+
+  /** 昵称上方的对话气泡。 */
+  function drawSpeechBubble(ctx, text, screenX, anchorBottomY) {
+    ctx.font = '500 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const maxWidth = 200;
+    const chars = String(text).split('');
+    const lines = [];
+    let line = '';
+    for (const ch of chars) {
+      const next = line + ch;
+      if (ctx.measureText(next).width > maxWidth && line) {
+        lines.push(line);
+        line = ch;
+      } else {
+        line = next;
+      }
+    }
+    if (line) lines.push(line);
+    const shown = lines.slice(0, 3);
+    if (shown.length === 3 && lines.length > 3) {
+      shown[2] = `${shown[2].slice(0, Math.max(1, shown[2].length - 1))}…`;
+    }
+    const padX = 10;
+    const padY = 7;
+    const lineH = 17;
+    let boxW = 0;
+    for (const row of shown) boxW = Math.max(boxW, ctx.measureText(row).width);
+    boxW += padX * 2;
+    const boxH = padY * 2 + shown.length * lineH;
+    const boxX = screenX - boxW / 2;
+    const boxY = anchorBottomY - boxH - 8;
+
+    ctx.fillStyle = 'rgba(248, 250, 252, 0.96)';
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(screenX - 6, boxY + boxH);
+    ctx.lineTo(screenX, boxY + boxH + 7);
+    ctx.lineTo(screenX + 6, boxY + boxH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#0f172a';
+    shown.forEach((row, index) => {
+      ctx.fillText(row, screenX, boxY + padY + lineH * (index + 0.5));
+    });
   }
 
   function drawAvatar(ctx, entity, view, dpr) {
@@ -431,8 +507,10 @@
     updateEntityMotion,
     loadAppearance,
     drawAvatar,
+    setSpeechBubble,
     footGroundLiftPx,
     pushSnapshot,
     sampleRemote,
+    SPEECH_MAX_CHARS,
   };
 })();
