@@ -1,0 +1,291 @@
+/**
+ * 阈限月台键位：物品栏、交互等，支持双槽位与修饰键组合。
+ */
+(() => {
+  const STORAGE_KEY = 'liminal-platform-input-bindings-v2';
+  const LEGACY_STORAGE_KEY = 'liminal-platform-input-bindings-v1';
+  const DEFAULT_BINDINGS = {
+    inventory: [['Tab'], []],
+    interact: [['KeyF'], []],
+    fire: [['KeyJ'], []],
+  };
+  const ACTION_NAMES = {
+    inventory: '物品栏',
+    interact: '交互',
+    fire: '开火',
+  };
+  const MODIFIER_CODES = new Set([
+    'ShiftLeft', 'ShiftRight',
+    'ControlLeft', 'ControlRight',
+    'AltLeft', 'AltRight',
+  ]);
+
+  let bindings = loadBindings();
+  let captureTarget = null;
+  const capturedModifiers = new Set();
+  let settingsMounted = false;
+
+  /** 深拷贝绑定表。 */
+  function cloneBindings(source) {
+    return Object.fromEntries(
+      Object.entries(source).map(([action, slots]) => [
+        action,
+        slots.map((codes) => [...codes]),
+      ])
+    );
+  }
+
+  /** 校验绑定结构。 */
+  function isValidBindings(value) {
+    return Object.keys(DEFAULT_BINDINGS).every((action) =>
+      Array.isArray(value[action]) &&
+      value[action].length === 2 &&
+      value[action].every((codes) =>
+        Array.isArray(codes) && codes.every((code) => typeof code === 'string')
+      )
+    );
+  }
+
+  /** 从 localStorage 读取绑定（合并新增动作）。 */
+  function loadBindings() {
+    const raw =
+      localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        const merged = cloneBindings(DEFAULT_BINDINGS);
+        for (const action of Object.keys(DEFAULT_BINDINGS)) {
+          if (
+            Array.isArray(parsed[action]) &&
+            parsed[action].length === 2 &&
+            parsed[action].every(
+              (codes) =>
+                Array.isArray(codes) && codes.every((code) => typeof code === 'string')
+            )
+          ) {
+            merged[action] = parsed[action].map((codes) => [...codes]);
+          }
+        }
+        return merged;
+      } catch {
+        // 损坏配置回退默认。
+      }
+    }
+    return cloneBindings(DEFAULT_BINDINGS);
+  }
+
+  /** 保存绑定。 */
+  function saveBindings() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(bindings));
+    renderBindings();
+    window.dispatchEvent(new CustomEvent('lp:bindings-changed'));
+  }
+
+  /** 格式化单键显示名。 */
+  function formatKey(code) {
+    if (code.startsWith('Key')) return code.slice(3);
+    if (code.startsWith('Digit')) return code.slice(5);
+    const labels = {
+      Tab: 'Tab',
+      ArrowLeft: '←',
+      ArrowRight: '→',
+      ArrowUp: '↑',
+      ArrowDown: '↓',
+      Space: '空格',
+      ShiftLeft: 'Shift',
+      ShiftRight: 'Shift',
+      ControlLeft: 'Ctrl',
+      ControlRight: 'Ctrl',
+      AltLeft: 'Alt',
+      AltRight: 'Alt',
+    };
+    return labels[code] || code;
+  }
+
+  /** 格式化一组按键。 */
+  function formatBinding(codes) {
+    return codes.length === 0 ? '添加' : codes.map(formatKey).join(' + ');
+  }
+
+  /** 格式化动作全部绑定。 */
+  function formatAction(action) {
+    return bindings[action]
+      .filter((codes) => codes.length > 0)
+      .map(formatBinding)
+      .join(' / ');
+  }
+
+  /** 判断按键集合是否触发动作。 */
+  function isPressed(action, pressedCodes) {
+    return bindings[action].some(
+      (codes) => codes.length > 0 && codes.every((code) => pressedCodes.has(code))
+    );
+  }
+
+  /** 判断 keydown 事件是否匹配动作（含修饰键）。 */
+  function matchesKeyEvent(action, event) {
+    if (event.repeat) return false;
+    for (const codes of bindings[action]) {
+      if (codes.length === 0) continue;
+      const mainCode = codes[codes.length - 1];
+      const modifiers = codes.slice(0, -1);
+      if (event.code !== mainCode) continue;
+      const needsShift = modifiers.some((c) => c === 'ShiftLeft' || c === 'ShiftRight');
+      const needsCtrl = modifiers.some((c) => c === 'ControlLeft' || c === 'ControlRight');
+      const needsAlt = modifiers.some((c) => c === 'AltLeft' || c === 'AltRight');
+      if (Boolean(event.shiftKey) !== needsShift) continue;
+      if (Boolean(event.ctrlKey) !== needsCtrl) continue;
+      if (Boolean(event.altKey) !== needsAlt) continue;
+      return true;
+    }
+    return false;
+  }
+
+  /** 是否正在录制键位。 */
+  function isCapturing(action, slot) {
+    return captureTarget?.action === action && captureTarget.slot === slot;
+  }
+
+  /** 渲染绑定按钮文案。 */
+  function renderBindings() {
+    for (const button of document.querySelectorAll('[data-lp-binding-action]')) {
+      const action = button.dataset.lpBindingAction;
+      const slot = Number(button.dataset.lpBindingSlot);
+      const capturing = isCapturing(action, slot);
+      const modifierText = [...capturedModifiers].map(formatKey).join(' + ');
+      button.textContent = capturing
+        ? (modifierText ? `${modifierText} + …` : '请按按键…')
+        : formatBinding(bindings[action][slot]);
+      button.classList.toggle('is-capturing', capturing);
+      button.classList.toggle('is-empty', bindings[action][slot].length === 0);
+    }
+    const status = document.getElementById('lpBindingStatus');
+    if (status && !captureTarget) {
+      status.textContent =
+        `${formatAction('inventory')} 物品栏 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火`;
+    }
+    const hint = document.getElementById('lpInventoryHint');
+    if (hint) {
+      hint.textContent =
+        `悬停查看信息 · 拖拽移动 · Shift+点击快速转移 · ${formatAction('inventory')} 关闭`;
+    }
+  }
+
+  /** 开始录制键位。 */
+  function beginCapture(action, slot) {
+    captureTarget = { action, slot };
+    capturedModifiers.clear();
+    const status = document.getElementById('lpBindingStatus');
+    if (status) status.textContent = '按下单键或修饰键组合；Delete 清除，Esc 取消';
+    renderBindings();
+  }
+
+  /** 结束录制。 */
+  function finishCapture(message) {
+    captureTarget = null;
+    capturedModifiers.clear();
+    const status = document.getElementById('lpBindingStatus');
+    if (status) status.textContent = message;
+    renderBindings();
+  }
+
+  /** 检测键位冲突。 */
+  function findConflict(candidate) {
+    for (const [action, slots] of Object.entries(bindings)) {
+      for (let slot = 0; slot < slots.length; slot += 1) {
+        if (action === captureTarget.action && slot === captureTarget.slot) continue;
+        const existing = slots[slot];
+        if (existing.length === 0 || candidate.length === 0) continue;
+        const same = candidate.length === existing.length &&
+          candidate.every((code, i) => code === existing[i]);
+        if (same) return { action, slot };
+      }
+    }
+    return null;
+  }
+
+  /** 录制 keydown。 */
+  function captureKeyDown(event) {
+    if (captureTarget === null) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (event.code === 'Escape') {
+      finishCapture('已取消修改');
+      return;
+    }
+    if (event.code === 'Delete' || event.code === 'Backspace') {
+      bindings[captureTarget.action][captureTarget.slot] = [];
+      saveBindings();
+      finishCapture('已清除键位');
+      return;
+    }
+    if (event.code === 'MetaLeft' || event.code === 'MetaRight') return;
+    if (MODIFIER_CODES.has(event.code)) {
+      capturedModifiers.add(event.code);
+      renderBindings();
+      return;
+    }
+
+    const candidate = [...capturedModifiers, event.code];
+    const conflict = findConflict(candidate);
+    if (conflict) {
+      const status = document.getElementById('lpBindingStatus');
+      if (status) {
+        status.textContent =
+          `${formatBinding(candidate)} 与${ACTION_NAMES[conflict.action]}冲突`;
+      }
+      return;
+    }
+    bindings[captureTarget.action][captureTarget.slot] = candidate;
+    saveBindings();
+    finishCapture('键位已保存');
+  }
+
+  /** 录制 keyup（修饰键）。 */
+  function captureKeyUp(event) {
+    if (captureTarget === null || !MODIFIER_CODES.has(event.code)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    capturedModifiers.delete(event.code);
+    renderBindings();
+  }
+
+  /** 恢复默认键位。 */
+  function resetBindings() {
+    bindings = cloneBindings(DEFAULT_BINDINGS);
+    saveBindings();
+    finishCapture('已恢复默认键位');
+  }
+
+  /** 挂载键位设置 UI 事件。 */
+  function mountSettings() {
+    if (settingsMounted) {
+      renderBindings();
+      return;
+    }
+    settingsMounted = true;
+    for (const button of document.querySelectorAll('[data-lp-binding-action]')) {
+      button.addEventListener('click', () => {
+        beginCapture(button.dataset.lpBindingAction, Number(button.dataset.lpBindingSlot));
+      });
+    }
+    const resetButton = document.getElementById('lpResetBindingsButton');
+    resetButton?.addEventListener('click', resetBindings);
+    window.addEventListener('keydown', captureKeyDown, true);
+    window.addEventListener('keyup', captureKeyUp, true);
+    renderBindings();
+  }
+
+  window.LpInputBindings = {
+    isPressed,
+    matchesKeyEvent,
+    formatAction,
+    formatKey,
+    mountSettings,
+    renderBindings,
+  };
+
+  document.addEventListener('DOMContentLoaded', mountSettings);
+  if (document.readyState !== 'loading') mountSettings();
+})();
