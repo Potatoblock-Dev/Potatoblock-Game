@@ -47,6 +47,37 @@
     }).catch(() => {});
   }
 
+  function bindInstallGuide() {
+    const guide = document.getElementById('pwaInstallGuide');
+    const closeBtn = document.getElementById('pwaGuideClose');
+    const doneBtn = document.getElementById('pwaGuideDone');
+    if (!guide) return { open() {}, close() {} };
+
+    function open() {
+      setHidden(guide, false);
+      guide.scrollTop = 0;
+      const panel = guide.querySelector('.pwa-guide-panel');
+      if (panel) panel.scrollTop = 0;
+      document.body.style.overflow = 'hidden';
+    }
+
+    function close() {
+      setHidden(guide, true);
+      document.body.style.overflow = '';
+    }
+
+    closeBtn?.addEventListener('click', close);
+    doneBtn?.addEventListener('click', close);
+    guide.addEventListener('click', (event) => {
+      if (event.target === guide) close();
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !guide.classList.contains('hidden')) close();
+    });
+
+    return { open, close };
+  }
+
   function bindInstallUi() {
     const installBtn = document.getElementById('pwaInstallButton');
     const installStatus = document.getElementById('pwaInstallStatus');
@@ -55,6 +86,7 @@
     const desktopHint = document.getElementById('pwaDesktopHint');
     const updateBtn = document.getElementById('pwaUpdateButton');
     const updateHint = document.getElementById('pwaUpdateHint');
+    const installGuide = bindInstallGuide();
 
     function hideAllInstallHints() {
       setHidden(iosHint, true);
@@ -77,6 +109,7 @@
       if (isStandalone()) {
         setHidden(installBtn, true);
         hideAllInstallHints();
+        installGuide.close();
         if (installStatus) {
           installStatus.textContent = '已安装为应用，可从主屏幕打开。';
           setHidden(installStatus, false);
@@ -91,7 +124,6 @@
         setHidden(installStatus, false);
       }
 
-      // 有系统安装弹窗时显示主按钮；否则也显示，点击后展开对应平台说明。
       setHidden(installBtn, false);
       if (deferredPrompt) {
         hideAllInstallHints();
@@ -115,10 +147,19 @@
           refreshInstallUi();
           return;
         }
-        // 无系统弹窗时不跳转清单文件，只展示本页安装说明。
+        // iOS / 无系统安装弹窗：打开图文引导，避免“点了没反应”。
+        if (isIOS()) {
+          installGuide.open();
+          return;
+        }
         showPlatformHint();
-        const hint = isIOS() ? iosHint : isAndroid() ? androidHint : desktopHint;
+        const hint = isAndroid() ? androidHint : desktopHint;
         hint?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        // 非 iOS 也给一个明确反馈：短暂高亮说明文字。
+        if (hint) {
+          hint.style.outline = '2px solid rgb(245 158 11 / .7)';
+          window.setTimeout(() => { hint.style.outline = ''; }, 1200);
+        }
       });
     }
 

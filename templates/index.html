@@ -112,6 +112,36 @@
     .pwa-hint { margin-top: 8px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; opacity: .85; border: 1px solid rgb(148 163 184 / .25); }
     .pwa-action { margin-top: 8px; width: 100%; padding: 11px 14px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid rgb(148 163 184 / .3); background: rgb(245 158 11 / .15); }
     .pwa-action:hover { background: rgb(245 158 11 / .25); }
+    .pwa-guide-overlay {
+      position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center;
+      padding: 12px; background: rgb(8 8 8 / .72); backdrop-filter: blur(4px);
+    }
+    @media (min-width: 640px) {
+      .pwa-guide-overlay { align-items: center; }
+    }
+    .pwa-guide-panel {
+      width: min(440px, 100%); max-height: min(88dvh, 760px); overflow: auto;
+      padding: 18px 16px 20px; border-radius: 16px 16px 12px 12px;
+      border: 1px solid rgb(148 163 184 / .28); background: #1c1c1c; color: inherit;
+      box-shadow: 0 18px 48px rgb(0 0 0 / .5);
+    }
+    html[data-theme='light'] .pwa-guide-panel { background: #fff; box-shadow: 0 18px 48px rgb(15 23 42 / .2); }
+    .pwa-guide-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+    .pwa-guide-title h2 { margin: 0; font-size: 17px; font-weight: 700; }
+    .pwa-guide-lead { margin: 0 0 14px; font-size: 13px; line-height: 1.5; opacity: .75; }
+    .pwa-guide-steps { display: flex; flex-direction: column; gap: 14px; }
+    .pwa-guide-step {
+      margin: 0; padding: 12px; border-radius: 12px;
+      border: 1px solid rgb(148 163 184 / .22); background: rgb(148 163 184 / .06);
+    }
+    .pwa-guide-step h3 { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+    .pwa-guide-step p { margin: 0 0 10px; font-size: 12px; line-height: 1.5; opacity: .8; }
+    .pwa-guide-step img {
+      display: block; width: 100%; height: auto; border-radius: 10px;
+      border: 1px solid rgb(148 163 184 / .25); background: #0b1220;
+    }
+    .pwa-guide-actions { margin-top: 14px; display: flex; gap: 8px; }
+    .pwa-guide-actions .pwa-action { margin-top: 0; }
     .hidden { display: none !important; }
     /* 深浅色切换时的柔和过渡；排除动画开关本体，避免干扰其自身过渡 */
     html.theme-fading,
@@ -190,7 +220,7 @@
                 <button id="pwaInstallButton" type="button" class="pwa-action hidden">添加到主屏幕 / 安装应用</button>
                 <button id="pwaUpdateButton" type="button" class="pwa-action hidden">更新应用</button>
                 <p id="pwaUpdateHint" class="pwa-hint hidden"></p>
-                <p id="pwaIosHint" class="pwa-hint hidden">iPhone / iPad：用 Safari 打开本站 → 点底部分享按钮 → 选择「添加到主屏幕」。不要打开应用清单文件。</p>
+                <p id="pwaIosHint" class="pwa-hint hidden">iPhone / iPad：点上方按钮查看图文安装步骤（Safari 分享 → 添加到主屏幕）。</p>
                 <p id="pwaAndroidHint" class="pwa-hint hidden">Android：用 Chrome 打开本站 → 右上角菜单 →「安装应用」或「添加到主屏幕」。</p>
                 <p id="pwaDesktopHint" class="pwa-hint hidden">电脑：用 Chrome / Edge 打开本站 → 地址栏右侧安装图标，或菜单里的「安装应用」。</p>
             </div>
@@ -209,7 +239,42 @@
         </div>
     </div>
 
-    <script src="/static/js/pwa.js?v=2"></script>
+    <div id="pwaInstallGuide" class="pwa-guide-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pwaGuideTitle">
+        <div class="pwa-guide-panel">
+            <div class="pwa-guide-title">
+                <h2 id="pwaGuideTitle">添加到主屏幕</h2>
+                <button id="pwaGuideClose" type="button" class="settings-close" aria-label="关闭">✕</button>
+            </div>
+            <p class="pwa-guide-lead">请用 <strong>Safari</strong> 打开本站，按下面步骤操作。必须从系统分享菜单添加，网页无法代替这一步。</p>
+            <div class="pwa-guide-steps">
+                <section class="pwa-guide-step">
+                    <h3>1. 打开分享菜单</h3>
+                    <p>点 Safari 底栏中间的「分享」按钮（方框向上箭头），或右下角「···」里的「共享」。</p>
+                    <img src="/static/img/pwa-install/ios-step1-share.png" alt="Safari 菜单中的共享" width="527" height="1024" loading="lazy">
+                </section>
+                <section class="pwa-guide-step">
+                    <h3>2. 展开更多选项</h3>
+                    <p>在分享面板横向一排里，向右滑并点「查看更多」。</p>
+                    <img src="/static/img/pwa-install/ios-step2-more.png" alt="分享面板查看更多" width="900" height="357" loading="lazy">
+                </section>
+                <section class="pwa-guide-step">
+                    <h3>3. 选择「添加到主屏幕」</h3>
+                    <p>在列表里找到并点「添加到主屏幕」（方框带加号的图标）。</p>
+                    <img src="/static/img/pwa-install/ios-step3-add-home.png" alt="选择添加到主屏幕" width="900" height="914" loading="lazy">
+                </section>
+                <section class="pwa-guide-step">
+                    <h3>4. 确认添加</h3>
+                    <p>检查名称后点右上角「添加」。建议保持「作为网页 App 打开」开启。</p>
+                    <img src="/static/img/pwa-install/ios-step4-confirm.png" alt="确认添加到主屏幕" width="900" height="675" loading="lazy">
+                </section>
+            </div>
+            <div class="pwa-guide-actions">
+                <button id="pwaGuideDone" type="button" class="pwa-action">我知道了</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/pwa.js?v=3"></script>
     <script src="/static/js/passport-login.js"></script>
     <script src="/static/js/main.js"></script>
     <script>
