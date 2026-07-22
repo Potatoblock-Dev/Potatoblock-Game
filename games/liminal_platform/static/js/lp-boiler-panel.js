@@ -1,5 +1,5 @@
 /**
- * 锅炉控制台：节流拉杆 + 刹车拉杆（CSS 模拟，后续可换贴图）。
+ * 动力车驾驶台：节流阀 + 制动阀（嵌入式机柜 UI）。
  */
 (() => {
   const root = document.getElementById('lpBoilerPanelRoot');
@@ -13,6 +13,7 @@
   const speedNeedle = document.getElementById('lpSpeedoNeedle');
   const speedDir = document.getElementById('lpSpeedoDir');
   const closeButton = document.getElementById('lpBoilerPanelClose');
+  const fuelFill = document.getElementById('lpFuelGaugeFill');
 
   if (!root || !throttleTrack || !brakeTrack) return;
 
@@ -26,19 +27,21 @@
     return open;
   }
 
-  /** 打开控制台。 */
+  /** 打开驾驶台。 */
   function openPanel() {
     if (open) return;
     if (window.LpInventory?.isOpen()) window.LpInventory.close();
+    if (window.LpFuelFeed?.isOpen()) window.LpFuelFeed.close();
     open = true;
     root.hidden = false;
     root.setAttribute('aria-hidden', 'false');
     document.body.classList.add('lp-boiler-panel-open');
     window.LpTouchControls?.setEnabled(false);
     syncFromState();
+    syncFuelGauge();
   }
 
-  /** 关闭控制台。 */
+  /** 关闭驾驶台。 */
   function closePanel() {
     if (!open) return;
     open = false;
@@ -106,7 +109,6 @@
     track.addEventListener('pointerdown', (event) => {
       if (!open) return;
       drag = { kind, pointerId: event.pointerId };
-      Drive.setLocalControl?.(true);
       track.setPointerCapture(event.pointerId);
       applyPointer(track, event.clientY, kind);
       event.preventDefault();
@@ -127,14 +129,7 @@
     if (drag.kind === 'throttle') Drive.snapThrottle();
     if (drag.kind === 'brake') Drive.onBrakeReleased();
     drag = null;
-    Drive.setLocalControl?.(false);
     syncFromState();
-  });
-
-  window.addEventListener('pointercancel', () => {
-    if (!drag) return;
-    drag = null;
-    Drive.setLocalControl?.(false);
   });
 
   window.addEventListener('pointercancel', (event) => {
@@ -168,11 +163,16 @@
 
   window.addEventListener('liminal:train-drive', syncFromState);
   window.addEventListener('liminal:fuel-changed', () => {
-    const label = document.getElementById('lpBoilerFuelReadout');
-    if (label && window.LiminalInteract) {
-      label.textContent = `${Math.round(window.LiminalInteract.getFuelLevel())}/100`;
-    }
+    syncFuelGauge();
   });
+
+  /** 同步锅炉燃料玻璃管与读数。 */
+  function syncFuelGauge() {
+    const level = window.LiminalInteract?.getFuelLevel?.() ?? 0;
+    const label = document.getElementById('lpBoilerFuelReadout');
+    if (label) label.textContent = `${Math.round(level)}/100`;
+    if (fuelFill) fuelFill.style.height = `${Math.max(0, Math.min(100, level))}%`;
+  }
 
   window.LpBoilerPanel = {
     open: openPanel,
@@ -183,4 +183,5 @@
   };
 
   syncFromState();
+  syncFuelGauge();
 })();

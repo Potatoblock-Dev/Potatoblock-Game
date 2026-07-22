@@ -8,10 +8,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
-  <link rel="icon" href="/static/icons/favicon.ico?v=1" sizes="any">
-  <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=21">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=26">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -21,22 +19,24 @@
     </div>
     <div class="lp-stage-ui">
       <header class="lp-hud-top">
-        <div class="lp-title-block">
-          <p class="lp-title">阈限月台</p>
-          <p class="lp-subtitle">Liminal Platform · {{ nickname }}</p>
-        </div>
-        <div class="lp-mp-bar" aria-label="多人房间">
-          <span id="mpStatus" class="lp-mp-status is-offline">连接中</span>
-          <span id="mpRoom" class="lp-mp-room">公共月台</span>
-          <span id="mpCount" class="lp-mp-count">0/10</span>
-          <button type="button" id="mpCreateButton" class="lp-mp-button">创建房间</button>
-          <label class="lp-mp-join">
-            <input id="mpJoinInput" type="text" maxlength="16" placeholder="房间码" autocomplete="off" spellcheck="false">
-            <button type="button" id="mpJoinButton" class="lp-mp-button">加入</button>
-          </label>
-          <button type="button" id="mpInviteButton" class="lp-mp-button" disabled>邀请</button>
-          <button type="button" id="mpPublicButton" class="lp-mp-button" disabled>公共</button>
-          <span id="mpFeedback" class="lp-mp-feedback" aria-live="polite"></span>
+        <div class="lp-hud-main">
+          <div class="lp-title-block">
+            <p class="lp-title">阈限月台</p>
+            <p class="lp-subtitle">Liminal Platform · {{ nickname }}</p>
+          </div>
+          <div class="mp-bar" aria-label="多人房间">
+            <span id="mpStatus" class="mp-status is-offline">连接中</span>
+            <span id="mpRoom" class="mp-room">公共月台</span>
+            <span id="mpCount" class="mp-count">0/10</span>
+            <button type="button" id="mpCreateButton" class="lp-mp-button">创建房间</button>
+            <label class="mp-join">
+              <input id="mpJoinInput" type="text" maxlength="16" placeholder="房间码" autocomplete="off" spellcheck="false">
+              <button type="button" id="mpJoinButton" class="lp-mp-button">加入</button>
+            </label>
+            <button type="button" id="mpInviteButton" class="lp-mp-button" disabled>邀请</button>
+            <button type="button" id="mpPublicButton" class="lp-mp-button" disabled>公共月台</button>
+            <span id="mpFeedback" class="mp-feedback" aria-live="polite"></span>
+          </div>
         </div>
         <nav class="lp-hud-actions">
           <a class="lp-skin-link" href="/avatar-lobby">
@@ -49,21 +49,7 @@
           </a>
         </nav>
       </header>
-      <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · F 交互 · Tab 物品栏 · Enter 说话</p>
-      <div id="speechChatBar" class="speech-chat-bar" aria-hidden="true">
-        <input
-          id="speechChatInput"
-          type="text"
-          maxlength="40"
-          enterkeyhint="send"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="输入消息，Enter 发送"
-          aria-label="聊天消息"
-        >
-        <button type="button" data-speech-chat-send class="speech-chat-send">发送</button>
-        <button type="button" data-speech-chat-cancel class="speech-chat-cancel">取消</button>
-      </div>
+      <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · F 交互 · Tab 物品栏</p>
       <div id="lpMobileControls" class="lp-mobile-controls" aria-label="触控操作">
         <div
           id="lpMoveJoystick"
@@ -86,6 +72,7 @@
             <span id="lpLookJoystickKnob" class="lp-look-joystick-knob"></span>
           </div>
           <div class="lp-mobile-action-secondary">
+            <button type="button" id="lpMobileSprintButton" class="lp-mobile-sprint-button" aria-pressed="false">奔跑</button>
             <button type="button" id="lpMobileInventoryButton" class="lp-mobile-inventory-button">物品</button>
             <button type="button" id="lpMobileInteractButton" class="lp-mobile-interact-button" hidden>交互</button>
           </div>
@@ -113,7 +100,7 @@
           </div>
         </header>
         <div id="lpInventorySettings" class="lp-inventory-settings" hidden>
-          <p class="lp-inventory-settings-title">键位设置</p>
+          <p class="lp-inventory-settings-title">键位与移动</p>
           <div class="lp-binding-row">
             <span>物品栏</span>
             <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="0"></button>
@@ -129,6 +116,15 @@
             <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="0"></button>
             <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="1"></button>
           </div>
+          <div class="lp-binding-row">
+            <span>奔跑</span>
+            <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="0"></button>
+            <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="1"></button>
+          </div>
+          <label class="lp-setting-toggle">
+            <input type="checkbox" id="lpAutoRunToggle" />
+            <span>自动奔跑（桌面：默认奔跑、按住奔跑键行走；移动端：默认打开奔跑切换）</span>
+          </label>
           <p id="lpBindingStatus" class="lp-binding-status"></p>
           <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button">恢复默认</button>
         </div>
@@ -161,6 +157,10 @@
               <div class="lp-equip-cell lp-equip-legs">
                 <span class="lp-equip-label">腿部</span>
                 <div id="lpEquipSlot2" class="lp-equip-slot-host"></div>
+              </div>
+              <div class="lp-equip-cell lp-equip-bag">
+                <span class="lp-equip-label">背包</span>
+                <div id="lpEquipSlot5" class="lp-equip-slot-host"></div>
               </div>
             </div>
             <div class="lp-hands-bar" aria-label="手部物品栏">
@@ -219,8 +219,8 @@
     <div id="lpFuelFeedRoot" class="lp-fuel-feed-root" hidden aria-hidden="true">
       <div class="lp-fuel-feed-veil" aria-hidden="true"></div>
       <div class="lp-fuel-feed-stage" role="dialog" aria-modal="true" aria-label="添加燃料">
-        <button type="button" id="lpFuelFeedClose" class="lp-fuel-feed-close">关闭</button>
-        <p class="lp-fuel-feed-hint">把右侧煤炭拖到左侧炉口</p>
+        <button type="button" id="lpFuelFeedClose" class="lp-fuel-feed-close">离席</button>
+        <p class="lp-fuel-feed-hint">将煤炭投入左侧炉口</p>
         <div id="lpFuelDropZone" class="lp-fuel-drop-zone">
           <span class="lp-fuel-drop-label">炉口</span>
           <span class="lp-fuel-drop-sub">拖入添加</span>
@@ -239,126 +239,153 @@
     </div>
     <div id="lpBoilerPanelRoot" class="lp-boiler-panel-root" hidden aria-hidden="true">
       <div class="lp-boiler-backdrop"></div>
-      <div class="lp-boiler-shell" role="dialog" aria-modal="true" aria-label="锅炉控制台">
-        <header class="lp-boiler-header">
-          <div>
-            <p class="lp-boiler-eyebrow">动力车厢 · 锅炉</p>
-            <h2 class="lp-boiler-title">控制台</h2>
-          </div>
-          <button type="button" id="lpBoilerPanelClose" class="lp-boiler-close">关闭</button>
-        </header>
-        <div class="lp-boiler-status">
-          <div class="lp-boiler-fuel-block">
-            <span class="lp-boiler-status-label">燃料</span>
-            <strong id="lpBoilerFuelReadout">35/100</strong>
-          </div>
-          <div class="lp-speedo" aria-label="车速表">
-            <div class="lp-speedo-face">
-              <svg class="lp-speedo-dial" viewBox="0 0 120 78" aria-hidden="true">
-                <path
-                  class="lp-speedo-arc"
-                  d="M14 66 A46 46 0 0 1 106 66"
-                  fill="none"
-                />
-                <g class="lp-speedo-ticks">
-                  <line x1="14" y1="66" x2="20" y2="60" />
-                  <line x1="26" y1="42" x2="31" y2="39" />
-                  <line x1="46" y1="24" x2="49" y2="29" />
-                  <line x1="60" y1="20" x2="60" y2="26" />
-                  <line x1="74" y1="24" x2="71" y2="29" />
-                  <line x1="94" y1="42" x2="89" y2="39" />
-                  <line x1="106" y1="66" x2="100" y2="60" />
-                </g>
-                <text x="18" y="74" class="lp-speedo-mark">0</text>
-                <text x="60" y="16" class="lp-speedo-mark" text-anchor="middle">60</text>
-                <text x="102" y="74" class="lp-speedo-mark" text-anchor="end">120</text>
-              </svg>
-              <div id="lpSpeedoNeedle" class="lp-speedo-needle"></div>
-              <div class="lp-speedo-hub"></div>
-              <div class="lp-speedo-center">
-                <strong id="lpSpeedReadout">0</strong>
-                <span class="lp-speedo-unit">km/h</span>
+      <div class="lp-boiler-shell" role="dialog" aria-modal="true" aria-label="动力车驾驶台">
+        <div class="lp-cab-desk">
+          <div class="lp-cab-desk-lip" aria-hidden="true"></div>
+          <header class="lp-boiler-header">
+            <div class="lp-cab-nameplate">
+              <p class="lp-boiler-eyebrow">动力车 · 机房</p>
+              <h2 class="lp-boiler-title">驾驶台</h2>
+            </div>
+            <button type="button" id="lpBoilerPanelClose" class="lp-boiler-close" title="离开驾驶台">
+              <span class="lp-cab-cutoff-lamp" aria-hidden="true"></span>
+              离席
+            </button>
+          </header>
+
+          <div class="lp-boiler-instruments">
+            <div class="lp-fuel-gauge" aria-label="燃料表">
+              <div class="lp-fuel-gauge-bezel">
+                <div class="lp-fuel-gauge-glass">
+                  <div id="lpFuelGaugeFill" class="lp-fuel-gauge-fill"></div>
+                  <div class="lp-fuel-gauge-marks" aria-hidden="true">
+                    <span>满</span>
+                    <span></span>
+                    <span>空</span>
+                  </div>
+                </div>
               </div>
-              <span id="lpSpeedoDir" class="lp-speedo-dir">静止</span>
+              <div class="lp-fuel-gauge-readout">
+                <span class="lp-boiler-status-label">锅炉燃料</span>
+                <strong id="lpBoilerFuelReadout">35/100</strong>
+              </div>
+            </div>
+
+            <div class="lp-speedo" aria-label="车速表">
+              <div class="lp-speedo-bezel">
+                <div class="lp-speedo-face">
+                  <svg class="lp-speedo-dial" viewBox="0 0 120 78" aria-hidden="true">
+                    <path
+                      class="lp-speedo-arc"
+                      d="M14 66 A46 46 0 0 1 106 66"
+                      fill="none"
+                    />
+                    <g class="lp-speedo-ticks">
+                      <line x1="14" y1="66" x2="20" y2="60" />
+                      <line x1="26" y1="42" x2="31" y2="39" />
+                      <line x1="46" y1="24" x2="49" y2="29" />
+                      <line x1="60" y1="20" x2="60" y2="26" />
+                      <line x1="74" y1="24" x2="71" y2="29" />
+                      <line x1="94" y1="42" x2="89" y2="39" />
+                      <line x1="106" y1="66" x2="100" y2="60" />
+                    </g>
+                    <text x="18" y="74" class="lp-speedo-mark">0</text>
+                    <text x="60" y="16" class="lp-speedo-mark" text-anchor="middle">60</text>
+                    <text x="102" y="74" class="lp-speedo-mark" text-anchor="end">120</text>
+                  </svg>
+                  <div id="lpSpeedoNeedle" class="lp-speedo-needle"></div>
+                  <div class="lp-speedo-hub"></div>
+                  <div class="lp-speedo-center">
+                    <strong id="lpSpeedReadout">0</strong>
+                    <span class="lp-speedo-unit">km/h</span>
+                  </div>
+                  <span id="lpSpeedoDir" class="lp-speedo-dir">静止</span>
+                </div>
+              </div>
+              <span class="lp-boiler-status-label lp-speedo-caption">车速</span>
             </div>
           </div>
+
+          <div class="lp-boiler-levers">
+            <section class="lp-lever-column">
+              <div class="lp-lever-head">
+                <h3 class="lp-lever-title">节流阀</h3>
+                <p id="lpThrottleReadout" class="lp-lever-readout">停止</p>
+              </div>
+              <div class="lp-lever-stage">
+                <div class="lp-lever-notches">
+                  <button type="button" data-throttle-notch="5">前进 5</button>
+                  <button type="button" data-throttle-notch="3">前进 3</button>
+                  <button type="button" data-throttle-notch="1">前进 1</button>
+                  <button type="button" data-throttle-notch="0">中立</button>
+                  <button type="button" data-throttle-notch="-1">后退 1</button>
+                  <button type="button" data-throttle-notch="-3">后退 3</button>
+                  <button type="button" data-throttle-notch="-5">后退 5</button>
+                </div>
+                <div
+                  id="lpThrottleTrack"
+                  class="lp-lever-track lp-lever-track-throttle"
+                  role="slider"
+                  aria-label="节流拉杆"
+                  aria-valuemin="-5"
+                  aria-valuemax="5"
+                >
+                  <span class="lp-lever-slot"></span>
+                  <span id="lpThrottleKnob" class="lp-lever-knob"></span>
+                </div>
+              </div>
+            </section>
+            <section class="lp-lever-column">
+              <div class="lp-lever-head">
+                <h3 class="lp-lever-title">制动阀</h3>
+                <p id="lpBrakeReadout" class="lp-lever-readout">松开</p>
+              </div>
+              <div class="lp-lever-stage">
+                <div class="lp-lever-notches">
+                  <button type="button" data-brake-preset="0">松开</button>
+                  <button type="button" data-brake-preset="0.35">轻刹</button>
+                  <button type="button" data-brake-preset="0.7">制动</button>
+                  <button type="button" data-brake-preset="1">急刹</button>
+                </div>
+                <div
+                  id="lpBrakeTrack"
+                  class="lp-lever-track lp-lever-track-brake"
+                  role="slider"
+                  aria-label="刹车拉杆"
+                  aria-valuemin="0"
+                  aria-valuemax="1"
+                >
+                  <span class="lp-lever-slot"></span>
+                  <span id="lpBrakeKnob" class="lp-lever-knob lp-lever-knob-brake"></span>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <p class="lp-cab-stencil">拖动拉杆或点刻度 · Esc 离席</p>
         </div>
-        <div class="lp-boiler-levers">
-          <section class="lp-lever-column">
-            <h3 class="lp-lever-title">节流拉杆</h3>
-            <p id="lpThrottleReadout" class="lp-lever-readout">停止</p>
-            <div class="lp-lever-stage">
-              <div class="lp-lever-notches">
-                <button type="button" data-throttle-notch="5">前进 5</button>
-                <button type="button" data-throttle-notch="3">前进 3</button>
-                <button type="button" data-throttle-notch="1">前进 1</button>
-                <button type="button" data-throttle-notch="0">停止</button>
-                <button type="button" data-throttle-notch="-1">后退 1</button>
-                <button type="button" data-throttle-notch="-3">后退 3</button>
-                <button type="button" data-throttle-notch="-5">后退 5</button>
-              </div>
-              <div
-                id="lpThrottleTrack"
-                class="lp-lever-track lp-lever-track-throttle"
-                role="slider"
-                aria-label="节流拉杆"
-                aria-valuemin="-5"
-                aria-valuemax="5"
-              >
-                <span class="lp-lever-slot"></span>
-                <span id="lpThrottleKnob" class="lp-lever-knob"></span>
-              </div>
-            </div>
-          </section>
-          <section class="lp-lever-column">
-            <h3 class="lp-lever-title">刹车拉杆</h3>
-            <p id="lpBrakeReadout" class="lp-lever-readout">松开</p>
-            <div class="lp-lever-stage">
-              <div class="lp-lever-notches">
-                <button type="button" data-brake-preset="0">松开</button>
-                <button type="button" data-brake-preset="0.35">轻刹</button>
-                <button type="button" data-brake-preset="0.7">制动</button>
-                <button type="button" data-brake-preset="1">急刹</button>
-              </div>
-              <div
-                id="lpBrakeTrack"
-                class="lp-lever-track lp-lever-track-brake"
-                role="slider"
-                aria-label="刹车拉杆"
-                aria-valuemin="0"
-                aria-valuemax="1"
-              >
-                <span class="lp-lever-slot"></span>
-                <span id="lpBrakeKnob" class="lp-lever-knob lp-lever-knob-brake"></span>
-              </div>
-            </div>
-          </section>
-        </div>
-        <footer class="lp-boiler-footer">
-          <p>拖动拉杆或点击档位 · Esc / 关闭 退出 · 后续可替换拉杆贴图</p>
-        </footer>
       </div>
     </div>
   </div>
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
-  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=2"></script>
+  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=3"></script>
   <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=13"></script>
-  <script src="/static/games/avatar-lobby/js/speech-chat.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/carriage-spec.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=5"></script>
-  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=6"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=6"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=6"></script>
+  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=8"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=7"></script>
   <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=8"></script>
+  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=12"></script>
   <script src="/static/games/liminal-platform/js/lp-combat.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-network.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=14"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=17"></script>
 </body>
 </html>

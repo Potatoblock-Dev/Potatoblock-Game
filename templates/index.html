@@ -206,7 +206,27 @@
         margin-bottom: 2rem;
       }
     }
-    /* 移动端下拉刷新提示 */
+    /* 移动端下拉刷新：跟手位移 + 松手回弹 */
+    body.home-page {
+      --pull-y: 0px;
+    }
+    .home-main,
+    .site-topbar {
+      transform: translate3d(0, var(--pull-y), 0);
+      will-change: transform;
+    }
+    body.home-page.is-pulling .home-main,
+    body.home-page.is-pulling .site-topbar,
+    body.home-page.is-pulling .pull-refresh {
+      transition: none;
+    }
+    body.home-page.is-rebounding .home-main,
+    body.home-page.is-rebounding .site-topbar {
+      transition: transform .45s cubic-bezier(0.22, 1.2, 0.36, 1);
+    }
+    body.home-page.is-rebounding .pull-refresh {
+      transition: opacity .28s ease, transform .45s cubic-bezier(0.22, 1.2, 0.36, 1);
+    }
     .pull-refresh {
       position: fixed;
       left: 0;
@@ -217,17 +237,16 @@
       align-items: flex-end;
       justify-content: center;
       pointer-events: none;
-      height: calc(env(safe-area-inset-top, 0px) + 12px);
+      height: calc(env(safe-area-inset-top, 0px) + 36px);
       opacity: 0;
-      transform: translateY(-8px);
-      transition: opacity .15s ease;
+      transform: translate3d(0, calc(var(--pull-y) * 0.55 - 12px), 0);
       font-size: 12px;
       letter-spacing: .04em;
       color: inherit;
     }
-    .pull-refresh.is-visible { opacity: .72; }
+    .pull-refresh.is-visible { opacity: .78; }
     .pull-refresh-inner {
-      margin-bottom: 2px;
+      margin-bottom: 4px;
       padding: 4px 10px;
       border-radius: 999px;
       background: rgb(148 163 184 / .16);
@@ -269,7 +288,7 @@
         </div>
     </div>
 
-    <div class="w-full max-w-4xl">
+    <div class="home-main w-full max-w-4xl">
         {% if logo or site_title %}
         <div class="site-brand text-center mb-12">
             {% if logo %}
@@ -393,7 +412,7 @@
     <script src="/static/js/pwa.js?v=4"></script>
     <script src="/static/js/changelog.js?v=1"></script>
     <script src="/static/js/passport-login.js"></script>
-    <script src="/static/js/main.js?v=5"></script>
+    <script src="/static/js/main.js?v=6"></script>
     <script>
     // 系统设置弹窗 + 主题模式（与游戏页共用 pb-theme-mode / pb-theme 存储键）
     // 自动/系统用上方两个按钮；手动深浅色用白天黑夜动画开关。

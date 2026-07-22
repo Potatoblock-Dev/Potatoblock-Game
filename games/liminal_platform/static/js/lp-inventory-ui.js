@@ -33,6 +33,7 @@
     document.getElementById('lpEquipSlot2'),
     document.getElementById('lpEquipSlot3'),
     document.getElementById('lpEquipSlot4'),
+    document.getElementById('lpEquipSlot5'),
   ];
 
   if (!root || !playerGrid || !storageGrid || !handsGrid || EQUIP_HOSTS.some((el) => !el)) {

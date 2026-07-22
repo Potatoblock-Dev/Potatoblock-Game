@@ -4,15 +4,18 @@
  */
 (() => {
   const Catalog = window.LpItemCatalog;
-  const STORAGE_KEY = 'liminal-platform-inventory-v4';
+  const STORAGE_KEY = 'liminal-platform-inventory-v5';
   const LEGACY_KEYS = [
+    'liminal-platform-inventory-v4',
     'liminal-platform-inventory-v3',
     'liminal-platform-inventory-v2',
     'liminal-platform-inventory-v1',
   ];
 
   /** 装备栏槽位键（与 UI 人偶一致）。 */
-  const EQUIP_SLOT_KEYS = ['head', 'chest', 'legs', 'accessory', 'accessory'];
+  const EQUIP_SLOT_KEYS = ['head', 'chest', 'legs', 'accessory', 'accessory', 'backpack'];
+  const PLAYER_COLS = 6;
+  const PLAYER_ROWS = 4;
 
   /** 创建空槽位数组。 */
   function emptySlots(size) {
@@ -329,10 +332,11 @@
     { index: 0, stack: { itemId: 'coal', qty: 16 } },
     { index: 1, stack: { itemId: 'scrap', qty: 4 } },
     { index: 2, stack: { itemId: 'wrench', qty: 1 } },
-    { index: 4, stack: { itemId: 'signal_lamp', qty: 1 } },
-    { index: 6, stack: { itemId: 'work_cap', qty: 1 } },
-    { index: 9, stack: { itemId: 'work_vest', qty: 1 } },
-    { index: 18, stack: { itemId: 'work_pants', qty: 1 } },
+    { index: 3, stack: { itemId: 'signal_lamp', qty: 1 } },
+    { index: 4, stack: { itemId: 'work_cap', qty: 1 } },
+    { index: 6, stack: { itemId: 'work_vest', qty: 1 } },
+    { index: 8, stack: { itemId: 'work_satchel', qty: 1 } },
+    { index: 16, stack: { itemId: 'work_pants', qty: 1 } },
   ];
 
   const STORAGE_SEED = [
@@ -342,9 +346,9 @@
     { index: 3, stack: { itemId: 'scrap', qty: 20 } },
   ];
 
-  /** 新建默认背包。 */
+  /** 新建默认背包（宽 6 × 高 4）。 */
   function createDefaultPlayer() {
-    return new Inventory('player', 6, 5, PLAYER_SEED);
+    return new Inventory('player', PLAYER_COLS, PLAYER_ROWS, PLAYER_SEED);
   }
 
   /** 新建默认仓库。 */
@@ -357,21 +361,53 @@
     return new Inventory('hands', 2, 1, [], { ignoreItemSize: true });
   }
 
-  /** 新建装备栏（头/胸/腿/配件×2）。 */
+  /** 新建装备栏（头/胸/腿/配件×2/背包）。 */
   function createDefaultEquip() {
-    return new Inventory('equip', 5, 1, [], {
+    return new Inventory('equip', EQUIP_SLOT_KEYS.length, 1, [], {
       ignoreItemSize: true,
       slotKeys: EQUIP_SLOT_KEYS,
     });
   }
 
-  /** 组装一套库存（含缺省装备栏）。 */
+  /** 将旧背包网格迁移到 6×4。 */
+  function ensurePlayerShape(player) {
+    if (player.cols === PLAYER_COLS && player.rows === PLAYER_ROWS) return player;
+    const next = new Inventory('player', PLAYER_COLS, PLAYER_ROWS, []);
+    for (let i = 0; i < player.size(); i += 1) {
+      if (player.isCovered(i)) continue;
+      const stack = player.getSlot(i);
+      if (!stack) continue;
+      if (i < next.size() && next.canPlaceAt(i, stack.itemId)) {
+        next.placeStack(i, stack);
+      } else {
+        next.addItem(stack.itemId, stack.qty);
+      }
+    }
+    return next;
+  }
+
+  /** 将旧装备栏扩展到含背包槽。 */
+  function ensureEquipShape(equip) {
+    const need = EQUIP_SLOT_KEYS.length;
+    if (equip.size() === need) {
+      equip.slotKeys = [...EQUIP_SLOT_KEYS];
+      return equip;
+    }
+    const next = createDefaultEquip();
+    for (let i = 0; i < Math.min(equip.size(), next.size()); i += 1) {
+      const stack = equip.getSlot(i);
+      if (stack) next.placeStack(i, stack);
+    }
+    return next;
+  }
+
+  /** 组装一套库存（含缺省装备栏），并校正网格尺寸。 */
   function bundleInventories(partial) {
     return {
-      player: partial.player,
+      player: ensurePlayerShape(partial.player),
       storage: partial.storage,
       hands: partial.hands || createDefaultHands(),
-      equip: partial.equip || createDefaultEquip(),
+      equip: ensureEquipShape(partial.equip || createDefaultEquip()),
     };
   }
 

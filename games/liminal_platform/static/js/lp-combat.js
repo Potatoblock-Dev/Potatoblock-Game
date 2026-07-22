@@ -34,12 +34,20 @@
    */
   function tryFire(options = {}) {
     if (state.cooldown > 0) return null;
+    const payload = spawnTracer(options);
+    if (!payload) return null;
+    state.cooldown = getCooldown();
+    window.dispatchEvent(new CustomEvent('lp:weapon-fired', { detail: payload }));
+    return payload;
+  }
+
+  /** 生成曳光（本地或远端回放；不占用冷却）。 */
+  function spawnTracer(options = {}) {
     const facing = options.facing >= 0 ? 1 : -1;
-    const originX = options.originX ?? 0;
-    const originY = options.originY ?? 0;
+    const originX = options.originX ?? options.x ?? 0;
+    const originY = options.originY ?? options.y ?? 0;
     const dir = normalizeDir(options.dirX ?? facing, options.dirY ?? 0, facing);
     const range = options.range ?? TRACE_LENGTH;
-
     const shot = {
       originX,
       originY,
@@ -48,21 +56,18 @@
       endX: originX + dir.x * range,
       endY: originY + dir.y * range,
       life: TRACE_LIFE,
-      weaponId: state.weaponId,
+      weaponId: options.weaponId || state.weaponId,
     };
     state.shots.push(shot);
-    state.cooldown = getCooldown();
-
-    const payload = {
+    return {
       originX,
       originY,
       dirX: dir.x,
       dirY: dir.y,
-      weaponId: state.weaponId,
+      weaponId: shot.weaponId,
       range,
+      facing,
     };
-    window.dispatchEvent(new CustomEvent('lp:weapon-fired', { detail: payload }));
-    return payload;
   }
 
   /** 推进冷却与曳光寿命。 */
@@ -107,6 +112,7 @@
 
   window.LpCombat = {
     tryFire,
+    spawnTracer,
     tick,
     draw,
     setWeapon,

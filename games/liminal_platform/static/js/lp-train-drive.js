@@ -40,59 +40,30 @@
     return brake >= EMERGENCY_BRAKE;
   }
 
-  let localControl = false;
-  let suppressNetwork = false;
-
-  /** 用户正在拖拽拉杆时标记，避免快照覆盖手感。 */
-  function setLocalControl(active) {
-    localControl = Boolean(active);
-  }
-
-  /** 是否由本机操作拉杆。 */
-  function isLocalControl() {
-    return localControl;
-  }
-
-  /** 推送列车状态到联机（若已连接）。 */
-  function pushNetwork() {
-    if (suppressNetwork) return;
-    window.LiminalNetworkSession?.sendTrain?.({
-      throttle: state.throttle,
-      brake: state.brake,
-    });
-  }
-
-  /** 应用服务端共享列车状态（不回传）。 */
-  function applyNetworkState(next = {}) {
-    if (localControl) return;
-    suppressNetwork = true;
-    if (next.throttle != null) state.throttle = Number(next.throttle) || 0;
-    if (next.brake != null) state.brake = Math.max(0, Math.min(1, Number(next.brake) || 0));
-    if (next.speed != null) state.speed = Number(next.speed) || 0;
-    if (isEmergencyBrake()) state.speed = 0;
-    suppressNetwork = false;
-    emit();
+  /** 用户操作后上报联机列车状态。 */
+  function notifyNetwork() {
+    window.LiminalSession?.notifyTrain?.(getState());
   }
 
   /** 设置节流档（自动吸附）。 */
   function setThrottle(value) {
     state.throttle = nearestNotch(Number(value) || 0);
     emit();
-    pushNetwork();
+    notifyNetwork();
   }
 
   /** 拖拽中临时设置（可不吸附）。 */
   function setThrottleRaw(value) {
     state.throttle = Math.max(-5, Math.min(5, Number(value) || 0));
     emit();
-    pushNetwork();
+    notifyNetwork();
   }
 
   /** 吸附当前节流到最近档。 */
   function snapThrottle() {
     state.throttle = nearestNotch(state.throttle);
     emit();
-    pushNetwork();
+    notifyNetwork();
   }
 
   /**
@@ -107,7 +78,7 @@
       state.speed = 0;
     }
     emit();
-    pushNetwork();
+    notifyNetwork();
   }
 
   /** 触发急刹并开始回弹（刻度按钮「急刹」）。 */
@@ -117,7 +88,7 @@
     state.speed = 0;
     state.brakeSpringing = true;
     emit();
-    pushNetwork();
+    notifyNetwork();
   }
 
   /** 松手：若在急刹位则开始缓慢回弹。 */
@@ -126,7 +97,7 @@
       state.speed = 0;
       state.brakeSpringing = true;
       emit();
-      pushNetwork();
+      notifyNetwork();
     }
   }
 
@@ -147,25 +118,16 @@
     return '制动';
   }
 
-  /** 每帧积分速度；急刹回弹在此推进。联机且非本机操作时由快照驱动。 */
+  /** 每帧积分速度；急刹回弹在此推进。 */
   function tick(dt) {
-    const netOwned =
-      Boolean(window.LiminalNetworkSession?.connected) && !localControl;
-
-    if (state.brakeSpringing && !netOwned) {
+    if (state.brakeSpringing) {
       state.brake = Math.max(0, state.brake - BRAKE_SPRING_RATE * dt);
       if (state.brake <= 0.001) {
         state.brake = 0;
         state.brakeSpringing = false;
       }
       emit();
-      pushNetwork();
-    }
-
-    if (netOwned) {
-      const intensity = Math.min(1, Math.abs(state.speed) / MAX_SPEED);
-      window.LpTrainAudio?.setDriveIntensity?.(intensity);
-      return;
+      notifyNetwork();
     }
 
     if (isEmergencyBrake()) {
@@ -218,6 +180,22 @@
     };
   }
 
+  /** 应用服务端权威列车状态（联机快照）。不回传网络。 */
+  function applyAuthority(partial = {}) {
+    if (partial.throttle != null) {
+      state.throttle = nearestNotch(Number(partial.throttle) || 0);
+    }
+    if (partial.brake != null) {
+      state.brake = Math.max(0, Math.min(1, Number(partial.brake) || 0));
+      if (state.brake <= 0.001) state.brakeSpringing = false;
+    }
+    if (partial.speed != null) {
+      state.speed = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, Number(partial.speed) || 0));
+    }
+    if (isEmergencyBrake()) state.speed = 0;
+    emit();
+  }
+
   window.LpTrainDrive = {
     THROTTLE_NOTCHES,
     EMERGENCY_BRAKE,
@@ -227,13 +205,11 @@
     setBrake,
     triggerEmergencyBrake,
     onBrakeReleased,
-    setLocalControl,
-    isLocalControl,
-    applyNetworkState,
     throttleLabel,
     brakeLabel,
     isEmergencyBrake,
     tick,
     getState,
+    applyAuthority,
   };
 })();

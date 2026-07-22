@@ -13,6 +13,7 @@
   const JUMP_SPEED = 520;
   const GRAVITY = 1400;
   const MOVE_SPEED = Entity.MOVE_SPEED;
+  const RUN_SPEED = Entity.RUN_SPEED || Entity.MOVE_SPEED * 1.6;
   const HALF_W = (Entity.AVATAR_COLLISION_WIDTH * Entity.AVATAR_DRAW_SCALE) / 2;
 
   const platforms = Spec.buildWalkPlatforms();
@@ -34,37 +35,6 @@
     x: local.x,
     y: Spec.FLOOR_Y,
   });
-
-  const speechChat = window.SpeechChat.createSpeechChat({
-    isBlocked() {
-      return (
-        (window.LpInventory?.isOpen() ?? false) ||
-        (window.LpBoilerPanel?.isOpen() ?? false) ||
-        (window.LpFuelFeed?.isOpen() ?? false)
-      );
-    },
-    onSend(text) {
-      Entity.setSpeechBubble(avatar, text);
-      networkSession?.sendChat?.(text);
-    },
-  });
-  speechChat.bind();
-
-  const networkSession = window.LiminalNetwork?.createSession?.() || null;
-  window.LiminalNetworkSession = networkSession;
-  const poseStep = 1 / (window.LiminalNetwork?.POSE_RATE_HZ || 20);
-  let poseAccumulator = 0;
-  let poseSequence = 1;
-  const remotePlayers = new Map();
-  let clockOffsetMs = null;
-  const INTERP_DELAY_MS = 100;
-  let syncedRoomId = null;
-
-  if (networkSession) {
-    networkSession.connect({ userId, nickname });
-    window.LiminalMultiplayerUi?.bindMultiplayerUi?.(networkSession);
-    window.addEventListener('beforeunload', () => networkSession.disconnect());
-  }
 
   const keys = new Set();
   const carImages = new Map();
@@ -107,13 +77,18 @@
     return label.split(' / ')[0];
   }
 
-  /** 是否有全屏 UI（物品栏 / 锅炉控制台 / 加燃料 / 聊天输入）。 */
+  /** 物品栏键显示文案。 */
+  function formatInventoryKey() {
+    const label = window.LpInputBindings?.formatAction('inventory') || 'Tab';
+    return label.split(' / ')[0];
+  }
+
+  /** 是否有全屏 UI（物品栏 / 锅炉控制台 / 加燃料）。 */
   function isUiOpen() {
     return (
       (window.LpInventory?.isOpen() ?? false) ||
       (window.LpBoilerPanel?.isOpen() ?? false) ||
-      (window.LpFuelFeed?.isOpen() ?? false) ||
-      (speechChat?.isOpen() ?? false)
+      (window.LpFuelFeed?.isOpen() ?? false)
     );
   }
 
@@ -217,14 +192,13 @@
     if (isUiOpen() || !window.LpCombat) return;
     const aim = getAimWorld();
     const muzzle = getMuzzleWorld();
-    const payload = window.LpCombat.tryFire({
+    window.LpCombat.tryFire({
       originX: muzzle.x,
       originY: muzzle.y,
       dirX: aim.x - muzzle.x,
       dirY: aim.y - muzzle.y,
       facing: avatar.facing,
     });
-    if (payload) networkSession?.sendFire?.(payload);
   }
 
   /** 与 avatar-lobby 一致：把 skins API 条目转成 appearance。 */
@@ -258,21 +232,22 @@
       const wornId = payload.worn;
       // 与大厅一致：只应用已穿戴皮套，不擅自换成 skins[0]
       const skin = wornId ? skins.find((item) => item.id === wornId) || null : null;
-      await Entity.loadAppearance(avatar, appearanceFromSkin(skin));
+      const appearance = appearanceFromSkin(skin);
+      await Entity.loadAppearance(avatar, appearance);
+      window.LiminalSession?.setAppearance?.(appearance);
       syncAvatarPose();
       avatar._lpSkinMeta = skin
         ? { id: skin.id, name: skin.name, kind: skin.kind }
         : null;
-      networkSession?.setAppearance?.(appearanceFromSkin(skin));
     } catch (error) {
       console.warn('[liminal] loadWornAppearance failed', error);
     }
   }
 
   /** 脚底相对当前平台顶边的世界 Y → avatar 绘制锚点。 */
-  function stageYFromPhysics(physicsY) {
-    const floorY = floorAt(local.x) ?? Spec.FLOOR_Y;
-    return floorY + physicsY - Entity.footGroundLiftPx(avatar);
+  function stageYFromPhysics(physicsY, entity = avatar, atX = local.x) {
+    const floorY = floorAt(atX) ?? Spec.FLOOR_Y;
+    return floorY + physicsY - Entity.footGroundLiftPx(entity);
   }
 
   /** 同步运动状态到 avatar 实体（供绘制与程序化动作）。 */
@@ -285,144 +260,9 @@
     avatar.kneel = local.kneel;
   }
 
-  /** 脚底相对平台的物理 Y → 绘制锚点（可指定实体）。 */
-  function stageYFromPhysicsFor(entity, physicsY, worldX) {
-    const floorY = floorAt(worldX ?? entity.x) ?? Spec.FLOOR_Y;
-    return floorY + physicsY - Entity.footGroundLiftPx(entity);
-  }
-
-  /** 确保远端角色实体存在。 */
-  function ensureRemote(playerId, snapshot) {
-    let remote = remotePlayers.get(playerId);
-    if (!remote) {
-      remote = Entity.createAvatarEntity({
-        id: playerId,
-        nickname: snapshot.nickname || '旅人',
-        x: snapshot.x ?? local.x,
-        y: Spec.FLOOR_Y,
-      });
-      remotePlayers.set(playerId, remote);
-    }
-    return remote;
-  }
-
-  /** 应用远端插值样本到实体。 */
-  function applyRemoteSample(remote, sample) {
-    remote.nickname = sample.nickname || remote.nickname;
-    if (sample.x != null) remote.x = sample.x;
-    remote.y = stageYFromPhysicsFor(remote, sample.y ?? 0, remote.x);
-    remote.vx = sample.vx;
-    remote.vy = sample.vy;
-    remote.facing = sample.facing || remote.facing;
-    remote.onGround = Boolean(sample.onGround);
-    remote.moveDirection = Math.sign(sample.vx) || 0;
-    remote.gait = sample.gait === 'run' ? 'run' : 'walk';
-  }
-
-  /** 处理世界快照：远端角色 + 共享列车/燃料。 */
-  function handleWorldSnapshot(payload) {
-    if (!payload) return;
-    const serverMs = payload.serverTimeMs ?? performance.now();
-    if (clockOffsetMs === null && payload.serverTimeMs != null) {
-      clockOffsetMs = performance.now() - payload.serverTimeMs;
-    }
-    const seen = new Set();
-    for (const player of payload.players || []) {
-      const id = String(player.id);
-      if (id === userId) continue;
-      seen.add(id);
-      const remote = ensureRemote(id, player);
-      Entity.pushSnapshot(remote, player, serverMs);
-      if (player.appearance) Entity.loadAppearance(remote, player.appearance);
-      remote.nickname = player.nickname || remote.nickname;
-    }
-    for (const id of [...remotePlayers.keys()]) {
-      if (!seen.has(id)) remotePlayers.delete(id);
-    }
-
-    const world = payload.world;
-    if (world?.train) {
-      window.LpTrainDrive?.applyNetworkState?.(world.train);
-    }
-    if (world?.fuel?.level != null) {
-      window.LiminalInteract?.applyFuelLevel?.(world.fuel.level);
-    }
-  }
-
-  function sendPoseFrame() {
-    if (!networkSession?.connected) return;
-    networkSession.sendPose({
-      sequence: poseSequence,
-      x: local.x,
-      y: local.y,
-      vx: local.vx,
-      vy: local.vy,
-      facing: avatar.facing,
-      onGround: local.onGround,
-      gait: avatar.gait === 'run' ? 'run' : 'walk',
-      headLook: 0,
-    });
-    poseSequence += 1;
-  }
-
-  function updateRemotes(dt, now) {
-    if (clockOffsetMs === null) {
-      for (const remote of remotePlayers.values()) {
-        Entity.updateEntityMotion(remote, dt);
-      }
-      return;
-    }
-    const renderMs = now - clockOffsetMs - INTERP_DELAY_MS;
-    for (const remote of remotePlayers.values()) {
-      const sample = Entity.sampleRemote(remote, renderMs);
-      if (sample) applyRemoteSample(remote, sample);
-      Entity.updateEntityMotion(remote, dt);
-    }
-  }
-
-  if (networkSession) {
-    networkSession.addEventListener('worldsnapshot', (event) => {
-      handleWorldSnapshot(event.detail);
-    });
-    networkSession.addEventListener('playerleave', (event) => {
-      const playerId = event.detail?.playerId;
-      if (playerId) remotePlayers.delete(String(playerId));
-    });
-    networkSession.addEventListener('appearance', (event) => {
-      const detail = event.detail;
-      if (!detail?.playerId || String(detail.playerId) === userId) return;
-      const remote = remotePlayers.get(String(detail.playerId));
-      if (remote && detail.appearance) Entity.loadAppearance(remote, detail.appearance);
-    });
-    networkSession.addEventListener('roomchange', (event) => {
-      remotePlayers.clear();
-      clockOffsetMs = null;
-      const roomId = event.detail?.roomId;
-      if (roomId !== syncedRoomId) syncedRoomId = roomId ?? null;
-    });
-    networkSession.addEventListener('fuelchanged', (event) => {
-      if (event.detail?.level != null) {
-        window.LiminalInteract?.applyFuelLevel?.(event.detail.level);
-      }
-    });
-    networkSession.addEventListener('weaponfired', (event) => {
-      const d = event.detail;
-      if (!d || String(d.playerId) === userId) return;
-      window.LpCombat?.spawnRemoteShot?.({
-        originX: d.x,
-        originY: d.y,
-        dirX: d.dirX,
-        dirY: d.dirY,
-        facing: d.facing,
-      });
-    });
-    networkSession.addEventListener('chat', (event) => {
-      const d = event.detail;
-      if (!d?.text) return;
-      if (String(d.playerId) === userId) return;
-      const remote = remotePlayers.get(String(d.playerId));
-      if (remote && Entity.setSpeechBubble) Entity.setSpeechBubble(remote, d.text);
-    });
+  /** 远端实体的舞台 Y。 */
+  function remoteStageY(entity, physicsY) {
+    return stageYFromPhysics(physicsY, entity, entity.x);
   }
 
   /** 预加载两节车厢贴图。 */
@@ -545,6 +385,7 @@
   function stepPhysics(dt) {
     if (isUiOpen()) {
       local.vx = 0;
+      avatar.gait = 'walk';
       syncAvatarPose();
       return;
     }
@@ -565,8 +406,21 @@
       }
     }
 
-    const targetVelocity = direction * MOVE_SPEED;
-    const acceleration = direction === 0 ? 1100 : 1500;
+    const autoRun = window.LpInputBindings?.getAutoRun?.() ?? false;
+    let wantRun = false;
+    if (direction !== 0) {
+      if (isCoarsePointer()) {
+        wantRun = Boolean(touch.sprintToggle);
+      } else {
+        const holdSprint = window.LpInputBindings?.isPressed('sprint', keys) ?? false;
+        wantRun = autoRun ? !holdSprint : holdSprint;
+      }
+    }
+    avatar.gait = wantRun ? 'run' : 'walk';
+
+    const moveSpeed = wantRun ? RUN_SPEED : MOVE_SPEED;
+    const targetVelocity = direction * moveSpeed;
+    const acceleration = direction === 0 ? 1100 : wantRun ? 1900 : 1500;
     local.vx = approach(local.vx, targetVelocity, acceleration * dt);
     local.x = Math.max(worldLeft, Math.min(worldRight, local.x + local.vx * dt));
 
@@ -598,6 +452,16 @@
 
     Entity.updateEntityMotion(avatar, dt);
     syncAvatarPose();
+    window.LiminalSession?.maybeSendPose?.({
+      x: local.x,
+      y: local.y,
+      vx: local.vx,
+      vy: local.vy,
+      facing: avatar.facing,
+      onGround: local.onGround,
+      gait: avatar.gait,
+      headLook: avatar.headLook,
+    });
 
     const wantFire =
       touch.fire ||
@@ -608,6 +472,10 @@
 
     const activeSpot = window.LiminalInteract?.findActive(local) || null;
     window.LpTouchControls?.setInteractVisible(Boolean(activeSpot), activeSpot?.actionLabel);
+    const inStorage =
+      !isUiOpen() &&
+      window.LiminalCarriageSpec?.carriageAt?.(local.x)?.id === 'storage';
+    window.LpTouchControls?.setStorageHint?.(inStorage);
   }
 
   /** 绘制单节车厢（世界坐标）。 */
@@ -635,19 +503,15 @@
     );
 
     for (const car of Spec.CARRIAGES) drawCarriage(car);
-    for (const remote of remotePlayers.values()) {
-      Entity.drawAvatar(ctx, remote, view, dpr);
-      ctx.setTransform(
-        view.zoom * dpr, 0, 0, view.zoom * dpr,
-        view.offsetX * dpr, view.offsetY * dpr
-      );
-    }
+    window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
     Entity.drawAvatar(ctx, avatar, view, dpr);
     window.LpCombat?.draw(ctx);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     window.LiminalInteract?.drawActivePrompt(ctx, local, view, dpr, formatInteractKey(), {
       showPrompt: !isCoarsePointer() && !isUiOpen(),
+      inventoryKeyLabel: formatInventoryKey(),
+      mobile: isCoarsePointer(),
     });
   }
 
@@ -658,25 +522,27 @@
     lastTs = ts;
     syncTouchAimPointer();
     stepPhysics(dt);
-    if (networkSession?.connected) {
-      poseAccumulator += dt;
-      let sent = 0;
-      while (poseAccumulator >= poseStep && sent < 5) {
-        sendPoseFrame();
-        poseAccumulator -= poseStep;
-        sent += 1;
-      }
-      if (sent === 5) poseAccumulator = 0;
-    }
-    updateRemotes(dt, ts);
+    window.LiminalSession?.tickRemotes?.(dt, remoteStageY);
     window.LpTrainDrive?.tick(dt);
     window.LpCombat?.tick(dt);
     stepCamera(dt);
     syncAimCursor();
+    updateLocalHeadLook(dt);
     window.LpBoilerPanel?.syncFromState?.();
     window.LpTrainAudio?.tick(dt);
     drawFrame();
     requestAnimationFrame(frame);
+  }
+
+  /** 电脑端：头看向鼠标（身后或仰角过大则回正）。 */
+  function updateLocalHeadLook(dt) {
+    if (!Entity.updateHeadLook) return;
+    if (isCoarsePointer() || isUiOpen() || !pointer.known) {
+      Entity.updateHeadLook(avatar, null, dt);
+      return;
+    }
+    const view = cameraView();
+    Entity.updateHeadLook(avatar, screenToWorld(pointer.x, pointer.y, view), dt);
   }
 
   /** 启动游戏循环（素材与皮套就绪后）。 */
@@ -777,6 +643,7 @@
   });
 
   bindAudioUnlock();
+  window.LiminalSession?.start?.({ userId, nickname });
   window.addEventListener('lp:interact', () => {
     if (isUiOpen()) return;
     window.LiminalInteract?.tryInteract(local);

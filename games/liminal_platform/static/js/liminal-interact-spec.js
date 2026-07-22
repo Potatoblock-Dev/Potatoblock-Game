@@ -25,7 +25,7 @@
       promptAnchorY: 800,
       interactRadiusX: 140,
       action: 'openDrivePanel',
-      actionLabel: '打开控制台',
+      actionLabel: '打开驾驶台',
     },
   ];
 

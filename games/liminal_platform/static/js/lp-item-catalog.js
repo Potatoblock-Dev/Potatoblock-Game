@@ -1,7 +1,7 @@
 /**
  * 阈限月台物品目录（占位图标用色块 + 缩写，后续可换贴图）。
  * w/h：背包/仓库占格；手部栏无视占格。
- * equipSlot：head | chest | legs | accessory | 缺省不可装备。
+ * equipSlot：head | chest | legs | accessory | backpack | 缺省不可装备。
  */
 (() => {
   const TYPE_LABELS = {
@@ -18,6 +18,7 @@
     chest: '胸部',
     legs: '腿部',
     accessory: '配件',
+    backpack: '背包',
   };
 
   const ITEMS = {
@@ -141,6 +142,20 @@
       h: 1,
       canHoldInHand: true,
       equipSlot: 'accessory',
+    },
+    work_satchel: {
+      id: 'work_satchel',
+      name: '帆布挎包',
+      short: '包',
+      type: 'apparel',
+      use: '装杂物的帆布挎包，装备后便于携带物资。',
+      color: '#57534e',
+      accent: '#a8a29e',
+      maxStack: 1,
+      w: 2,
+      h: 2,
+      canHoldInHand: false,
+      equipSlot: 'backpack',
     },
   };
 

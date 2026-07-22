@@ -12,6 +12,7 @@
   const fireButton = document.getElementById('lpMobileFireButton');
   const interactButton = document.getElementById('lpMobileInteractButton');
   const inventoryButton = document.getElementById('lpMobileInventoryButton');
+  const sprintButton = document.getElementById('lpMobileSprintButton');
   if (!controls || !joystick || !knob || !jumpButton) return;
 
   const LOOK_DEADZONE = 0.18;
@@ -24,6 +25,8 @@
     interactQueued: false,
     fire: false,
     fireQueued: false,
+    /** 奔跑锁定（点按切换，类似 Minecraft 移动端）。 */
+    sprintToggle: Boolean(window.LpInputBindings?.getAutoRun?.()),
     /** 归一化瞄准向量，松手后保留。 */
     lookX: 0,
     lookY: 0,
@@ -92,6 +95,16 @@
     state.lookY = ny / mag;
     state.lookActive = true;
     state.lookReady = true;
+  }
+
+  /** 同步奔跑切换按钮文案（仅文字提示，不高亮）。 */
+  function syncSprintButton() {
+    if (!sprintButton) return;
+    sprintButton.setAttribute('aria-pressed', state.sprintToggle ? 'true' : 'false');
+    sprintButton.textContent = state.sprintToggle ? '奔跑中' : '行走中';
+    sprintButton.title = state.sprintToggle
+      ? '当前奔跑 · 点按改为行走'
+      : '当前行走 · 点按改为奔跑';
   }
 
   /** 启用/禁用触控（弹层打开时关闭）。 */
@@ -203,7 +216,8 @@
     if (label) {
       const shortLabels = {
         添加燃料: '燃料',
-        打开控制台: '控制台',
+        打开驾驶台: '驾驶台',
+        打开控制台: '驾驶台',
       };
       interactButton.textContent = shortLabels[label] || label;
       interactButton.title = label;
@@ -235,6 +249,22 @@
     }
   }
 
+  if (sprintButton) {
+    sprintButton.addEventListener('pointerdown', (event) => {
+      if (!state.enabled) return;
+      event.preventDefault();
+      state.sprintToggle = !state.sprintToggle;
+      syncSprintButton();
+      sprintButton.classList.add('is-active');
+      sprintButton.setPointerCapture?.(event.pointerId);
+    });
+    for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      sprintButton.addEventListener(eventName, () => {
+        sprintButton.classList.remove('is-active');
+      });
+    }
+  }
+
   if (inventoryButton) {
     inventoryButton.addEventListener('pointerdown', (event) => {
       if (!state.enabled) return;
@@ -249,6 +279,16 @@
     }
   }
 
+  /** 仓储车厢提示：高亮「物品」按钮。 */
+  function setStorageHint(active) {
+    inventoryButton?.classList.toggle('is-storage-hint', Boolean(active));
+  }
+
+  window.addEventListener('lp:settings-changed', () => {
+    state.sprintToggle = Boolean(window.LpInputBindings?.getAutoRun?.());
+    syncSprintButton();
+  });
+
   window.addEventListener('blur', () => setEnabled(false));
   window.addEventListener('focus', () => setEnabled(!isUiBlockingInput()));
 
@@ -260,6 +300,7 @@
           jump: false,
           interact: false,
           fire: false,
+          sprintToggle: state.sprintToggle,
           look: { x: 0, y: 0, active: false, ready: false },
         };
       }
@@ -268,6 +309,7 @@
         jump: state.jump || state.jumpQueued,
         interact: state.interact || state.interactQueued,
         fire: state.fire || state.fireQueued,
+        sprintToggle: state.sprintToggle,
         look: {
           x: state.lookX,
           y: state.lookY,
@@ -293,9 +335,14 @@
     isFireHeld() {
       return state.enabled && state.fire;
     },
+    isSprintOn() {
+      return state.sprintToggle;
+    },
     setEnabled,
     setInteractVisible,
+    setStorageHint,
   };
 
+  syncSprintButton();
   setEnabled(!isUiBlockingInput());
 })();

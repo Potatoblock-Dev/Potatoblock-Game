@@ -74,39 +74,43 @@
       return false;
     }
 
-    const added = removed * FUEL_PER_COAL;
-    fuel.level = Math.min(fuel.max, fuel.level + added);
+    fuel.level = Math.min(fuel.max, fuel.level + removed * FUEL_PER_COAL);
     showToast(`消耗煤炭 ×${removed}（${fuel.level}/${fuel.max}）`);
-    window.LiminalNetworkSession?.sendFuelAdd?.(added);
     window.dispatchEvent(
       new CustomEvent('liminal:fuel-changed', {
         detail: { level: fuel.level, coalSpent: removed },
       })
     );
+    window.LiminalSession?.notifyFuelAdd?.(removed * FUEL_PER_COAL);
     const label = document.getElementById('lpBoilerFuelReadout');
     if (label) label.textContent = `${Math.round(fuel.level)}/100`;
+    const fill = document.getElementById('lpFuelGaugeFill');
+    if (fill) fill.style.height = `${Math.max(0, Math.min(100, fuel.level))}%`;
     return true;
   }
 
-  /** 应用联机共享燃料量（服务端权威）。 */
-  function applyFuelLevel(level) {
-    const next = Math.max(0, Math.min(fuel.max, Number(level) || 0));
-    if (Math.abs(next - fuel.level) < 0.01) return;
-    fuel.level = next;
+  /** 应用服务端燃料权威值。 */
+  function setFuelLevel(level) {
+    fuel.level = Math.max(0, Math.min(fuel.max, Number(level) || 0));
     window.dispatchEvent(
       new CustomEvent('liminal:fuel-changed', {
-        detail: { level: fuel.level, fromNetwork: true },
+        detail: { level: fuel.level, coalSpent: 0 },
       })
     );
     const label = document.getElementById('lpBoilerFuelReadout');
     if (label) label.textContent = `${Math.round(fuel.level)}/100`;
+    const fill = document.getElementById('lpFuelGaugeFill');
+    if (fill) fill.style.height = `${Math.max(0, Math.min(100, fuel.level))}%`;
   }
 
   /** 打开引擎控制台。 */
   function openDrivePanel() {
     window.LpBoilerPanel?.open();
+    window.LpBoilerPanel?.syncFromState?.();
     const label = document.getElementById('lpBoilerFuelReadout');
     if (label) label.textContent = `${Math.round(fuel.level)}/100`;
+    const fill = document.getElementById('lpFuelGaugeFill');
+    if (fill) fill.style.height = `${Math.max(0, Math.min(100, fuel.level))}%`;
   }
 
   /** 按节点 action 分发。 */
@@ -134,13 +138,22 @@
   /** 绘制靠近提示（屏幕空间）。 */
   function drawPrompt(ctx, spot, view, dpr, keyLabel) {
     const line = `按 ${keyLabel} ${spot.actionLabel}`;
+    drawFloatingLabel(
+      ctx,
+      dpr,
+      spot.worldX * view.zoom + view.offsetX,
+      spot.promptAnchorY * view.zoom + view.offsetY,
+      line
+    );
+  }
+
+  /** 在屏幕坐标绘制浮动提示条。 */
+  function drawFloatingLabel(ctx, dpr, screenX, screenY, line) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = '600 14px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    const screenX = spot.worldX * view.zoom + view.offsetX;
-    const screenY = spot.promptAnchorY * view.zoom + view.offsetY;
     const labelW = ctx.measureText(line).width + 22;
     const labelH = 34;
 
@@ -151,6 +164,23 @@
 
     ctx.fillStyle = '#fef3c7';
     ctx.fillText(line, screenX, screenY);
+  }
+
+  /** 仓储车厢：提示打开物品栏管理仓库。 */
+  function drawStoragePrompt(ctx, local, view, dpr, inventoryKeyLabel, options = {}) {
+    const { mobile = false } = options;
+    const Spec = window.LiminalCarriageSpec;
+    if (Spec?.carriageAt?.(local.x)?.id !== 'storage') return;
+    if (!local.onGround || local.y > 0.5) return;
+    if (window.LpInventory?.isOpen?.()) return;
+    if (window.LpBoilerPanel?.isOpen?.() || window.LpFuelFeed?.isOpen?.()) return;
+
+    const line = mobile
+      ? '点「物品」打开物品栏以管理仓库'
+      : `按 ${inventoryKeyLabel} 打开物品栏以管理仓库`;
+    const screenX = local.x * view.zoom + view.offsetX;
+    const screenY = (Spec.FLOOR_Y - 110) * view.zoom + view.offsetY;
+    drawFloatingLabel(ctx, dpr, screenX, screenY, line);
   }
 
   /** 绘制燃料条与操作反馈。 */
@@ -206,10 +236,14 @@
 
   /** 绘制最近激活节点的提示。 */
   function drawActivePrompt(ctx, local, view, dpr, keyLabel, options = {}) {
-    const { showPrompt = true } = options;
+    const { showPrompt = true, inventoryKeyLabel = 'Tab', mobile = false } = options;
     const active = findActive(local);
     const panelOpen = window.LpBoilerPanel?.isOpen?.();
-    if (active && showPrompt && !panelOpen) drawPrompt(ctx, active, view, dpr, keyLabel);
+    if (active && showPrompt && !panelOpen) {
+      drawPrompt(ctx, active, view, dpr, keyLabel);
+    } else if (!active && !panelOpen) {
+      drawStoragePrompt(ctx, local, view, dpr, inventoryKeyLabel, { mobile });
+    }
     drawHud(ctx, view, dpr);
   }
 
@@ -219,7 +253,7 @@
     tryInteract,
     drawActivePrompt,
     getFuelLevel: () => fuel.level,
-    applyFuelLevel,
+    setFuelLevel,
     addFuel,
     addFuelFromPanel: addFuel,
     showToast,
