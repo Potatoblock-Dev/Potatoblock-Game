@@ -57,6 +57,7 @@
     }
     .topbar-icon-btn:hover { background: rgb(148 163 184 / .18); }
     .topbar-icon-btn svg { width: 15px; height: 15px; display: block; }
+    a.topbar-icon-btn { text-decoration: none; color: inherit; }
     .settings-button {
       display: inline-flex; align-items: center; justify-content: center;
       width: 30px; height: 30px; margin-left: 8px; vertical-align: middle;
@@ -277,6 +278,11 @@
         {% endif %}
         </div>
         <div class="site-topbar-actions">
+        <a href="https://sponsor.potatoblock.com/" class="topbar-icon-btn" title="捐赠支持" aria-label="捐赠支持" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 20.4S4.5 15.6 4.5 10.2A3.7 3.7 0 0 1 12 8.1a3.7 3.7 0 0 1 7.5 2.1C19.5 15.6 12 20.4 12 20.4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+            </svg>
+        </a>
         <button id="changelogButton" type="button" class="topbar-icon-btn" title="更新日志" aria-label="更新日志">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" stroke="currentColor" stroke-width="1.7"/>

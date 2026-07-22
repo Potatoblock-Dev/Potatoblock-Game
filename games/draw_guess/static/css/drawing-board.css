@@ -204,4 +204,19 @@ html[data-theme='light'] .drawing-board .fill-chip.is-active {
     position: absolute; left: 66px; bottom: 16px; right: 12px; z-index: 9;
     margin: 0;
   }
+
+  .drawing-board .drawer-toolbar.tools-drawing-hidden .sb-top-bar,
+  .drawing-board .drawer-toolbar.tools-drawing-hidden .tool-rail {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-6px);
+    transition: opacity .16s ease, transform .16s ease;
+  }
+  .drawing-board .drawer-toolbar .sb-top-bar,
+  .drawing-board .drawer-toolbar .tool-rail {
+    transition: opacity .16s ease, transform .16s ease;
+  }
+  .drawing-board .drawer-toolbar.tools-drawing-hidden .tool-rail {
+    transform: translateX(-8px);
+  }
 }

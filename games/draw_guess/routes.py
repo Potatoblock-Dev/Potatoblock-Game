@@ -815,7 +815,7 @@ async def return_to_lobby_if_all_watching(room_id: str, room: Dict) -> bool:
         room_id,
         {
             "type": "message",
-            "sender": "🎯 系统",
+            "sender": "系统", "sender_icon": "target",
             "text": "所有玩家都已观战，房间已返回准备阶段",
         },
     )
@@ -1000,7 +1000,7 @@ async def complete_skipped_round(room_id: str, room: Dict) -> None:
         room_id,
         {
             "type": "message",
-            "sender": "🎯 系统",
+            "sender": "系统", "sender_icon": "target",
             "text": f"题目被跳过，答案是{room['word']}",
         },
     )
@@ -1146,7 +1146,7 @@ async def finish_round_transition(room_id: str, expected_room: Dict) -> None:
                 room_id,
                 {
                     "type": "message",
-                    "sender": "🎯 系统",
+                    "sender": "系统", "sender_icon": "target",
                     "text": "新一轮开始，" + "、".join(promoted) + " 已加入游戏",
                 },
             )
@@ -1217,7 +1217,7 @@ async def apply_original_player_absence_resolution(
         room_id,
         {
             "type": "message",
-            "sender": "🏠 系统",
+            "sender": "系统", "sender_icon": "home",
             "text": f"原玩家已离线超过60秒，{new_owner_name} 已成为房主，房间返回准备阶段",
         },
     )
@@ -1238,7 +1238,7 @@ async def remove_player_from_room(
     was_drawer = room["drawer_id"] == player_id
     await broadcast(
         room_id,
-        {"type": "message", "sender": "🚪 系统", "text": message},
+        {"type": "message", "sender": "系统", "sender_icon": "door", "text": message},
         exclude_id=player_id,
     )
     del room["players"][player_id]
@@ -1468,7 +1468,7 @@ async def handle_player_disconnect(
         room_id,
         {
             "type": "message",
-            "sender": "⛓️‍💥 系统",
+            "sender": "系统", "sender_icon": "break",
             "text": f"{leave_name} 断线",
         },
         exclude_id=player_id,
@@ -1585,7 +1585,7 @@ async def game_websocket(websocket: WebSocket):
                             room_id,
                             {
                                 "type": "message",
-                                "sender": "🔗 系统",
+                                "sender": "系统", "sender_icon": "link",
                                 "text": f"{display_name} 已重新连接",
                             },
                             exclude_id=player_id,
@@ -1631,7 +1631,7 @@ async def game_websocket(websocket: WebSocket):
                         websocket,
                         {
                             "type": "message",
-                            "sender": "📚 系统",
+                            "sender": "系统", "sender_icon": "book",
                             "text": f"已从记忆恢复 {restored_banks} 个自定义词库",
                         },
                     )
@@ -1639,7 +1639,7 @@ async def game_websocket(websocket: WebSocket):
                     room_id,
                     {
                         "type": "message",
-                        "sender": "🎯 系统",
+                        "sender": "系统", "sender_icon": "target",
                         "text": f"{display_name} 加入了房间" + ("，当前为观战状态" if is_spectator else ""),
                     },
                     exclude_id=player_id,
@@ -1677,7 +1677,7 @@ async def game_websocket(websocket: WebSocket):
                     room_id,
                     {
                         "type": "message",
-                        "sender": "👑 系统",
+                        "sender": "系统", "sender_icon": "crown",
                         "text": f"{old_host_name} 已将房主移交给 {target_player['name']}",
                     },
                 )
@@ -1725,7 +1725,7 @@ async def game_websocket(websocket: WebSocket):
                     room_id,
                     {
                         "type": "message",
-                        "sender": "🎯 系统",
+                        "sender": "系统", "sender_icon": "target",
                         "text": "房主结束了当前游戏，所有玩家已返回准备阶段",
                     },
                 )
@@ -1766,7 +1766,7 @@ async def game_websocket(websocket: WebSocket):
                         room_id,
                         {
                             "type": "message",
-                            "sender": "🎯 系统",
+                            "sender": "系统", "sender_icon": "target",
                             "text": f"{pdata['name']} {'进入了观众席' if entering else '回到了准备区'}",
                         },
                     )
@@ -1787,7 +1787,7 @@ async def game_websocket(websocket: WebSocket):
                     trim_artworks(room)
                     await broadcast(
                         room_id,
-                        {"type": "message", "sender": "🎯 系统", "text": f"{pdata['name']} 进入了观战状态"},
+                        {"type": "message", "sender": "系统", "sender_icon": "target", "text": f"{pdata['name']} 进入了观战状态"},
                     )
                     if await return_to_lobby_if_all_watching(room_id, room):
                         continue
@@ -1809,7 +1809,7 @@ async def game_websocket(websocket: WebSocket):
                             room_id,
                             {
                                 "type": "message",
-                                "sender": "🎯 系统",
+                                "sender": "系统", "sender_icon": "target",
                                 "text": f"{pdata['name']} 结束观战并加入了游戏",
                             },
                         )
@@ -1820,7 +1820,7 @@ async def game_websocket(websocket: WebSocket):
                         room_id,
                         {
                             "type": "message",
-                            "sender": "🎯 系统",
+                            "sender": "系统", "sender_icon": "target",
                             "text": f"{pdata['name']} 结束观战，将在下一轮加入游戏",
                         },
                     )
@@ -1868,7 +1868,7 @@ async def game_websocket(websocket: WebSocket):
                 )
                 await broadcast(
                     room_id,
-                    {"type": "message", "sender": "🎯 系统", "text": "房主开始了游戏"},
+                    {"type": "message", "sender": "系统", "sender_icon": "target", "text": "房主开始了游戏"},
                 )
                 continue
 

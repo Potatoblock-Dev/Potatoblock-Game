@@ -334,16 +334,18 @@
     };
   }
 
-  /** 每帧平滑更新镜头焦点与加燃料放大。 */
+  /** 每帧平滑更新镜头焦点与控制台/加燃料放大。 */
   function stepCamera(dt) {
     const feedOpen = window.LpFuelFeed?.isOpen?.() ?? false;
-    const wantMul = feedOpen ? 1.72 : 1;
+    const boilerOpen = window.LpBoilerPanel?.isOpen?.() ?? false;
+    const focusOnAvatar = feedOpen || boilerOpen;
+    const wantMul = focusOnAvatar ? 1.72 : 1;
     feedZoomMul += (wantMul - feedZoomMul) * (1 - Math.exp(-5.8 * dt));
     zoom = baseZoom * feedZoomMul;
 
     let targetX = local.x;
     let targetY = Spec.FLOOR_Y;
-    if (feedOpen) {
+    if (focusOnAvatar) {
       /* 略抬高焦点，对准站立角色躯干 */
       targetY = Spec.FLOOR_Y - 70;
     } else if (isAimCameraMode() && pointer.known) {

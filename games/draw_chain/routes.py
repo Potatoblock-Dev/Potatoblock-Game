@@ -1241,7 +1241,7 @@ async def advance_replay_stage(
         room_id,
         {
             "type": "message",
-            "sender": "🎬 系统",
+            "sender": "系统", "sender_icon": "film",
             "text": "回放结束，参赛玩家已自动准备",
         },
     )
@@ -1480,7 +1480,7 @@ async def apply_original_player_absence_resolution(
         room_id,
         {
             "type": "message",
-            "sender": "🏠 系统",
+            "sender": "系统", "sender_icon": "home",
             "text": f"原玩家已离线超过60秒，{new_owner_name} 已成为房主，房间返回准备阶段",
         },
     )
@@ -1494,7 +1494,7 @@ async def abort_chain_to_lobby(room_id: str, room: Dict, reason: str) -> None:
     await send_room_states(room, include_strokes=True)
     await broadcast(
         room_id,
-        {"type": "message", "sender": "🎯 系统", "text": reason},
+        {"type": "message", "sender": "系统", "sender_icon": "target", "text": reason},
     )
 
 
@@ -1557,7 +1557,7 @@ async def continue_chain_after_active_removed(
             room_id,
             {
                 "type": "message",
-                "sender": "🎯 系统",
+                "sender": "系统", "sender_icon": "target",
                 "text": f"{removed_name} 离开，由 {next_name} 继续猜词",
             },
         )
@@ -1591,7 +1591,7 @@ async def continue_chain_after_active_removed(
             room_id,
             {
                 "type": "message",
-                "sender": "🎯 系统",
+                "sender": "系统", "sender_icon": "target",
                 "text": f"{removed_name} 离开，已撤销其猜词，由 {next_name} 重新猜词",
             },
         )
@@ -1614,7 +1614,7 @@ async def continue_chain_after_active_removed(
         room_id,
         {
             "type": "message",
-            "sender": "🎯 系统",
+            "sender": "系统", "sender_icon": "target",
             "text": f"{removed_name} 离开，由 {next_name} 接手作画",
         },
     )
@@ -1664,7 +1664,7 @@ async def remove_player_from_room(room_id: str, player_id: str, message: str) ->
 
     await broadcast(
         room_id,
-        {"type": "message", "sender": "🚪 系统", "text": message},
+        {"type": "message", "sender": "系统", "sender_icon": "door", "text": message},
         exclude_id=player_id,
     )
     del room["players"][player_id]
@@ -1950,7 +1950,7 @@ async def handle_player_disconnect(
         room_id,
         {
             "type": "message",
-            "sender": "⛓️‍💥 系统",
+            "sender": "系统", "sender_icon": "break",
             "text": f"{leave_name} 断线",
         },
         exclude_id=player_id,
@@ -2059,7 +2059,7 @@ async def game_websocket(websocket: WebSocket):
                             room_id,
                             {
                                 "type": "message",
-                                "sender": "🔗 系统",
+                                "sender": "系统", "sender_icon": "link",
                                 "text": f"{display_name} 已重新连接",
                             },
                             exclude_id=player_id,
@@ -2104,7 +2104,7 @@ async def game_websocket(websocket: WebSocket):
                         websocket,
                         {
                             "type": "message",
-                            "sender": "📚 系统",
+                            "sender": "系统", "sender_icon": "book",
                             "text": f"已从记忆恢复 {restored_banks} 个自定义词库",
                         },
                     )
@@ -2112,7 +2112,7 @@ async def game_websocket(websocket: WebSocket):
                     room_id,
                     {
                         "type": "message",
-                        "sender": "🎯 系统",
+                        "sender": "系统", "sender_icon": "target",
                         "text": f"{display_name} 加入了房间" + ("，当前为观战状态" if is_spectator else ""),
                     },
                     exclude_id=player_id,
@@ -2150,7 +2150,7 @@ async def game_websocket(websocket: WebSocket):
                     room_id,
                     {
                         "type": "message",
-                        "sender": "👑 系统",
+                        "sender": "系统", "sender_icon": "crown",
                         "text": f"{old_host_name} 已将房主移交给 {target_player['name']}",
                     },
                 )
@@ -2197,7 +2197,7 @@ async def game_websocket(websocket: WebSocket):
                     room_id,
                     {
                         "type": "message",
-                        "sender": "🎯 系统",
+                        "sender": "系统", "sender_icon": "target",
                         "text": "房主结束了当前游戏，所有玩家已返回准备阶段",
                     },
                 )
@@ -2232,7 +2232,7 @@ async def game_websocket(websocket: WebSocket):
                         room_id,
                         {
                             "type": "message",
-                            "sender": "🎯 系统",
+                            "sender": "系统", "sender_icon": "target",
                             "text": f"{pdata['name']} {'进入了观众席' if entering else '回到了准备区'}",
                         },
                     )
@@ -2296,7 +2296,7 @@ async def game_websocket(websocket: WebSocket):
                 )
                 await broadcast(
                     room_id,
-                    {"type": "message", "sender": "🎯 系统", "text": "房主开始了画画接龙"},
+                    {"type": "message", "sender": "系统", "sender_icon": "target", "text": "房主开始了画画接龙"},
                 )
                 continue
 
@@ -2734,7 +2734,7 @@ async def game_websocket(websocket: WebSocket):
                         room_id,
                         {
                             "type": "message",
-                            "sender": "🎯 系统",
+                            "sender": "系统", "sender_icon": "target",
                             "text": "接龙结束，请投票判断最后猜词是否正确",
                         },
                     )

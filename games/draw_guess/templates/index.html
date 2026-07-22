@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css?v=20260717b">
   <link rel="stylesheet" href="/static/games/draw-guess/css/theme.css?v=20260718d">
-  <link rel="stylesheet" href="/static/games/draw-guess/css/drawing-board.css?v=20260722a">
+  <link rel="stylesheet" href="/static/games/draw-guess/css/drawing-board.css?v=20260722b">
   <link rel="stylesheet" href="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.css">
   <script src="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.js"></script>
   <script>
@@ -203,6 +203,33 @@
     .drawer-turn-notice strong { display: block; font-size: clamp(34px, 8vw, 72px); line-height: 1.1; }
     .drawer-turn-notice span { display: block; margin-top: 14px; color: #fde68a; font-size: clamp(17px, 3vw, 26px); font-weight: 700; }
     @keyframes drawer-notice-in { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: scale(1); } }
+    .landscape-hint {
+      position: fixed; inset: 0; z-index: 110; display: grid; place-items: center;
+      padding: 24px; background: rgb(10 12 20 / .72); backdrop-filter: blur(8px);
+    }
+    .landscape-hint.hidden { display: none !important; }
+    .landscape-hint-panel {
+      width: min(360px, 100%); padding: 22px 20px 18px; text-align: center;
+      border: 1px solid var(--line-strong); border-radius: 18px; background: var(--panel);
+      box-shadow: var(--shadow-modal, 0 18px 40px rgb(0 0 0 / .35)); color: var(--text);
+    }
+    .landscape-hint-icon {
+      width: 56px; height: 56px; margin: 0 auto 12px; color: var(--blue-text-strong, #60a5fa);
+    }
+    .landscape-hint-icon svg { width: 100%; height: 100%; display: block; }
+    .landscape-hint-title { margin: 0; font-size: 18px; font-weight: 800; }
+    .landscape-hint-message { margin: 8px 0 0; color: var(--text-soft); font-size: 14px; line-height: 1.5; }
+    .landscape-hint-actions { margin-top: 16px; }
+    .landscape-hint-dismiss {
+      min-height: 42px; min-width: 120px; padding: 0 18px;
+      border: 1px solid var(--line-strong); border-radius: 11px;
+      background: var(--chip-bg-strong); color: var(--blue-text-strong, #93c5fd); font-weight: 700;
+    }
+    .board-setting-row {
+      display: flex; align-items: center; gap: 8px; margin: 8px 0 2px;
+      color: var(--text-soft); font-size: 13px; font-weight: 600; user-select: none; cursor: pointer;
+    }
+    .board-setting-row input[type='checkbox'] { width: 16px; height: 16px; accent-color: #60a5fa; flex: none; }
     .color-slot-controls { display: flex; flex: none; align-items: center; gap: 6px; }
     .color-slots { position: relative; width: 54px; height: 46px; }
     .color-slot { position: absolute; width: 32px; height: 32px; border: 2px solid var(--line-strong); border-radius: 7px; box-shadow: 0 2px 7px rgb(0 0 0 / .35); }
@@ -214,6 +241,8 @@
     .mode-button { padding: 0 13px; color: var(--blue-text); }
     .tool-actions { margin-top: 10px; }
     .tool-button { min-width: 46px; padding: 0 12px; }
+    .tool-icon-button { display: inline-grid; place-items: center; padding: 0; }
+    .tool-icon { width: 20px; height: 20px; display: block; }
     .tool-button:disabled { opacity: .3; cursor: not-allowed; }
     .tool-button.danger { border-color: rgb(248 113 113 / .3); color: var(--red-text); background: rgb(239 68 68 / .15); }
     .tool-button.danger.is-confirming { border-color: var(--chat-guess); color: #fff; background: #dc2626; }
@@ -670,6 +699,10 @@
                   <strong class="mobile-color-sheet-title">颜色</strong>
                   <button id="toolModeButton" type="button" class="mode-button" aria-expanded="false">高级</button>
                 </div>
+                <label class="board-setting-row" for="autoHideToolsToggle" title="仅手机端生效：落笔时隐藏顶部与左侧浮栏">
+                  <input id="autoHideToolsToggle" type="checkbox" checked>
+                  <span>绘画时自动隐藏工具栏</span>
+                </label>
                 <div class="tool-row color-tool-row">
                   <span class="tool-label">颜色</span>
                   <div class="color-slot-controls">
@@ -763,8 +796,12 @@
             </div>
 
             <div class="tool-actions sb-top-bar" aria-label="画板操作">
-              <button id="undoButton" type="button" class="tool-button text-xl" aria-label="撤销" title="撤销">↶</button>
-              <button id="redoButton" type="button" class="tool-button text-xl" aria-label="重做" title="重做">↷</button>
+              <button id="undoButton" type="button" class="tool-button tool-icon-button" aria-label="撤销" title="撤销">
+                <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m11 6-6 6 6 6"/></svg>
+              </button>
+              <button id="redoButton" type="button" class="tool-button tool-icon-button" aria-label="重做" title="重做">
+                <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+              </button>
               <button id="eyedropperButton" type="button" class="tool-button" aria-pressed="false">取色</button>
               <button id="canvasBackgroundButton" type="button" class="tool-button" title="使用当前前景色">背景</button>
               <button id="clearButton" type="button" class="tool-button danger" aria-pressed="false">清空</button>
@@ -812,6 +849,24 @@
 
   <div id="drawerTurnNotice" class="drawer-turn-notice hidden" role="alert" aria-live="assertive">
     <div><strong>轮到你作画了！</strong><span>准备好后开始绘画</span></div>
+  </div>
+
+  <div id="landscapeHint" class="landscape-hint hidden" role="dialog" aria-modal="true" aria-labelledby="landscapeHintTitle" aria-describedby="landscapeHintMessage">
+    <section class="landscape-hint-panel">
+      <div class="landscape-hint-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="7" width="14" height="10" rx="2"/>
+          <path d="M20 9v6"/>
+          <path d="m9 4 3-2 3 2"/>
+          <path d="M12 2v3"/>
+        </svg>
+      </div>
+      <h2 id="landscapeHintTitle" class="landscape-hint-title">建议横屏游玩</h2>
+      <p id="landscapeHintMessage" class="landscape-hint-message">手机竖屏画布较小，横屏操作更舒适。旋转设备后可继续。</p>
+      <div class="landscape-hint-actions">
+        <button id="landscapeHintDismiss" type="button" class="landscape-hint-dismiss">继续竖屏</button>
+      </div>
+    </section>
   </div>
 
   <div id="contentPolicyPrompt" class="app-confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="contentPolicyPromptTitle">
@@ -908,6 +963,8 @@
     const CLIPBOARD_BANK_NAME_MAX = 32;
     // 各游戏共用同一份内容规范，同意一次即可；条款有实质修改时递增版本号重新弹出。
     const STORAGE_CONTENT_POLICY = 'potatoblock.contentPolicyAccepted.v1';
+    const STORAGE_LANDSCAPE_HINT = 'potatoblock.landscapeHintDismissed.v1';
+    const STORAGE_AUTO_HIDE_TOOLS = 'potatoblock.autoHideToolsWhileDrawing.v1';
     const DEFAULT_SHORTCUTS = {
       undo: 'Mod+KeyZ',
       redo: 'Mod+Shift+KeyZ',
@@ -1326,6 +1383,7 @@
 
     function resetGameCanvasFromServer(serverStrokes) {
       isDrawing = false;
+      syncFloatingToolsHiddenForStroke();
       activeStrokeId = '';
       lastPoint = null;
       activeDrawPointerId = null;
@@ -1571,6 +1629,7 @@
       event.preventDefault();
       if (phase === 'lobby' && lobbyCanvasMode === 'private') privateRedo = [];
       isDrawing = true;
+      syncFloatingToolsHiddenForStroke();
       activeStrokeIsStylus = usingStylus;
       activeDrawPointerId = event.pointerId;
       activeStrokeId = createId();
@@ -1612,6 +1671,7 @@
       const hadMovement = strokeHasMoved;
       if (wasDrawing && wasStylus && !hadMovement) commitStylusTapDot();
       isDrawing = false;
+      syncFloatingToolsHiddenForStroke();
       lastPoint = null;
       strokeOrigin = null;
       strokeHasMoved = false;
@@ -1619,6 +1679,7 @@
       activeDrawPointerId = null;
       activeStrokeTool = null;
       activeStrokeIsStylus = false;
+      syncFloatingToolsHiddenForStroke();
       stopDrawingSyncTimer();
       if (wasDrawing) {
         activeStrokeId = '';
@@ -1654,6 +1715,29 @@
       mobileColorSheet.classList.toggle('is-open', next);
       mobileColorSheet.setAttribute('aria-hidden', String(!next));
       mobileColorToggle.setAttribute('aria-expanded', String(next));
+      syncFloatingToolsHiddenForStroke();
+    }
+
+    function isMobileBoardLayout() {
+      return window.matchMedia('(max-width: 767px)').matches;
+    }
+
+    let autoHideToolsWhileDrawing = true;
+    function syncFloatingToolsHiddenForStroke() {
+      const hide = Boolean(
+        autoHideToolsWhileDrawing
+        && isMobileBoardLayout()
+        && isDrawing
+        && !mobileColorSheet.classList.contains('is-open')
+      );
+      drawingToolbar.classList.toggle('tools-drawing-hidden', hide);
+    }
+
+    function setAutoHideToolsWhileDrawing(enabled) {
+      autoHideToolsWhileDrawing = Boolean(enabled);
+      byId('autoHideToolsToggle').checked = autoHideToolsWhileDrawing;
+      try { localStorage.setItem(STORAGE_AUTO_HIDE_TOOLS, autoHideToolsWhileDrawing ? '1' : '0'); } catch (error) {}
+      syncFloatingToolsHiddenForStroke();
     }
 
     function setLobbyCanvasMode(mode) {
@@ -1782,6 +1866,7 @@
         const answer = String(word || '').trim();
         artworkDisplayBadge.textContent = answer ? ('画作展示中 · 答案：' + answer) : '画作展示中';
         isDrawing = false;
+        syncFloatingToolsHiddenForStroke();
         activeStrokeId = '';
         lastPoint = null;
         stopDrawingSyncTimer();
@@ -1947,6 +2032,7 @@
       }
       if (roundTransitionActive && isDrawing) {
         isDrawing = false;
+        syncFloatingToolsHiddenForStroke();
         lastPoint = null;
         activeStrokeId = '';
         stopDrawingSyncTimer();
@@ -1983,6 +2069,7 @@
     function showRoomRemoved(message = '已退出房间') {
       stopDrawingSyncTimer();
       isDrawing = false;
+      syncFloatingToolsHiddenForStroke();
       activeStrokeId = '';
       clearDisconnectRemovalTimer();
       if (reconnectTimer) clearTimeout(reconnectTimer);
@@ -2657,6 +2744,7 @@
       currentRoundId = '';
       if (wasPlaying || selfWatching) {
         isDrawing = false;
+        syncFloatingToolsHiddenForStroke();
         activeStrokeId = '';
         lastPoint = null;
       }
@@ -2996,6 +3084,7 @@
       ws.onclose = event => {
         stopDrawingSyncTimer();
         isDrawing = false;
+        syncFloatingToolsHiddenForStroke();
         activeStrokeId = '';
         joinButton.disabled = false;
         joinButton.textContent = '进入房间';
@@ -3108,6 +3197,7 @@
       clearPendingDrawingSync();
       activeStrokeId = '';
       isDrawing = false;
+      syncFloatingToolsHiddenForStroke();
       if (scope === 'lobby-private') {
         lobbyPrivateStrokes = filterStrokesKeepingBackground(lobbyPrivateStrokes);
         strokes = lobbyPrivateStrokes;
@@ -4130,6 +4220,32 @@
     }
     showContentPolicyPromptIfNeeded();
 
+    // 手机竖屏建议横屏；平板/桌面不提示。最短边 < 600 视为手机。
+    const landscapeHint = byId('landscapeHint');
+    let landscapeHintDismissed = sessionStorage.getItem(STORAGE_LANDSCAPE_HINT) === '1';
+    function isPhonePortrait() {
+      const portrait = window.matchMedia('(orientation: portrait)').matches
+        || window.innerHeight > window.innerWidth;
+      const shortestScreen = Math.min(window.screen.width || 0, window.screen.height || 0);
+      const shortestViewport = Math.min(window.innerWidth, window.innerHeight);
+      const phoneSized = shortestScreen > 0
+        ? shortestScreen < 600
+        : shortestViewport < 600;
+      return portrait && phoneSized;
+    }
+    function syncLandscapeHint() {
+      const show = !landscapeHintDismissed && isPhonePortrait();
+      landscapeHint.classList.toggle('hidden', !show);
+    }
+    byId('landscapeHintDismiss').addEventListener('click', () => {
+      landscapeHintDismissed = true;
+      sessionStorage.setItem(STORAGE_LANDSCAPE_HINT, '1');
+      landscapeHint.classList.add('hidden');
+    });
+    window.addEventListener('orientationchange', syncLandscapeHint);
+    window.addEventListener('resize', syncLandscapeHint);
+    syncLandscapeHint();
+
     if (!nicknameInput.value) nicknameInput.value = localStorage.getItem(STORAGE_FALLBACK_NAME) || '';
     const initialRoom = (typeof window.__DRAW_GUESS_INITIAL_ROOM === 'string' && window.__DRAW_GUESS_INITIAL_ROOM)
       || roomIdFromPath()
@@ -4139,6 +4255,15 @@
     restoreColorSlots();
     restoreColorSpace();
     restorePenPressure();
+    try {
+      const savedAutoHide = localStorage.getItem(STORAGE_AUTO_HIDE_TOOLS);
+      if (savedAutoHide === '0') autoHideToolsWhileDrawing = false;
+      else if (savedAutoHide === '1') autoHideToolsWhileDrawing = true;
+    } catch (error) {}
+    byId('autoHideToolsToggle').checked = autoHideToolsWhileDrawing;
+    byId('autoHideToolsToggle').addEventListener('change', event => {
+      setAutoHideToolsWhileDrawing(event.target.checked);
+    });
     setActiveColorSlot(activeColorSlot);
     setSize(5);
     setToolMode('simple');
