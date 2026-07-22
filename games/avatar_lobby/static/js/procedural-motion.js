@@ -3,6 +3,7 @@
  *
  * 用解析式 two-bone IK 把脚部目标转换为髋/膝角度，再由角色控制器的
  * 弹簧负责平滑。坐标约定：+y 向下，骨骼初始方向朝下。
+ * gait: 'walk' | 'run' 选用不同步态模组。
  */
 (() => {
   // 与 UVLayout.PARTS 腿段 drawSize 同步（约 8 头身）。
@@ -41,18 +42,28 @@
     return { upper: direction - offset, bend };
   }
 
-  // 脚在摆动半程抬起，支撑半程贴近地面；两腿相差半个周期。
+  /** 行走步态：中等步幅，支撑腿贴近地面。 */
   function solveWalkingLeg(phase, speedRatio) {
     const strideX = Math.sin(phase) * 10 * speedRatio;
     const lift = Math.max(0, -Math.cos(phase)) * 6.5 * speedRatio;
     return solveTwoBone(strideX, STAND_FOOT_Y - 0.4 - lift);
   }
 
+  /** 奔跑步态：更大步幅与抬腿，身体更前倾。 */
+  function solveRunningLeg(phase, speedRatio) {
+    const strideX = Math.sin(phase) * 14.5 * speedRatio;
+    const lift = Math.max(0, -Math.cos(phase)) * 11 * speedRatio;
+    const crouch = 1.8 * speedRatio;
+    return solveTwoBone(strideX, STAND_FOOT_Y - 0.6 - lift - crouch);
+  }
+
   function computeLegPose(state) {
-    const frontWalk = solveWalkingLeg(state.walkPhase, state.speedRatio);
-    const backWalk = solveWalkingLeg(state.walkPhase + Math.PI, state.speedRatio);
-    const frontAir = solveTwoBone(-4, STAND_FOOT_Y * 0.7);
-    const backAir = solveTwoBone(5, STAND_FOOT_Y * 0.66);
+    const running = state.gait === 'run';
+    const solve = running ? solveRunningLeg : solveWalkingLeg;
+    const frontWalk = solve(state.walkPhase, state.speedRatio);
+    const backWalk = solve(state.walkPhase + Math.PI, state.speedRatio);
+    const frontAir = solveTwoBone(running ? -6 : -4, STAND_FOOT_Y * (running ? 0.62 : 0.7));
+    const backAir = solveTwoBone(running ? 7 : 5, STAND_FOOT_Y * (running ? 0.58 : 0.66));
     const airborne = state.onGround ? 0 : 1;
     const frontBase = {
       upper: lerp(frontWalk.upper, frontAir.upper, airborne),
@@ -71,27 +82,34 @@
   }
 
   function computeArmPose(state) {
-    const swing = Math.sin(state.walkPhase) * state.speedRatio * 0.42;
+    const running = state.gait === 'run';
+    const amp = running ? 0.72 : 0.42;
+    const swing = Math.sin(state.walkPhase) * state.speedRatio * amp;
     const rising = clamp(-state.verticalVelocity / 520, 0, 1);
     const falling = clamp(state.verticalVelocity / 520, 0, 1);
     const airborne = state.onGround ? 0 : 1;
     const frontAirTarget = -0.42 * rising + 0.12 * falling;
     const backAirTarget = 0.34 * rising - 0.08 * falling;
+    const elbowPump = running ? 0.32 : 0.18;
     return {
       frontShoulder: lerp(-swing, frontAirTarget, airborne) + state.kneel * 0.12,
       backShoulder: lerp(swing, backAirTarget, airborne) - state.kneel * 0.08,
-      frontElbow: 0.1 + state.speedRatio * 0.18 + airborne * 0.14,
-      backElbow: -0.1 - state.speedRatio * 0.18 - airborne * 0.14,
+      frontElbow: 0.1 + state.speedRatio * elbowPump + airborne * 0.14 + (running ? 0.12 : 0),
+      backElbow: -0.1 - state.speedRatio * elbowPump - airborne * 0.14 - (running ? 0.12 : 0),
     };
   }
 
   function computeBodyPose(state) {
-    const stepRise = -Math.abs(Math.sin(state.walkPhase)) * state.speedRatio * 1.7;
+    const running = state.gait === 'run';
+    const bobAmp = running ? 2.6 : 1.7;
+    const stepRise = -Math.abs(Math.sin(state.walkPhase)) * state.speedRatio * bobAmp;
     const breathing = Math.sin(state.idlePhase) * (1 - state.speedRatio) * 0.32;
+    const leanScale = running ? 0.16 : 0.09;
+    const dirLean = running ? 0.05 : 0.025;
     return {
       bob: (stepRise + breathing) * (1 - state.kneel),
-      lean: state.localVelocity * 0.09
-        + state.moveDirection * 0.025
+      lean: state.localVelocity * leanScale
+        + state.moveDirection * dirLean
         + state.kneel * 0.06,
     };
   }

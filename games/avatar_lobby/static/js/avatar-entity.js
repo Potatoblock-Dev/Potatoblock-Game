@@ -32,6 +32,7 @@
   }
   const DEFAULT_HEIGHT_SCALE = 1.0;
   const MOVE_SPEED = 260;
+  const RUN_SPEED = 420;
   const textureCache = new Map();
 
   function createJoints() {
@@ -57,6 +58,7 @@
       vy: 0,
       facing: 1,
       moveDirection: 0,
+      gait: 'walk',
       walkPhase: 0,
       idlePhase: 0,
       onGround: true,
@@ -89,19 +91,23 @@
   }
 
   function updateEntityMotion(entity, dt) {
-    const speedRatio = Math.min(Math.abs(entity.vx) / MOVE_SPEED, 1);
+    const gait = entity.gait === 'run' ? 'run' : 'walk';
+    const refSpeed = gait === 'run' ? RUN_SPEED : MOVE_SPEED;
+    const speedRatio = Math.min(Math.abs(entity.vx) / refSpeed, 1);
     if (speedRatio > 0.03 && entity.onGround) {
-      entity.walkPhase += dt * (5 + speedRatio * 7);
+      const cadence = gait === 'run' ? 7.2 + speedRatio * 9.5 : 5 + speedRatio * 7;
+      entity.walkPhase += dt * cadence;
     }
     entity.idlePhase += dt * 1.7;
     const pose = window.ProceduralMotion.computePose({
       walkPhase: entity.walkPhase,
       idlePhase: entity.idlePhase,
       speedRatio,
+      gait,
       onGround: entity.onGround,
       verticalVelocity: entity.vy,
       kneel: entity.kneel,
-      localVelocity: entity.vx / MOVE_SPEED * entity.facing,
+      localVelocity: entity.vx / refSpeed * entity.facing,
       moveDirection: entity.moveDirection * entity.facing,
     });
     const joints = entity.joints;
@@ -420,6 +426,7 @@
     AVATAR_COLLISION_WIDTH,
     DEFAULT_HEIGHT_SCALE,
     MOVE_SPEED,
+    RUN_SPEED,
     createAvatarEntity,
     updateEntityMotion,
     loadAppearance,

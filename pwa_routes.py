@@ -18,10 +18,20 @@ APP_ROOT = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 SW_PATH = APP_ROOT / "static" / "js" / "service-worker.js"
 MANIFEST_PATH = APP_ROOT / "static" / "manifest.webmanifest"
+FAVICON_PATH = APP_ROOT / "static" / "icons" / "favicon.ico"
 
 
 def attach_pwa_routes(app: FastAPI) -> None:
     """注册 Service Worker、Web Manifest 与弹窗登录完成页。"""
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        """浏览器默认请求的标签页图标，与 PWA 图标同源。"""
+        return FileResponse(
+            FAVICON_PATH,
+            media_type="image/x-icon",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/sw.js", include_in_schema=False)
     async def service_worker() -> FileResponse:
