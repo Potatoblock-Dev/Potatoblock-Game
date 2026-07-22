@@ -56,6 +56,10 @@
     var rebounding = false;
     var THRESHOLD = 72;
     var MAX_PULL = 120;
+    var isCoarse = window.matchMedia('(hover: none), (max-width: 639px)').matches;
+    var reboundMs = isCoarse ? 300 : 480;
+    var refreshHoldY = isCoarse ? 36 : 48;
+    var refreshDelayMs = isCoarse ? 160 : 220;
 
     function setPullY(y) {
       pullY = Math.max(0, Math.min(y, MAX_PULL));
@@ -113,7 +117,7 @@
       }
 
       homeMain.addEventListener('transitionend', onTransitionEnd);
-      window.setTimeout(finish, 480);
+      window.setTimeout(finish, reboundMs);
     }
 
     window.addEventListener('touchstart', function (event) {
@@ -147,9 +151,9 @@
       if (dy > 10 && event.cancelable) {
         event.preventDefault();
       }
-      // 阻尼：越往下越难拉，回弹更自然。
-      var dampened = Math.min(MAX_PULL, dy * 0.42);
-      armed = dampened >= THRESHOLD * 0.55;
+      // 阻尼：移动端更紧，桌面可再拉远一点。
+      var dampened = Math.min(MAX_PULL, dy * (isCoarse ? 0.36 : 0.42));
+      armed = dampened >= THRESHOLD * (isCoarse ? 0.5 : 0.55);
       setPullY(dampened);
       setTipLabel(armed, false);
     }, { passive: false });
@@ -165,10 +169,10 @@
         body.classList.remove('is-pulling');
         body.classList.add('is-rebounding');
         // 先收到刷新位，再短停后刷新，避免瞬间跳转。
-        setPullY(48);
+        setPullY(refreshHoldY);
         window.setTimeout(function () {
           window.location.reload();
-        }, 220);
+        }, refreshDelayMs);
         return;
       }
       reboundToRest();

@@ -216,26 +216,12 @@
         margin-bottom: 2rem;
       }
     }
-    /* 移动端下拉刷新：跟手位移 + 松手回弹 */
+    /* 下拉刷新 / 主题切换：桌面与移动端动效分开，移动端优先短促无过冲 */
     body.home-page {
       --pull-y: 0px;
     }
-    .home-main,
-    .site-topbar {
+    .home-main {
       transform: translate3d(0, var(--pull-y), 0);
-      will-change: transform;
-    }
-    body.home-page.is-pulling .home-main,
-    body.home-page.is-pulling .site-topbar,
-    body.home-page.is-pulling .pull-refresh {
-      transition: none;
-    }
-    body.home-page.is-rebounding .home-main,
-    body.home-page.is-rebounding .site-topbar {
-      transition: transform .45s cubic-bezier(0.22, 1.2, 0.36, 1);
-    }
-    body.home-page.is-rebounding .pull-refresh {
-      transition: opacity .28s ease, transform .45s cubic-bezier(0.22, 1.2, 0.36, 1);
     }
     .pull-refresh {
       position: fixed;
@@ -262,11 +248,67 @@
       background: rgb(148 163 184 / .16);
       backdrop-filter: blur(6px);
     }
-    /* 深浅色切换：背景/描边渐变，文字颜色立即切换 */
-    html.theme-fading,
-    html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
-      transition: background-color .45s ease, border-color .45s ease,
-        box-shadow .45s ease !important;
+    /* 桌面：顶栏可跟手，回弹略带回弹感；主题可全树渐变背景 */
+    @media (hover: hover) and (pointer: fine) {
+      .site-topbar {
+        transform: translate3d(0, var(--pull-y), 0);
+      }
+      body.home-page.is-pulling .home-main,
+      body.home-page.is-pulling .site-topbar,
+      body.home-page.is-pulling .pull-refresh {
+        transition: none;
+      }
+      body.home-page.is-rebounding .home-main,
+      body.home-page.is-rebounding .site-topbar {
+        transition: transform .45s cubic-bezier(0.22, 1.2, 0.36, 1);
+      }
+      body.home-page.is-rebounding .pull-refresh {
+        transition: opacity .28s ease, transform .45s cubic-bezier(0.22, 1.2, 0.36, 1);
+      }
+      html.theme-fading,
+      html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
+        transition: background-color .45s ease, border-color .45s ease,
+          box-shadow .45s ease !important;
+      }
+    }
+    /* 移动端：顶栏固定；回弹短促无过冲；主题只过渡少量容器 */
+    @media (hover: none), (max-width: 639px) {
+      .site-topbar {
+        transform: none;
+      }
+      body.home-page.is-pulling .home-main,
+      body.home-page.is-pulling .pull-refresh {
+        transition: none;
+      }
+      body.home-page.is-rebounding .home-main {
+        transition: transform .28s cubic-bezier(0.25, 0.9, 0.35, 1);
+      }
+      body.home-page.is-rebounding .pull-refresh {
+        transition: opacity .18s ease, transform .28s cubic-bezier(0.25, 0.9, 0.35, 1);
+      }
+      .pull-refresh {
+        height: calc(env(safe-area-inset-top, 0px) + 28px);
+        transform: translate3d(0, calc(var(--pull-y) * 0.4 - 8px), 0);
+      }
+      .pull-refresh-inner {
+        backdrop-filter: none;
+        background: rgb(148 163 184 / .22);
+      }
+      html.theme-fading,
+      html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
+        transition: none !important;
+      }
+      html.theme-fading body,
+      html.theme-fading .bg-gray-900,
+      html.theme-fading .bg-gray-800,
+      html.theme-fading .settings-panel,
+      html.theme-fading .changelog-panel,
+      html.theme-fading .pwa-guide-panel,
+      html.theme-fading .theme-manual-row,
+      html.theme-fading .theme-mode-option,
+      html.theme-fading .settings-link {
+        transition: background-color .22s ease, border-color .22s ease !important;
+      }
     }
     </style>
 </head>
@@ -427,7 +469,7 @@
     <script src="/static/js/pwa.js?v=4"></script>
     <script src="/static/js/changelog.js?v=1"></script>
     <script src="/static/js/passport-login.js"></script>
-    <script src="/static/js/main.js?v=6"></script>
+    <script src="/static/js/main.js?v=7"></script>
     <script>
     // 系统设置弹窗 + 主题模式（与游戏页共用 pb-theme-mode / pb-theme 存储键）
     // 自动/系统用上方两个按钮；手动深浅色用白天黑夜动画开关。
@@ -473,7 +515,8 @@
         rootEl.classList.add('theme-fading');
         rootEl.dataset.theme = theme;
         clearTimeout(themeFadeTimer);
-        themeFadeTimer = setTimeout(() => rootEl.classList.remove('theme-fading'), 500);
+        var fadeMs = window.matchMedia('(hover: none), (max-width: 639px)').matches ? 260 : 500;
+        themeFadeTimer = setTimeout(() => rootEl.classList.remove('theme-fading'), fadeMs);
       }
 
       // 应用当前模式：设置页面主题、刷新选中态、同步动画开关位置
