@@ -199,11 +199,39 @@
         justify-content: flex-start;
         padding-top: calc(3.75rem + env(safe-area-inset-top, 0px));
         padding-bottom: max(2rem, env(safe-area-inset-bottom, 0px));
+        overscroll-behavior-y: contain;
       }
       .site-brand {
         margin-top: 0.75rem;
         margin-bottom: 2rem;
       }
+    }
+    /* 移动端下拉刷新提示 */
+    .pull-refresh {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 0;
+      z-index: 40;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      pointer-events: none;
+      height: calc(env(safe-area-inset-top, 0px) + 12px);
+      opacity: 0;
+      transform: translateY(-8px);
+      transition: opacity .15s ease;
+      font-size: 12px;
+      letter-spacing: .04em;
+      color: inherit;
+    }
+    .pull-refresh.is-visible { opacity: .72; }
+    .pull-refresh-inner {
+      margin-bottom: 2px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgb(148 163 184 / .16);
+      backdrop-filter: blur(6px);
     }
     /* 深浅色切换：背景/描边渐变，文字颜色立即切换 */
     html.theme-fading,
@@ -214,6 +242,9 @@
     </style>
 </head>
 <body class="home-page bg-gray-950 text-white min-h-screen flex flex-col items-center justify-center p-8">
+    <div id="pullRefresh" class="pull-refresh" aria-hidden="true">
+      <div class="pull-refresh-inner">下拉刷新</div>
+    </div>
     <!-- 用户状态栏（可选） -->
     <div class="site-topbar absolute text-sm text-gray-400">
         <div class="site-topbar-account">

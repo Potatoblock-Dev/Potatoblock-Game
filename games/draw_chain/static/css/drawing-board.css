@@ -79,6 +79,10 @@ html[data-theme='light'] .drawing-board .fill-chip.is-active {
 
 /* Mobile Sketchbook-style floating chrome */
 @media (max-width: 767px) {
+  .drawing-board .canvas-stage {
+    position: relative;
+    display: block;
+  }
   .drawing-board .canvas-stage-surface { position: relative; }
   .drawing-board .drawer-toolbar {
     position: absolute; inset: 0; z-index: 6;

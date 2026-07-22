@@ -418,18 +418,22 @@
   const MAX_EXTRAPOLATE_S = 0.25;
 
   // 快照挂在服务器时间轴（serverMs）上；只保留插值所需字段。
+  // Avatar 大厅用 nx；阈限月台用世界坐标 x。
   function pushSnapshot(entity, snapshot, serverMs) {
     const snaps = entity.snapshots;
     if (snaps.length > 0 && serverMs <= snaps[snaps.length - 1].serverMs) return;
     snaps.push({
       serverMs,
       nx: snapshot.nx,
+      x: snapshot.x,
       y: snapshot.y,
       vx: snapshot.vx,
       vy: snapshot.vy,
       facing: snapshot.facing,
       onGround: snapshot.onGround,
       kneel: snapshot.kneel,
+      gait: snapshot.gait === 'run' ? 'run' : 'walk',
+      headLook: Number(snapshot.headLook) || 0,
       nickname: snapshot.nickname,
     });
     while (snaps.length > 2 && snaps[snaps.length - 1].serverMs - snaps[0].serverMs > 1500) {
@@ -438,14 +442,18 @@
   }
 
   function lerpSnapshots(a, b, t) {
+    const useX = a.x != null && b.x != null;
     return {
       nx: a.nx + (b.nx - a.nx) * t,
+      x: useX ? a.x + (b.x - a.x) * t : b.x ?? a.x,
       y: a.y + (b.y - a.y) * t,
       vx: a.vx + (b.vx - a.vx) * t,
       vy: a.vy + (b.vy - a.vy) * t,
       facing: t < 0.5 ? a.facing : b.facing,
       onGround: t < 0.5 ? a.onGround : b.onGround,
-      kneel: a.kneel + (b.kneel - a.kneel) * t,
+      kneel: (a.kneel ?? 0) + ((b.kneel ?? 0) - (a.kneel ?? 0)) * t,
+      gait: t < 0.5 ? a.gait : b.gait,
+      headLook: (a.headLook ?? 0) + ((b.headLook ?? 0) - (a.headLook ?? 0)) * t,
       nickname: b.nickname || a.nickname,
     };
   }
@@ -458,11 +466,14 @@
     if (renderMs >= newest.serverMs) {
       const aheadS = Math.min((renderMs - newest.serverMs) / 1000, MAX_EXTRAPOLATE_S);
       if (aheadS <= 0.001) return newest;
-      return {
-        ...newest,
-        nx: Math.max(0, Math.min(1, newest.nx + (newest.vx * aheadS) / REF_USABLE)),
-        y: newest.onGround ? newest.y : Math.min(0, newest.y + newest.vy * aheadS),
-      };
+      const out = { ...newest };
+      if (newest.x != null) {
+        out.x = newest.x + newest.vx * aheadS;
+      } else if (newest.nx != null) {
+        out.nx = Math.max(0, Math.min(1, newest.nx + (newest.vx * aheadS) / REF_USABLE));
+      }
+      out.y = newest.onGround ? newest.y : Math.min(0, newest.y + newest.vy * aheadS);
+      return out;
     }
     if (renderMs <= snaps[0].serverMs) return snaps[0];
     for (let i = snaps.length - 1; i > 0; i -= 1) {
