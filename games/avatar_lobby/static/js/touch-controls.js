@@ -1,5 +1,5 @@
 /**
- * 移动端触控：左侧虚拟摇杆 + 右侧跳跃按钮。
+ * 移动端触控：左侧虚拟摇杆（左右走 + 下拉下蹲）+ 右侧交互 / 跳跃。
  * 对外只暴露动作状态，角色控制器无需感知 PointerEvent 细节。
  */
 (() => {
@@ -7,21 +7,23 @@
   const joystick = document.getElementById('moveJoystick');
   const knob = document.getElementById('moveJoystickKnob');
   const jumpButton = document.getElementById('mobileJumpButton');
-  const kneelButton = document.getElementById('mobileKneelButton');
+  const interactButton = document.getElementById('mobileInteractButton');
   const state = {
     direction: 0,
     jump: false,
     jumpQueued: false,
     kneel: false,
+    interactQueued: false,
     enabled: true,
   };
   let joystickPointer = null;
   let jumpPointer = null;
-  let kneelPointer = null;
+  let interactPointer = null;
 
   function resetJoystick() {
     joystickPointer = null;
     state.direction = 0;
+    state.kneel = false;
     knob.style.transform = 'translate(0, 0)';
     joystick.setAttribute('aria-valuenow', '0');
   }
@@ -37,7 +39,9 @@
       dy = dy / distance * radius;
     }
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.direction = dx < -radius * 0.28 ? -1 : dx > radius * 0.28 ? 1 : 0;
+    const deadzone = radius * 0.28;
+    state.direction = dx < -deadzone ? -1 : dx > deadzone ? 1 : 0;
+    state.kneel = dy > deadzone;
     joystick.setAttribute('aria-valuenow', String(state.direction));
   }
 
@@ -46,12 +50,12 @@
     controls.classList.toggle('is-disabled', !enabled);
     resetJoystick();
     jumpPointer = null;
-    kneelPointer = null;
+    interactPointer = null;
     state.jump = false;
     state.jumpQueued = false;
-    state.kneel = false;
+    state.interactQueued = false;
     jumpButton.classList.remove('is-active');
-    kneelButton.classList.remove('is-active');
+    interactButton.classList.remove('is-active');
   }
 
   function isUiBlockingInput() {
@@ -96,20 +100,19 @@
     });
   }
 
-  kneelButton.addEventListener('pointerdown', (event) => {
-    if (!state.enabled || kneelPointer !== null) return;
-    kneelPointer = event.pointerId;
-    state.kneel = true;
-    kneelButton.classList.add('is-active');
-    kneelButton.setPointerCapture(event.pointerId);
+  interactButton.addEventListener('pointerdown', (event) => {
+    if (!state.enabled || interactPointer !== null) return;
+    interactPointer = event.pointerId;
+    state.interactQueued = true;
+    interactButton.classList.add('is-active');
+    interactButton.setPointerCapture(event.pointerId);
   });
 
   for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    kneelButton.addEventListener(eventName, (event) => {
-      if (event.pointerId !== kneelPointer) return;
-      kneelPointer = null;
-      state.kneel = false;
-      kneelButton.classList.remove('is-active');
+    interactButton.addEventListener(eventName, (event) => {
+      if (event.pointerId !== interactPointer) return;
+      interactPointer = null;
+      interactButton.classList.remove('is-active');
     });
   }
 
@@ -122,13 +125,17 @@
 
   window.TouchControls = {
     read() {
-      if (!state.enabled) return { direction: 0, jump: false, kneel: false };
+      if (!state.enabled) {
+        return { direction: 0, jump: false, kneel: false, interact: false };
+      }
       const input = {
         direction: state.direction,
         jump: state.jump || state.jumpQueued,
         kneel: state.kneel,
+        interact: state.interactQueued,
       };
       state.jumpQueued = false;
+      state.interactQueued = false;
       return input;
     },
   };

@@ -184,7 +184,8 @@
       nextSourceId += 1;
       cropRect = null;
       cropRectDirty = false;
-      for (const [partId, part] of Object.entries(layout.PARTS)) {
+      const importParts = layout.resolveParts(image);
+      for (const [partId, part] of Object.entries(importParts)) {
         const [sx, sy, sw, sh] = part.rect;
         assignments[partId] = {
           sourceId, sx, sy, sw, sh,
@@ -198,8 +199,8 @@
       renderParts();
       drawCropCanvas();
       composeAndPreview();
-      setStatus(`已载入完整 UV：${file.name}`);
-      partHint.textContent = '完整 UV 已自动分配到全部部位，可直接预览或生成皮套';
+      setStatus(`已载入完整 UV：${file.name}（${image._uvLayoutId || 'auto'}）`);
+      partHint.textContent = '完整 UV 已按图集版式自动分配到全部部位，可直接预览或生成皮套';
     };
     image.src = URL.createObjectURL(file);
     atlasImportInput.value = '';

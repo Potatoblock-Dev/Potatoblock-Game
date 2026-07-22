@@ -29,6 +29,8 @@
   const FOCUS_DURATION = 0.45;
   const FOCUS_SCREEN_X = 0.38;
   const FOCUS_SCREEN_Y = 0.58;
+  // 大厅最小世界宽度（与服务端参考宽一致）。竖屏也按此宽度移动，镜头跟随。
+  const WORLD_MIN_WIDTH = 1600;
 
   const networkSession = window.AvatarNetwork.createSession();
   const networkStep = 1 / window.AvatarNetwork.INPUT_RATE_HZ;
@@ -36,7 +38,7 @@
   let networkAccumulator = 0;
   let inputSequence = 0;
 
-  // 本地状态用屏幕像素：x 为水平位置，y 为相对地面高度（地面 0，腾空为负）。
+  // 本地状态用世界像素：x 为水平位置，y 为相对地面高度（地面 0，腾空为负）。
   const local = { x: 0, y: 0, vx: 0, vy: 0, onGround: true, kneel: 0 };
   let clockOffsetMs = null;
   // 仅进房后第一次见到自己的快照时对齐；切后台不再硬拉位置。
@@ -70,6 +72,7 @@
 
   let viewW = 0;
   let viewH = 0;
+  let worldW = WORLD_MIN_WIDTH;
   let dpr = 1;
   let groundY = 0;
 
@@ -83,30 +86,32 @@
 
   function clampX(x) {
     const margin = edgeMargin();
-    return Math.max(margin, Math.min(viewW - margin, x));
+    return Math.max(margin, Math.min(worldW - margin, x));
   }
 
-  // 仅用于出生对齐与远端插值：服务端 nx → 当前屏宽像素。
+  // 仅用于出生对齐与远端插值：服务端 nx → 当前世界宽度像素。
   function nxToX(nx) {
     const margin = edgeMargin();
-    const usable = Math.max(1, viewW - margin * 2);
+    const usable = Math.max(1, worldW - margin * 2);
     return margin + Math.max(0, Math.min(1, nx)) * usable;
   }
 
   function resizeStage() {
-    const prevW = viewW;
+    const prevWorldW = worldW;
     const prevMargin = edgeMargin();
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     viewW = window.innerWidth;
     viewH = window.innerHeight;
+    // 宽屏用视口宽；窄屏（尤其竖屏）至少 WORLD_MIN_WIDTH，避免被手机宽度卡住。
+    worldW = Math.max(viewW, WORLD_MIN_WIDTH);
     canvas.width = Math.round(viewW * dpr);
     canvas.height = Math.round(viewH * dpr);
     canvas.style.width = `${viewW}px`;
     canvas.style.height = `${viewH}px`;
     groundY = viewH - AVATAR_SIZE;
     // 改宽时按比例保住相对位置，避免窗口缩放造成瞬移。
-    if (prevW > 0) {
-      const prevUsable = Math.max(1, prevW - prevMargin * 2);
+    if (prevWorldW > 0) {
+      const prevUsable = Math.max(1, prevWorldW - prevMargin * 2);
       const t = (local.x - prevMargin) / prevUsable;
       local.x = clampX(nxToX(Math.max(0, Math.min(1, t))));
       avatar.x = local.x;
@@ -115,7 +120,7 @@
   }
 
   resizeStage();
-  local.x = clampX(viewW / 2);
+  local.x = clampX(worldW / 2);
   avatar.x = local.x;
   avatar.y = stageYFromPhysics(0, avatar);
   window.addEventListener('resize', resizeStage);
@@ -137,20 +142,42 @@
     camera.blend = approach(camera.blend, camera.target, step);
   }
 
+  /** 世界比视口宽时横向跟随角色，并夹住左右边界。 */
   function computeCameraTransform() {
     const t = easeInOutQuad(camera.blend);
     const zoom = 1 + (FOCUS_ZOOM - 1) * t;
     const anchorX = viewW / 2 + (viewW * camera.focusX - viewW / 2) * t;
     const anchorY = viewH / 2 + (viewH * FOCUS_SCREEN_Y - viewH / 2) * t;
-    const focusX = viewW / 2 + (avatar.x - viewW / 2) * t;
-    const focusY = viewH / 2 + (avatar.y - viewH / 2) * t;
-    return { zoom, offsetX: anchorX - focusX * zoom, offsetY: anchorY - focusY * zoom };
+    let offsetX = anchorX - avatar.x * zoom;
+    let offsetY = anchorY - avatar.y * zoom;
+    if (t < 0.001) offsetY = 0;
+
+    const worldSpan = worldW * zoom;
+    if (worldSpan <= viewW) {
+      offsetX = (viewW - worldSpan) / 2;
+    } else {
+      const minOffset = viewW - worldSpan;
+      offsetX = Math.max(minOffset, Math.min(0, offsetX));
+    }
+    return { zoom, offsetX, offsetY };
   }
 
   const keys = new Set();
+
+  /** 靠近可交互物体时进入（键盘 F / 移动端交互键）。 */
+  function tryInteract() {
+    const portal = window.WorldObjects?.findActivePortal(local, nxToX);
+    if (!portal) return false;
+    window.location.href = portal.url;
+    return true;
+  }
+
   window.addEventListener('keydown', (event) => {
     if (event.target instanceof HTMLInputElement) return;
     keys.add(event.code);
+    if (isActionPressed('interact') && !event.repeat) {
+      if (tryInteract()) return;
+    }
     if (
       isActionPressed('left') ||
       isActionPressed('right') ||
@@ -170,7 +197,7 @@
 
   function readInputFrame() {
     if (!skinEditorElement.classList.contains('hidden')) {
-      return { direction: 0, jump: false, kneel: false };
+      return { direction: 0, jump: false, kneel: false, interact: false };
     }
     const touch = window.TouchControls.read();
     const keyboardDirection =
@@ -179,6 +206,7 @@
       direction: touch.direction || keyboardDirection,
       jump: touch.jump || isActionPressed('jump'),
       kneel: touch.kneel || isActionPressed('kneel'),
+      interact: touch.interact,
     };
   }
 
@@ -378,9 +406,25 @@
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(-viewW, groundY + AVATAR_SIZE / 2);
-    ctx.lineTo(viewW * 2, groundY + AVATAR_SIZE / 2);
+    ctx.moveTo(0, groundY + AVATAR_SIZE / 2);
+    ctx.lineTo(worldW, groundY + AVATAR_SIZE / 2);
     ctx.stroke();
+
+    if (window.WorldObjects) {
+      window.WorldObjects.drawPortals(ctx, {
+        groundY,
+        avatarSize: AVATAR_SIZE,
+        nxToX,
+        local,
+        formatInteractKey: () => window.InputBindings.formatAction('interact'),
+        view,
+        dpr,
+      });
+      ctx.setTransform(
+        view.zoom * dpr, 0, 0, view.zoom * dpr,
+        view.offsetX * dpr, view.offsetY * dpr
+      );
+    }
 
     for (const remote of remotePlayers.values()) {
       Entity.drawAvatar(ctx, remote, view, dpr);
@@ -399,6 +443,7 @@
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
     const input = readInputFrame();
+    if (input.interact) tryInteract();
     updateLocal(dt, input);
     if (!isOfflineSession) {
       networkAccumulator += dt;

@@ -1,4 +1,4 @@
-/** PWA 注册、安装提示、版本更新通知。 */
+/** PWA 注册、安装引导、版本更新通知。 */
 (function () {
   'use strict';
 
@@ -7,11 +7,13 @@
   let deferredPrompt = null;
 
   function isStandalone() {
-    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
   }
 
   function isIOS() {
-    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    return /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   }
 
   function isAndroid() {
@@ -20,6 +22,11 @@
 
   function dispatchUpdate() {
     window.dispatchEvent(new CustomEvent(UPDATE_EVENT));
+  }
+
+  function setHidden(el, hidden) {
+    if (!el) return;
+    el.classList.toggle('hidden', hidden);
   }
 
   function registerServiceWorker() {
@@ -42,10 +49,62 @@
 
   function bindInstallUi() {
     const installBtn = document.getElementById('pwaInstallButton');
+    const installStatus = document.getElementById('pwaInstallStatus');
     const iosHint = document.getElementById('pwaIosHint');
     const androidHint = document.getElementById('pwaAndroidHint');
+    const desktopHint = document.getElementById('pwaDesktopHint');
     const updateBtn = document.getElementById('pwaUpdateButton');
     const updateHint = document.getElementById('pwaUpdateHint');
+
+    function hideAllInstallHints() {
+      setHidden(iosHint, true);
+      setHidden(androidHint, true);
+      setHidden(desktopHint, true);
+    }
+
+    function showPlatformHint() {
+      hideAllInstallHints();
+      if (isIOS()) {
+        setHidden(iosHint, false);
+      } else if (isAndroid()) {
+        setHidden(androidHint, false);
+      } else {
+        setHidden(desktopHint, false);
+      }
+    }
+
+    function refreshInstallUi() {
+      if (isStandalone()) {
+        setHidden(installBtn, true);
+        hideAllInstallHints();
+        if (installStatus) {
+          installStatus.textContent = '已安装为应用，可从主屏幕打开。';
+          setHidden(installStatus, false);
+        }
+        return;
+      }
+
+      if (installStatus) {
+        installStatus.textContent = deferredPrompt
+          ? '可一键安装到主屏幕。'
+          : '按下方说明添加到主屏幕。';
+        setHidden(installStatus, false);
+      }
+
+      // 有系统安装弹窗时显示主按钮；否则也显示，点击后展开对应平台说明。
+      setHidden(installBtn, false);
+      if (deferredPrompt) {
+        hideAllInstallHints();
+        if (installBtn) installBtn.textContent = '添加到主屏幕 / 安装应用';
+      } else {
+        showPlatformHint();
+        if (installBtn) {
+          installBtn.textContent = isIOS()
+            ? '查看安装步骤（iPhone / iPad）'
+            : '查看安装步骤';
+        }
+      }
+    }
 
     if (installBtn) {
       installBtn.addEventListener('click', async () => {
@@ -53,15 +112,19 @@
           deferredPrompt.prompt();
           await deferredPrompt.userChoice;
           deferredPrompt = null;
-          installBtn.classList.add('hidden');
+          refreshInstallUi();
+          return;
         }
+        // 无系统弹窗时不跳转清单文件，只展示本页安装说明。
+        showPlatformHint();
+        const hint = isIOS() ? iosHint : isAndroid() ? androidHint : desktopHint;
+        hint?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       });
     }
 
     if (updateBtn) {
       updateBtn.addEventListener('click', () => {
-        const reg = navigator.serviceWorker.controller;
-        if (!reg) {
+        if (!navigator.serviceWorker.controller) {
           window.location.reload();
           return;
         }
@@ -79,33 +142,23 @@
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       deferredPrompt = e;
-      if (installBtn) installBtn.classList.remove('hidden');
-      if (androidHint) androidHint.classList.add('hidden');
+      refreshInstallUi();
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredPrompt = null;
+      refreshInstallUi();
     });
 
     window.addEventListener(UPDATE_EVENT, () => {
-      if (updateBtn) updateBtn.classList.remove('hidden');
+      setHidden(updateBtn, false);
       if (updateHint) {
-        updateHint.classList.remove('hidden');
         updateHint.textContent = '新版本已就绪，点击更新后重新加载。';
+        setHidden(updateHint, false);
       }
     });
 
-    if (isStandalone()) {
-      if (installBtn) installBtn.classList.add('hidden');
-      if (iosHint) iosHint.classList.add('hidden');
-      if (androidHint) androidHint.classList.add('hidden');
-      return;
-    }
-
-    if (isIOS() && iosHint) {
-      iosHint.classList.remove('hidden');
-    } else if (iosHint) {
-      iosHint.classList.add('hidden');
-    }
-    if (isAndroid() && androidHint && !deferredPrompt) {
-      androidHint.classList.remove('hidden');
-    }
+    refreshInstallUi();
   }
 
   registerServiceWorker();

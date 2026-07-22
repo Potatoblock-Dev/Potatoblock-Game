@@ -55,9 +55,9 @@ def _now() -> float:
 
 
 def _edge_margin_ratio() -> float:
-    """角色半宽相对舞台宽度的归一化边距，客户端按 viewW 还原。"""
-    # 服务端不持有真实像素宽，用固定参考宽 1280 估算边距比例。
-    reference_width = 1280.0
+    """角色半宽相对舞台宽度的归一化边距，客户端按 worldW 还原。"""
+    # 服务端不持有真实像素宽，用固定参考宽（与客户端 WORLD_MIN_WIDTH 一致）。
+    reference_width = 1600.0
     margin = (AVATAR_COLLISION_WIDTH * AVATAR_DRAW_SCALE) / 2.0
     return margin / reference_width
 
@@ -274,8 +274,8 @@ class AvatarRoom:
             else:
                 player.vx = max(player.vx - accel * dt, target_vx)
 
-            # 把像素速度换算到归一化横坐标（参考宽 1280）。
-            reference_width = 1280.0
+            # 把像素速度换算到归一化横坐标（参考宽 1600，与客户端最小世界宽一致）。
+            reference_width = 1600.0
             usable = max(1.0, reference_width * (1.0 - 2.0 * margin))
             player.nx += (player.vx * dt) / usable
             player.nx = _clamp(player.nx, 0.0, 1.0)

@@ -6,7 +6,7 @@
   <title>{{ game.name }}</title>
   <link rel="stylesheet" href="/static/css/site.css">
   <link rel="stylesheet" href="/static/games/avatar-lobby/css/theme.css?v=1">
-  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=17">
+  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=18">
 </head>
 <body>
   <canvas id="lobbyCanvas"></canvas>
@@ -70,6 +70,13 @@
           <span class="binding-buttons">
             <button type="button" data-binding-action="kneel" data-binding-slot="0">S</button>
             <button type="button" data-binding-action="kneel" data-binding-slot="1">↓</button>
+          </span>
+        </label>
+        <label>
+          <span>交互</span>
+          <span class="binding-buttons">
+            <button type="button" data-binding-action="interact" data-binding-slot="0">F</button>
+            <button type="button" data-binding-action="interact" data-binding-slot="1">添加</button>
           </span>
         </label>
       </div>
@@ -196,7 +203,7 @@
         <span id="moveJoystickKnob" class="move-joystick-knob"></span>
       </div>
       <div class="mobile-action-buttons">
-        <button type="button" id="mobileKneelButton" class="mobile-kneel-button">跪地</button>
+        <button type="button" id="mobileInteractButton" class="mobile-interact-button">交互</button>
         <button type="button" id="mobileJumpButton" class="mobile-jump-button">跳跃</button>
       </div>
     </div>
@@ -218,16 +225,17 @@
   </div>
 
   <script src="/static/games/avatar-lobby/js/stage-ui.js"></script>
-  <script src="/static/games/avatar-lobby/js/input-bindings.js?v=4"></script>
-  <script src="/static/games/avatar-lobby/js/touch-controls.js?v=3"></script>
+  <script src="/static/games/avatar-lobby/js/input-bindings.js?v=5"></script>
+  <script src="/static/games/avatar-lobby/js/touch-controls.js?v=4"></script>
   <script src="/static/games/avatar-lobby/js/network-session.js?v=6"></script>
   <script src="/static/games/avatar-lobby/js/multiplayer-ui.js?v=3"></script>
-  <script src="/static/games/avatar-lobby/js/uv-layout.js?v=8"></script>
+  <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
   <script src="/static/games/avatar-lobby/js/uv-template.js?v=5"></script>
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=2"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=9"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-lobby.js?v=22"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=11"></script>
+  <script src="/static/games/avatar-lobby/js/world-objects.js?v=1"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-lobby.js?v=25"></script>
   <script src="/static/games/avatar-lobby/js/skin-editor-utils.js?v=2"></script>
-  <script src="/static/games/avatar-lobby/js/skin-editor.js?v=18"></script>
+  <script src="/static/games/avatar-lobby/js/skin-editor.js?v=19"></script>
 </body>
 </html>

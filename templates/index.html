@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Potatoblock Game">
-    <link rel="manifest" href="/static/manifest.webmanifest">
+    <link rel="manifest" href="/manifest.webmanifest">
     <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
     <title>{{ site_title }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -183,14 +183,13 @@
             </div>
             <div class="settings-section">
                 <div class="settings-label">安装应用（PWA）</div>
-                <button id="pwaInstallButton" type="button" class="pwa-action hidden">📲 添加到主屏幕 / 安装应用</button>
-                <button id="pwaUpdateButton" type="button" class="pwa-action hidden">⬆️ 更新应用</button>
+                <p id="pwaInstallStatus" class="pwa-hint hidden"></p>
+                <button id="pwaInstallButton" type="button" class="pwa-action hidden">添加到主屏幕 / 安装应用</button>
+                <button id="pwaUpdateButton" type="button" class="pwa-action hidden">更新应用</button>
                 <p id="pwaUpdateHint" class="pwa-hint hidden"></p>
-                <p id="pwaIosHint" class="pwa-hint">iPhone / iPad：Safari 打开本页 → 底部分享 →「添加到主屏幕」。</p>
-                <p id="pwaAndroidHint" class="pwa-hint hidden">Android：Chrome 菜单 →「安装应用」或「添加到主屏幕」。</p>
-                <a href="/static/manifest.webmanifest" class="settings-link">
-                    <span>查看应用清单</span><span aria-hidden="true">↗</span>
-                </a>
+                <p id="pwaIosHint" class="pwa-hint hidden">iPhone / iPad：用 Safari 打开本站 → 点底部分享按钮 → 选择「添加到主屏幕」。不要打开应用清单文件。</p>
+                <p id="pwaAndroidHint" class="pwa-hint hidden">Android：用 Chrome 打开本站 → 右上角菜单 →「安装应用」或「添加到主屏幕」。</p>
+                <p id="pwaDesktopHint" class="pwa-hint hidden">电脑：用 Chrome / Edge 打开本站 → 地址栏右侧安装图标，或菜单里的「安装应用」。</p>
             </div>
             <div class="settings-section">
                 <div class="settings-label">深浅色模式</div>
@@ -207,7 +206,7 @@
         </div>
     </div>
 
-    <script src="/static/js/pwa.js"></script>
+    <script src="/static/js/pwa.js?v=2"></script>
     <script src="/static/js/passport-login.js"></script>
     <script src="/static/js/main.js"></script>
     <script>

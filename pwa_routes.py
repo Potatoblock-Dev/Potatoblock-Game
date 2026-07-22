@@ -17,10 +17,11 @@ from app.routers.auth import get_optional_identity
 APP_ROOT = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 SW_PATH = APP_ROOT / "static" / "js" / "service-worker.js"
+MANIFEST_PATH = APP_ROOT / "static" / "manifest.webmanifest"
 
 
 def attach_pwa_routes(app: FastAPI) -> None:
-    """注册 Service Worker 与弹窗登录完成页。"""
+    """注册 Service Worker、Web Manifest 与弹窗登录完成页。"""
 
     @app.get("/sw.js", include_in_schema=False)
     async def service_worker() -> FileResponse:
@@ -29,6 +30,16 @@ def attach_pwa_routes(app: FastAPI) -> None:
             SW_PATH,
             media_type="application/javascript",
             headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+        )
+
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    @app.get("/static/manifest.webmanifest", include_in_schema=False)
+    async def web_manifest() -> FileResponse:
+        """返回 PWA 清单；带 charset，避免手机浏览器当纯文本打开时乱码。"""
+        return FileResponse(
+            MANIFEST_PATH,
+            media_type="application/manifest+json; charset=utf-8",
+            headers={"Cache-Control": "no-cache"},
         )
 
     @app.get("/pwa/login-done", response_class=HTMLResponse, include_in_schema=False)

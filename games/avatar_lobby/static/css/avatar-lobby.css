@@ -927,7 +927,7 @@ input::placeholder {
   }
 
   .mobile-jump-button,
-  .mobile-kneel-button {
+  .mobile-interact-button {
     width: clamp(76px, 19vw, 96px);
     aspect-ratio: 1;
     border-radius: 50%;
@@ -943,19 +943,19 @@ input::placeholder {
     background: rgb(245 158 11 / .24);
   }
 
-  .mobile-kneel-button {
+  .mobile-interact-button {
     width: clamp(64px, 16vw, 82px);
     border: 2px solid rgb(96 165 250 / .5);
     background: rgb(59 130 246 / .2);
   }
 
   .mobile-jump-button.is-active,
-  .mobile-kneel-button.is-active {
+  .mobile-interact-button.is-active {
     background: rgb(245 158 11 / .65);
     transform: scale(.94);
   }
 
-  .mobile-kneel-button.is-active { background: rgb(59 130 246 / .6); }
+  .mobile-interact-button.is-active { background: rgb(59 130 246 / .6); }
 
   .stage-hint { display: none; }
   [data-panel-toggle="bindingsPanel"] { display: none; }

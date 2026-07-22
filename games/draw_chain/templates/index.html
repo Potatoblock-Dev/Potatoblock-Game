@@ -898,6 +898,8 @@
     let myDrawWord = '';
     let guessWatch = { active: false, text: '', name: '' };
     let drawerTurnNoticeTimer = null;
+    const drawerTurnSound = new Audio('/static/games/draw-chain/audio/ding.wav');
+    drawerTurnSound.preload = 'auto';
     let gameRedo = [];
     let foregroundColor = '#111827';
     let backgroundColor = '#ffffff';
@@ -2848,6 +2850,14 @@
       updateHistoryButtons();
     }
 
+    function playDrawerTurnSound() {
+      try {
+        drawerTurnSound.currentTime = 0;
+        const playPromise = drawerTurnSound.play();
+        if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
+      } catch (_) {}
+    }
+
     function showTurnNotice(title, hint) {
       if (drawerTurnNoticeTimer) clearTimeout(drawerTurnNoticeTimer);
       byId('turnNoticeTitle').textContent = title;
@@ -2973,6 +2983,7 @@
       updateChainProgress(message.chain_index, message.chain_length, activeName, turnPhase);
       updatePlayerList(message.players);
       if (!wasDrawer && role === 'drawer' && turnPhase === 'draw' && !wasDrawPhase) {
+        playDrawerTurnSound();
         showTurnNotice('轮到你作画了！', '准备好后开始绘画');
       } else if (!wasGuesserTurn && role === 'guesser' && turnPhase === 'guess') {
         showTurnNotice('轮到你猜词了！', '看画作后在猜词窗口输入答案');

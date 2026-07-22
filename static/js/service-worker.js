@@ -1,7 +1,8 @@
 /* Potatoblock PWA service worker — network-first HTML, stale-while-revalidate static. */
-const CACHE = 'potatoblock-pwa-v1';
+const CACHE = 'potatoblock-pwa-v2';
 const PRECACHE = [
   '/',
+  '/manifest.webmanifest',
   '/static/manifest.webmanifest',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',

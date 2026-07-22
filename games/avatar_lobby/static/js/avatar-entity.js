@@ -12,8 +12,10 @@
    * 返回角色局部坐标中、脚底以下的额外长度（未乘 draw/height scale）。
    */
   function uvFootOverhangLocal(atlas) {
-    if (!atlas || atlas.width === window.UVLayout.LEGACY_ATLAS_SIZE) return 0;
-    const lower = window.UVLayout.PARTS.frontLegLower;
+    if (!atlas) return 0;
+    const parts = window.UVLayout.resolveParts(atlas);
+    if (parts === window.UVLayout.LEGACY_PARTS) return 0;
+    const lower = parts.frontLegLower;
     if (!lower?.rect || !lower?.coreRect || !lower?.drawSize) return 0;
     const [, ry, , rh] = lower.rect;
     const [, cy, , ch] = lower.coreRect;
@@ -234,8 +236,7 @@
   }
 
   function drawAvatarBody(ctx, entity, atlas) {
-    const isLegacyAtlas = atlas && atlas.width === window.UVLayout.LEGACY_ATLAS_SIZE;
-    const parts = isLegacyAtlas ? window.UVLayout.LEGACY_PARTS : window.UVLayout.PARTS;
+    const parts = window.UVLayout.resolveParts(atlas);
     const rig = window.UVLayout.RIG || { shoulderX: 14, shoulderY: -14, hipX: 7, hipY: 11 };
     const kneelOffset = entity.kneel * 11;
     const joints = entity.joints;
@@ -350,8 +351,8 @@
     drawNickname(ctx, entity, view, dpr);
   }
 
-  // 与服务端一致的归一化可用宽度（参考宽 1280），外推时把 vx 换算回 nx。
-  const REF_USABLE = 1280 - AVATAR_COLLISION_WIDTH * AVATAR_DRAW_SCALE;
+  // 与服务端一致的归一化可用宽度（参考宽 1600），外推时把 vx 换算回 nx。
+  const REF_USABLE = 1600 - AVATAR_COLLISION_WIDTH * AVATAR_DRAW_SCALE;
   const MAX_EXTRAPOLATE_S = 0.25;
 
   // 快照挂在服务器时间轴（serverMs）上；只保留插值所需字段。
