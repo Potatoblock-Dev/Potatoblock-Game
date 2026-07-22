@@ -42,8 +42,6 @@ AVATAR_COLLISION_WIDTH = 40.0
 DEFAULT_NX = 0.5
 MAX_MESSAGE_BYTES = 4096
 MAX_INPUT_HZ = 30
-CHAT_COOLDOWN_SECONDS = 1.2
-CHAT_MAX_CHARS = 40
 ROOM_CODE_ALPHABET = string.ascii_uppercase + string.digits
 ROOM_CODE_LENGTH = 6
 
@@ -92,7 +90,6 @@ class PlayerConnection:
         self.sender_task: Optional[asyncio.Task] = None
         self.alive = True
         self.last_input_at = 0.0
-        self.last_chat_at = 0.0
         self.input_count_window = 0
         self.input_window_start = _now()
 
@@ -479,38 +476,6 @@ class AvatarLobbyManager:
                 "roomId": room.room_id,
                 "playerId": user_id,
                 "appearance": appearance,
-            }
-        )
-
-    async def handle_chat(self, user_id: str, payload: Dict[str, Any]) -> None:
-        """广播头顶气泡聊天；短冷却与长度限制。"""
-        room_id = self.player_rooms.get(user_id)
-        if room_id is None:
-            return
-        room = self.rooms.get(room_id)
-        if room is None:
-            return
-        player = room.players.get(user_id)
-        if player is None or not player.connected:
-            return
-        if int(payload.get("protocolVersion") or 0) != PROTOCOL_VERSION:
-            return
-        now = _now()
-        if now - player.connection.last_chat_at < CHAT_COOLDOWN_SECONDS:
-            return
-        text = " ".join(str(payload.get("text") or "").split())
-        if not text:
-            return
-        text = text[:CHAT_MAX_CHARS]
-        player.connection.last_chat_at = now
-        await room.broadcast(
-            {
-                "type": "chat",
-                "protocolVersion": PROTOCOL_VERSION,
-                "roomId": room.room_id,
-                "playerId": user_id,
-                "nickname": player.nickname,
-                "text": text,
             }
         )
 

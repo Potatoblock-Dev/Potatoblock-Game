@@ -69,30 +69,15 @@
       kneel: 0,
       bodyBob: 0,
       bodyBobVelocity: 0,
+      headLook: 0,
+      headLookVelocity: 0,
       heightScale: DEFAULT_HEIGHT_SCALE,
       texture: null,
       uvAtlas: null,
       appearanceKey: '',
       joints: createJoints(),
       snapshots: [],
-      speechText: '',
-      speechUntil: 0,
     };
-  }
-
-  const SPEECH_DURATION_MS = 4500;
-  const SPEECH_MAX_CHARS = 40;
-
-  /** 在角色头顶显示气泡文案。 */
-  function setSpeechBubble(entity, text, durationMs = SPEECH_DURATION_MS) {
-    const cleaned = String(text || '').replace(/\s+/g, ' ').trim().slice(0, SPEECH_MAX_CHARS);
-    if (!cleaned) return;
-    entity.speechText = cleaned;
-    entity.speechUntil = performance.now() + durationMs;
-  }
-
-  function speechBubbleVisible(entity, now = performance.now()) {
-    return Boolean(entity.speechText) && now < entity.speechUntil;
   }
 
   function stepAngularSpring(joint, target, dt, stiffness = 85, damping = 13) {
@@ -302,18 +287,72 @@
     const headDrawRect = atlas && parts.head.drawRect
       ? parts.head.drawRect
       : [-9, -33, 18, 15];
+    const headX = headDrawRect[0];
+    const headY = headDrawRect[1] + kneelOffset;
+    const headW = headDrawRect[2];
+    const headH = headDrawRect[3];
+    // 绕颈窝旋转：看向鼠标时只转头，不带动身体。
+    const neckX = 0;
+    const neckY = headY + headH * 0.88;
+    ctx.save();
+    ctx.translate(neckX, neckY);
+    ctx.rotate(entity.headLook || 0);
+    ctx.translate(-neckX, -neckY);
     drawPartRect(
       ctx,
       style('head', '#facc15'),
-      headDrawRect[0],
-      headDrawRect[1] + kneelOffset,
-      headDrawRect[2],
-      headDrawRect[3]
+      headX,
+      headY,
+      headW,
+      headH
     );
     if (!atlas) {
       ctx.fillStyle = '#111827';
       ctx.fillRect(4, -28 + kneelOffset, 3, 3);
     }
+    ctx.restore();
+  }
+
+  /**
+   * 头部颈窝的世界坐标（与 drawAvatar 变换一致，忽略微小 lean）。
+   */
+  function neckWorldPosition(entity) {
+    const parts = entity.uvAtlas ? window.UVLayout.resolveParts(entity.uvAtlas) : null;
+    const headDraw = (parts && parts.head && parts.head.drawRect) || [-9, -33, 18, 15];
+    const kneelOffset = entity.kneel * 11;
+    const neckLocalY = headDraw[1] + kneelOffset + headDraw[3] * 0.88;
+    const scaleY = AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash);
+    const y =
+      entity.y
+      + entity.bodyBob
+      + AVATAR_SIZE / 2 * (1 - scaleY)
+      + neckLocalY * scaleY;
+    return { x: entity.x, y };
+  }
+
+  // 仰角过大或身后时不跟瞄；其余夹在可转范围内。
+  const HEAD_LOOK_MAX_UP = -0.42;
+  const HEAD_LOOK_MAX_DOWN = 0.55;
+  const HEAD_LOOK_BEHIND_DX = 18;
+
+  /**
+   * 根据世界坐标瞄准点更新本机角色看向角度（仅视觉）。
+   * 鼠标在身后或抬头超过阈值时回正；targetWorld 为 null 时回正。
+   */
+  function updateHeadLook(entity, targetWorld, dt) {
+    let target = 0;
+    if (targetWorld) {
+      const neck = neckWorldPosition(entity);
+      const forward = (targetWorld.x - neck.x) * entity.facing;
+      const dy = targetWorld.y - neck.y;
+      if (forward > HEAD_LOOK_BEHIND_DX) {
+        const angle = Math.atan2(dy, forward);
+        if (angle >= HEAD_LOOK_MAX_UP) {
+          target = Math.max(HEAD_LOOK_MAX_UP, Math.min(HEAD_LOOK_MAX_DOWN, angle));
+        }
+      }
+    }
+    stepBodySpring(entity, 'headLook', 'headLookVelocity', target, dt, 90, 14);
   }
 
   function drawNickname(ctx, entity, view, dpr) {
@@ -344,65 +383,6 @@
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.fillText(label, screenX, screenY);
-
-    if (speechBubbleVisible(entity)) {
-      drawSpeechBubble(ctx, entity.speechText, screenX, screenY - labelHeight / 2 - 10);
-    }
-  }
-
-  /** 昵称上方的对话气泡。 */
-  function drawSpeechBubble(ctx, text, screenX, anchorBottomY) {
-    ctx.font = '500 13px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const maxWidth = 200;
-    const chars = String(text).split('');
-    const lines = [];
-    let line = '';
-    for (const ch of chars) {
-      const next = line + ch;
-      if (ctx.measureText(next).width > maxWidth && line) {
-        lines.push(line);
-        line = ch;
-      } else {
-        line = next;
-      }
-    }
-    if (line) lines.push(line);
-    const shown = lines.slice(0, 3);
-    if (shown.length === 3 && lines.length > 3) {
-      shown[2] = `${shown[2].slice(0, Math.max(1, shown[2].length - 1))}…`;
-    }
-    const padX = 10;
-    const padY = 7;
-    const lineH = 17;
-    let boxW = 0;
-    for (const row of shown) boxW = Math.max(boxW, ctx.measureText(row).width);
-    boxW += padX * 2;
-    const boxH = padY * 2 + shown.length * lineH;
-    const boxX = screenX - boxW / 2;
-    const boxY = anchorBottomY - boxH - 8;
-
-    ctx.fillStyle = 'rgba(248, 250, 252, 0.96)';
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.35)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.roundRect(boxX, boxY, boxW, boxH, 10);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(screenX - 6, boxY + boxH);
-    ctx.lineTo(screenX, boxY + boxH + 7);
-    ctx.lineTo(screenX + 6, boxY + boxH);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = '#0f172a';
-    shown.forEach((row, index) => {
-      ctx.fillText(row, screenX, boxY + padY + lineH * (index + 0.5));
-    });
   }
 
   function drawAvatar(ctx, entity, view, dpr) {
@@ -505,12 +485,11 @@
     RUN_SPEED,
     createAvatarEntity,
     updateEntityMotion,
+    updateHeadLook,
     loadAppearance,
     drawAvatar,
-    setSpeechBubble,
     footGroundLiftPx,
     pushSnapshot,
     sampleRemote,
-    SPEECH_MAX_CHARS,
   };
 })();

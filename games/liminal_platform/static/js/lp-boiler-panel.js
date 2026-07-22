@@ -106,6 +106,7 @@
     track.addEventListener('pointerdown', (event) => {
       if (!open) return;
       drag = { kind, pointerId: event.pointerId };
+      Drive.setLocalControl?.(true);
       track.setPointerCapture(event.pointerId);
       applyPointer(track, event.clientY, kind);
       event.preventDefault();
@@ -126,7 +127,14 @@
     if (drag.kind === 'throttle') Drive.snapThrottle();
     if (drag.kind === 'brake') Drive.onBrakeReleased();
     drag = null;
+    Drive.setLocalControl?.(false);
     syncFromState();
+  });
+
+  window.addEventListener('pointercancel', () => {
+    if (!drag) return;
+    drag = null;
+    Drive.setLocalControl?.(false);
   });
 
   window.addEventListener('pointercancel', (event) => {

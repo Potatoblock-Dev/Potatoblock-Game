@@ -12,13 +12,22 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app.games.common.room_registry import find_reconnect_session
-from app.routers.auth import get_optional_identity
+from app.routers.auth import get_optional_identity, get_passport_nickname
 
 APP_ROOT = Path(__file__).resolve().parent
 TEMPLATES = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 SW_PATH = APP_ROOT / "static" / "js" / "service-worker.js"
 MANIFEST_PATH = APP_ROOT / "static" / "manifest.webmanifest"
 FAVICON_PATH = APP_ROOT / "static" / "icons" / "favicon.ico"
+
+
+async def _resolve_display_nickname(user_id: str, nickname: str) -> str:
+    """会话昵称为空时向通行证重查，得到可展示的昵称。"""
+    nick = str(nickname or "").strip()
+    if nick:
+        return nick
+    fresh = await get_passport_nickname(user_id)
+    return str(fresh or "").strip()
 
 
 def attach_pwa_routes(app: FastAPI) -> None:
@@ -58,6 +67,20 @@ def attach_pwa_routes(app: FastAPI) -> None:
         return TEMPLATES.TemplateResponse(
             "login_popup_done.html",
             {"request": request},
+        )
+
+    @app.get("/api/me", include_in_schema=False)
+    async def current_user(identity=Depends(get_optional_identity)) -> JSONResponse:
+        """返回当前登录用户的 UID 与可展示昵称（优先通行证昵称）。"""
+        if identity is None:
+            return JSONResponse({"user_id": None, "nickname": None})
+        user_id, nickname = identity
+        display = await _resolve_display_nickname(str(user_id), str(nickname or ""))
+        return JSONResponse(
+            {
+                "user_id": str(user_id),
+                "nickname": display or None,
+            }
         )
 
     @app.get("/api/active-session", include_in_schema=False)

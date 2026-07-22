@@ -40,22 +40,59 @@
     return brake >= EMERGENCY_BRAKE;
   }
 
+  let localControl = false;
+  let suppressNetwork = false;
+
+  /** 用户正在拖拽拉杆时标记，避免快照覆盖手感。 */
+  function setLocalControl(active) {
+    localControl = Boolean(active);
+  }
+
+  /** 是否由本机操作拉杆。 */
+  function isLocalControl() {
+    return localControl;
+  }
+
+  /** 推送列车状态到联机（若已连接）。 */
+  function pushNetwork() {
+    if (suppressNetwork) return;
+    window.LiminalNetworkSession?.sendTrain?.({
+      throttle: state.throttle,
+      brake: state.brake,
+    });
+  }
+
+  /** 应用服务端共享列车状态（不回传）。 */
+  function applyNetworkState(next = {}) {
+    if (localControl) return;
+    suppressNetwork = true;
+    if (next.throttle != null) state.throttle = Number(next.throttle) || 0;
+    if (next.brake != null) state.brake = Math.max(0, Math.min(1, Number(next.brake) || 0));
+    if (next.speed != null) state.speed = Number(next.speed) || 0;
+    if (isEmergencyBrake()) state.speed = 0;
+    suppressNetwork = false;
+    emit();
+  }
+
   /** 设置节流档（自动吸附）。 */
   function setThrottle(value) {
     state.throttle = nearestNotch(Number(value) || 0);
     emit();
+    pushNetwork();
   }
 
   /** 拖拽中临时设置（可不吸附）。 */
   function setThrottleRaw(value) {
     state.throttle = Math.max(-5, Math.min(5, Number(value) || 0));
     emit();
+    pushNetwork();
   }
 
   /** 吸附当前节流到最近档。 */
   function snapThrottle() {
     state.throttle = nearestNotch(state.throttle);
     emit();
+    pushNetwork();
   }
 
   /**
@@ -70,6 +107,7 @@
       state.speed = 0;
     }
     emit();
+    pushNetwork();
   }
 
   /** 触发急刹并开始回弹（刻度按钮「急刹」）。 */
@@ -79,6 +117,7 @@
     state.speed = 0;
     state.brakeSpringing = true;
     emit();
+    pushNetwork();
   }
 
   /** 松手：若在急刹位则开始缓慢回弹。 */
@@ -87,6 +126,7 @@
       state.speed = 0;
       state.brakeSpringing = true;
       emit();
+      pushNetwork();
     }
   }
 
@@ -107,15 +147,25 @@
     return '制动';
   }
 
-  /** 每帧积分速度；急刹回弹在此推进。 */
+  /** 每帧积分速度；急刹回弹在此推进。联机且非本机操作时由快照驱动。 */
   function tick(dt) {
-    if (state.brakeSpringing) {
+    const netOwned =
+      Boolean(window.LiminalNetworkSession?.connected) && !localControl;
+
+    if (state.brakeSpringing && !netOwned) {
       state.brake = Math.max(0, state.brake - BRAKE_SPRING_RATE * dt);
       if (state.brake <= 0.001) {
         state.brake = 0;
         state.brakeSpringing = false;
       }
       emit();
+      pushNetwork();
+    }
+
+    if (netOwned) {
+      const intensity = Math.min(1, Math.abs(state.speed) / MAX_SPEED);
+      window.LpTrainAudio?.setDriveIntensity?.(intensity);
+      return;
     }
 
     if (isEmergencyBrake()) {
@@ -177,6 +227,9 @@
     setBrake,
     triggerEmergencyBrake,
     onBrakeReleased,
+    setLocalControl,
+    isLocalControl,
+    applyNetworkState,
     throttleLabel,
     brakeLabel,
     isEmergencyBrake,

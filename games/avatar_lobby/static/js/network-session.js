@@ -5,7 +5,7 @@
  * 事件：connectionchange、worldsnapshot、playerleave、playerjoin、appearance、roomchange、roomerror
  */
 (() => {
-  const PROTOCOL_VERSION = 6;
+  const PROTOCOL_VERSION = 5;
   const INPUT_RATE_HZ = 20;
   const PUBLIC_ROOM_ID = 'public';
   const PING_MS = 5000;
@@ -70,8 +70,6 @@
         direction: frame.direction,
         jump: frame.jump,
         kneel: frame.kneel,
-        sprint: Boolean(frame.sprint),
-        headLook: Number(frame.headLook) || 0,
       });
     }
 
@@ -80,16 +78,6 @@
         type: 'appearance',
         protocolVersion: PROTOCOL_VERSION,
         skinId: appearance?.skinId || null,
-      });
-    }
-
-    sendChat(text) {
-      const cleaned = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
-      if (!cleaned) return;
-      this._send({
-        type: 'chat',
-        protocolVersion: PROTOCOL_VERSION,
-        text: cleaned,
       });
     }
 
@@ -224,10 +212,6 @@
       }
       if (type === 'appearance') {
         this._emit('appearance', payload);
-        return;
-      }
-      if (type === 'chat') {
-        this._emit('chat', payload);
       }
     }
 
@@ -309,7 +293,6 @@
 
     sendInput() {}
     setAppearance() {}
-    sendChat() {}
     createRoom() {}
     joinRoom() {}
     returnPublic() {}

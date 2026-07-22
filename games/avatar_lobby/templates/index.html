@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css">
   <link rel="stylesheet" href="/static/games/avatar-lobby/css/theme.css?v=1">
-  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=19">
+  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=18">
 </head>
 <body>
   <canvas id="lobbyCanvas"></canvas>
@@ -192,21 +192,6 @@
 
     <p id="controlHint" class="stage-hint">A / ← 向左，D / → 向右，空格跳跃</p>
 
-    <div id="speechChatBar" class="speech-chat-bar" aria-hidden="true">
-      <input
-        id="speechChatInput"
-        type="text"
-        maxlength="40"
-        enterkeyhint="send"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="输入消息，Enter 发送"
-        aria-label="聊天消息"
-      >
-      <button type="button" data-speech-chat-send class="speech-chat-send">发送</button>
-      <button type="button" data-speech-chat-cancel class="speech-chat-cancel">取消</button>
-    </div>
-
     <div id="mobileControls" class="mobile-controls" aria-label="触控操作">
       <div
         id="moveJoystick"
@@ -242,17 +227,16 @@
   </div>
 
   <script src="/static/games/avatar-lobby/js/stage-ui.js"></script>
-  <script src="/static/games/avatar-lobby/js/input-bindings.js?v=6"></script>
+  <script src="/static/games/avatar-lobby/js/input-bindings.js?v=5"></script>
   <script src="/static/games/avatar-lobby/js/touch-controls.js?v=4"></script>
-  <script src="/static/games/avatar-lobby/js/network-session.js?v=7"></script>
+  <script src="/static/games/avatar-lobby/js/network-session.js?v=6"></script>
   <script src="/static/games/avatar-lobby/js/multiplayer-ui.js?v=3"></script>
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
   <script src="/static/games/avatar-lobby/js/uv-template.js?v=5"></script>
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=2"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=12"></script>
-  <script src="/static/games/avatar-lobby/js/speech-chat.js?v=1"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=11"></script>
   <script src="/static/games/avatar-lobby/js/world-objects.js?v=1"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-lobby.js?v=26"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-lobby.js?v=25"></script>
   <script src="/static/games/avatar-lobby/js/skin-editor-utils.js?v=2"></script>
   <script src="/static/games/avatar-lobby/js/skin-editor.js?v=19"></script>
 </body>

@@ -45,9 +45,26 @@
     },
     onSend(text) {
       Entity.setSpeechBubble(avatar, text);
+      networkSession?.sendChat?.(text);
     },
   });
   speechChat.bind();
+
+  const networkSession = window.LiminalNetwork?.createSession?.() || null;
+  window.LiminalNetworkSession = networkSession;
+  const poseStep = 1 / (window.LiminalNetwork?.POSE_RATE_HZ || 20);
+  let poseAccumulator = 0;
+  let poseSequence = 1;
+  const remotePlayers = new Map();
+  let clockOffsetMs = null;
+  const INTERP_DELAY_MS = 100;
+  let syncedRoomId = null;
+
+  if (networkSession) {
+    networkSession.connect({ userId, nickname });
+    window.LiminalMultiplayerUi?.bindMultiplayerUi?.(networkSession);
+    window.addEventListener('beforeunload', () => networkSession.disconnect());
+  }
 
   const keys = new Set();
   const carImages = new Map();
@@ -200,13 +217,14 @@
     if (isUiOpen() || !window.LpCombat) return;
     const aim = getAimWorld();
     const muzzle = getMuzzleWorld();
-    window.LpCombat.tryFire({
+    const payload = window.LpCombat.tryFire({
       originX: muzzle.x,
       originY: muzzle.y,
       dirX: aim.x - muzzle.x,
       dirY: aim.y - muzzle.y,
       facing: avatar.facing,
     });
+    if (payload) networkSession?.sendFire?.(payload);
   }
 
   /** 与 avatar-lobby 一致：把 skins API 条目转成 appearance。 */
@@ -245,6 +263,7 @@
       avatar._lpSkinMeta = skin
         ? { id: skin.id, name: skin.name, kind: skin.kind }
         : null;
+      networkSession?.setAppearance?.(appearanceFromSkin(skin));
     } catch (error) {
       console.warn('[liminal] loadWornAppearance failed', error);
     }
@@ -264,6 +283,146 @@
     avatar.vy = local.vy;
     avatar.onGround = local.onGround;
     avatar.kneel = local.kneel;
+  }
+
+  /** 脚底相对平台的物理 Y → 绘制锚点（可指定实体）。 */
+  function stageYFromPhysicsFor(entity, physicsY, worldX) {
+    const floorY = floorAt(worldX ?? entity.x) ?? Spec.FLOOR_Y;
+    return floorY + physicsY - Entity.footGroundLiftPx(entity);
+  }
+
+  /** 确保远端角色实体存在。 */
+  function ensureRemote(playerId, snapshot) {
+    let remote = remotePlayers.get(playerId);
+    if (!remote) {
+      remote = Entity.createAvatarEntity({
+        id: playerId,
+        nickname: snapshot.nickname || '旅人',
+        x: snapshot.x ?? local.x,
+        y: Spec.FLOOR_Y,
+      });
+      remotePlayers.set(playerId, remote);
+    }
+    return remote;
+  }
+
+  /** 应用远端插值样本到实体。 */
+  function applyRemoteSample(remote, sample) {
+    remote.nickname = sample.nickname || remote.nickname;
+    if (sample.x != null) remote.x = sample.x;
+    remote.y = stageYFromPhysicsFor(remote, sample.y ?? 0, remote.x);
+    remote.vx = sample.vx;
+    remote.vy = sample.vy;
+    remote.facing = sample.facing || remote.facing;
+    remote.onGround = Boolean(sample.onGround);
+    remote.moveDirection = Math.sign(sample.vx) || 0;
+    remote.gait = sample.gait === 'run' ? 'run' : 'walk';
+  }
+
+  /** 处理世界快照：远端角色 + 共享列车/燃料。 */
+  function handleWorldSnapshot(payload) {
+    if (!payload) return;
+    const serverMs = payload.serverTimeMs ?? performance.now();
+    if (clockOffsetMs === null && payload.serverTimeMs != null) {
+      clockOffsetMs = performance.now() - payload.serverTimeMs;
+    }
+    const seen = new Set();
+    for (const player of payload.players || []) {
+      const id = String(player.id);
+      if (id === userId) continue;
+      seen.add(id);
+      const remote = ensureRemote(id, player);
+      Entity.pushSnapshot(remote, player, serverMs);
+      if (player.appearance) Entity.loadAppearance(remote, player.appearance);
+      remote.nickname = player.nickname || remote.nickname;
+    }
+    for (const id of [...remotePlayers.keys()]) {
+      if (!seen.has(id)) remotePlayers.delete(id);
+    }
+
+    const world = payload.world;
+    if (world?.train) {
+      window.LpTrainDrive?.applyNetworkState?.(world.train);
+    }
+    if (world?.fuel?.level != null) {
+      window.LiminalInteract?.applyFuelLevel?.(world.fuel.level);
+    }
+  }
+
+  function sendPoseFrame() {
+    if (!networkSession?.connected) return;
+    networkSession.sendPose({
+      sequence: poseSequence,
+      x: local.x,
+      y: local.y,
+      vx: local.vx,
+      vy: local.vy,
+      facing: avatar.facing,
+      onGround: local.onGround,
+      gait: avatar.gait === 'run' ? 'run' : 'walk',
+      headLook: 0,
+    });
+    poseSequence += 1;
+  }
+
+  function updateRemotes(dt, now) {
+    if (clockOffsetMs === null) {
+      for (const remote of remotePlayers.values()) {
+        Entity.updateEntityMotion(remote, dt);
+      }
+      return;
+    }
+    const renderMs = now - clockOffsetMs - INTERP_DELAY_MS;
+    for (const remote of remotePlayers.values()) {
+      const sample = Entity.sampleRemote(remote, renderMs);
+      if (sample) applyRemoteSample(remote, sample);
+      Entity.updateEntityMotion(remote, dt);
+    }
+  }
+
+  if (networkSession) {
+    networkSession.addEventListener('worldsnapshot', (event) => {
+      handleWorldSnapshot(event.detail);
+    });
+    networkSession.addEventListener('playerleave', (event) => {
+      const playerId = event.detail?.playerId;
+      if (playerId) remotePlayers.delete(String(playerId));
+    });
+    networkSession.addEventListener('appearance', (event) => {
+      const detail = event.detail;
+      if (!detail?.playerId || String(detail.playerId) === userId) return;
+      const remote = remotePlayers.get(String(detail.playerId));
+      if (remote && detail.appearance) Entity.loadAppearance(remote, detail.appearance);
+    });
+    networkSession.addEventListener('roomchange', (event) => {
+      remotePlayers.clear();
+      clockOffsetMs = null;
+      const roomId = event.detail?.roomId;
+      if (roomId !== syncedRoomId) syncedRoomId = roomId ?? null;
+    });
+    networkSession.addEventListener('fuelchanged', (event) => {
+      if (event.detail?.level != null) {
+        window.LiminalInteract?.applyFuelLevel?.(event.detail.level);
+      }
+    });
+    networkSession.addEventListener('weaponfired', (event) => {
+      const d = event.detail;
+      if (!d || String(d.playerId) === userId) return;
+      window.LpCombat?.spawnRemoteShot?.({
+        originX: d.x,
+        originY: d.y,
+        dirX: d.dirX,
+        dirY: d.dirY,
+        facing: d.facing,
+      });
+    });
+    networkSession.addEventListener('chat', (event) => {
+      const d = event.detail;
+      if (!d?.text) return;
+      if (String(d.playerId) === userId) return;
+      const remote = remotePlayers.get(String(d.playerId));
+      if (remote && Entity.setSpeechBubble) Entity.setSpeechBubble(remote, d.text);
+    });
   }
 
   /** 预加载两节车厢贴图。 */
@@ -476,6 +635,13 @@
     );
 
     for (const car of Spec.CARRIAGES) drawCarriage(car);
+    for (const remote of remotePlayers.values()) {
+      Entity.drawAvatar(ctx, remote, view, dpr);
+      ctx.setTransform(
+        view.zoom * dpr, 0, 0, view.zoom * dpr,
+        view.offsetX * dpr, view.offsetY * dpr
+      );
+    }
     Entity.drawAvatar(ctx, avatar, view, dpr);
     window.LpCombat?.draw(ctx);
 
@@ -492,6 +658,17 @@
     lastTs = ts;
     syncTouchAimPointer();
     stepPhysics(dt);
+    if (networkSession?.connected) {
+      poseAccumulator += dt;
+      let sent = 0;
+      while (poseAccumulator >= poseStep && sent < 5) {
+        sendPoseFrame();
+        poseAccumulator -= poseStep;
+        sent += 1;
+      }
+      if (sent === 5) poseAccumulator = 0;
+    }
+    updateRemotes(dt, ts);
     window.LpTrainDrive?.tick(dt);
     window.LpCombat?.tick(dt);
     stepCamera(dt);

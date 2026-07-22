@@ -11,7 +11,7 @@
   <link rel="icon" href="/static/icons/favicon.ico?v=1" sizes="any">
   <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=20">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=21">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -24,6 +24,19 @@
         <div class="lp-title-block">
           <p class="lp-title">阈限月台</p>
           <p class="lp-subtitle">Liminal Platform · {{ nickname }}</p>
+        </div>
+        <div class="lp-mp-bar" aria-label="多人房间">
+          <span id="mpStatus" class="lp-mp-status is-offline">连接中</span>
+          <span id="mpRoom" class="lp-mp-room">公共月台</span>
+          <span id="mpCount" class="lp-mp-count">0/10</span>
+          <button type="button" id="mpCreateButton" class="lp-mp-button">创建房间</button>
+          <label class="lp-mp-join">
+            <input id="mpJoinInput" type="text" maxlength="16" placeholder="房间码" autocomplete="off" spellcheck="false">
+            <button type="button" id="mpJoinButton" class="lp-mp-button">加入</button>
+          </label>
+          <button type="button" id="mpInviteButton" class="lp-mp-button" disabled>邀请</button>
+          <button type="button" id="mpPublicButton" class="lp-mp-button" disabled>公共</button>
+          <span id="mpFeedback" class="lp-mp-feedback" aria-live="polite"></span>
         </div>
         <nav class="lp-hud-actions">
           <a class="lp-skin-link" href="/avatar-lobby">
@@ -329,21 +342,23 @@
   </div>
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=2"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=12"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=13"></script>
   <script src="/static/games/avatar-lobby/js/speech-chat.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/carriage-spec.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=5"></script>
   <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=6"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=6"></script>
   <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=8"></script>
-  <script src="/static/games/liminal-platform/js/lp-combat.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-combat.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=13"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-network.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=14"></script>
 </body>
 </html>

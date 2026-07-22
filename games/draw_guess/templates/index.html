@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css?v=20260717b">
   <link rel="stylesheet" href="/static/games/draw-guess/css/theme.css?v=20260718d">
-  <link rel="stylesheet" href="/static/games/draw-guess/css/drawing-board.css?v=20260718a">
+  <link rel="stylesheet" href="/static/games/draw-guess/css/drawing-board.css?v=20260722a">
   <link rel="stylesheet" href="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.css">
   <script src="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.js"></script>
   <script>
@@ -491,8 +491,8 @@
       .desktop-only { display: none !important; }
       .mobile-collapse-icon { display: inline; }
       .mobile-collapse-body.is-mobile-collapsed { display: none !important; }
-      .drawer-toolbar.is-mobile-collapsed .toolbar-head { margin-bottom: 0; }
-      .drawer-toolbar.is-mobile-collapsed .toolbar-head > div { display: none; }
+      /* 画板工具在移动端改为 Sketchbook 浮层，不再用折叠条 */
+      .drawer-toolbar .mobile-collapse-body.is-mobile-collapsed { display: block !important; }
       #playerPanel.is-mobile-collapsed .player-panel-header { margin-bottom: 0; }
     }
     @media (max-width: 640px) {
@@ -502,8 +502,6 @@
       .score-menu { width: 100%; }
       .score-toggle-button { width: 100%; justify-content: space-between; }
       .score-panel-body { left: 0; right: 0; width: auto; }
-      .tool-actions { display: grid; grid-template-columns: repeat(5, 1fr); }
-      .tool-actions .tool-button { min-width: 0; padding-inline: 4px; font-size: 12px; }
       .advanced-grid { grid-template-columns: 1fr; }
       .native-color { width: 100%; }
       .hex-color-input { width: 100%; }
@@ -638,13 +636,14 @@
             <div class="canvas-download-group"><select id="downloadFormatSelect" class="canvas-download-format desktop-only" title="导出格式" aria-label="导出格式"><option value="png" selected>PNG</option><option value="webp">WebP</option><option value="jpeg">JPEG</option></select><button id="downloadLobbyCanvasButton" type="button" class="canvas-download-button" title="下载当前画布">下载</button></div>
           </div>
           <div class="canvas-stage">
+            <div class="canvas-stage-surface">
             <canvas id="drawCanvas" aria-label="公共画布"></canvas>
             <div id="artworkDisplayBadge" class="artwork-display-badge hidden" role="status" aria-live="polite">画作展示中</div>
             <div id="roundTransition" class="round-transition hidden" role="status" aria-live="assertive">
               <div><strong>下一位画师准备中</strong><span id="roundTransitionCountdown">1 秒</span></div>
             </div>
-          </div>
-          <div id="drawingToolbar" class="drawer-toolbar">
+            </div>
+            <div id="drawingToolbar" class="drawer-toolbar">
             <div class="toolbar-head">
               <button id="drawingToolsToggle" type="button" class="mobile-section-toggle flex items-center gap-2" aria-controls="drawingToolsBody" aria-expanded="true">
                 <span id="toolbarTitle" class="text-sm font-semibold text-white/80">画板工具</span>
@@ -652,7 +651,6 @@
               </button>
               <div class="flex items-center gap-2">
                 <button id="shortcutButton" type="button" class="mode-button desktop-only" aria-expanded="false" aria-controls="shortcutPanel">快捷键</button>
-                <button id="toolModeButton" type="button" class="mode-button" aria-expanded="false">高级</button>
               </div>
             </div>
             <div id="drawingToolsBody" class="mobile-collapse-body">
@@ -664,96 +662,121 @@
               <div id="shortcutList" class="shortcut-grid"></div>
               <p id="shortcutStatus" class="mt-2 min-h-4 text-xs text-white/45">点击键位后按下新的组合键</p>
             </div>
-            <div class="tool-row color-tool-row">
-              <span class="tool-label">颜色</span>
-              <div class="color-slot-controls">
-                <div class="color-slots" aria-label="前景色和背景色">
-                  <button id="foregroundColorButton" type="button" class="color-slot foreground is-selected" style="background:#111827" aria-label="选择前景色" aria-pressed="true"></button>
-                  <button id="backgroundColorButton" type="button" class="color-slot background" style="background:#ffffff" aria-label="选择背景色" aria-pressed="false"></button>
+
+            <div id="mobileColorSheet" class="mobile-color-sheet" aria-hidden="true">
+              <button type="button" id="mobileColorSheetBackdrop" class="mobile-color-sheet-backdrop" tabindex="-1" aria-label="关闭颜色面板"></button>
+              <div class="mobile-color-sheet-panel" role="dialog" aria-label="颜色与高级笔刷">
+                <div class="mobile-color-sheet-head">
+                  <strong class="mobile-color-sheet-title">颜色</strong>
+                  <button id="toolModeButton" type="button" class="mode-button" aria-expanded="false">高级</button>
                 </div>
-                <button id="swapColorsButton" type="button" class="swap-colors-button" aria-label="交换前景色和背景色" title="交换颜色（X）">⇄</button>
-              </div>
-              <div class="palette">
-                <button type="button" class="color-chip" data-color="#ef4444" style="background:#ef4444" aria-label="红色"></button>
-                <button type="button" class="color-chip" data-color="#f97316" style="background:#f97316" aria-label="橙色"></button>
-                <button type="button" class="color-chip" data-color="#facc15" style="background:#facc15" aria-label="黄色"></button>
-                <button type="button" class="color-chip" data-color="#22c55e" style="background:#22c55e" aria-label="绿色"></button>
-                <button type="button" class="color-chip" data-color="#3b82f6" style="background:#3b82f6" aria-label="蓝色"></button>
-                <button type="button" class="color-chip" data-color="#a855f7" style="background:#a855f7" aria-label="紫色"></button>
-                <button type="button" class="color-chip" data-color="#111827" style="background:#111827" aria-label="黑色"></button>
-                <button type="button" class="color-chip" data-color="#ffffff" style="background:#ffffff" aria-label="白色"></button>
-                <button id="fillButton" type="button" class="fill-chip" aria-label="油漆桶填充" aria-pressed="false" title="油漆桶（F）">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 14 8-8 7 7-8 8H4Z"/><path d="m9 3 10 10"/><path d="M20 17s2 2.2 2 3.5a2 2 0 0 1-4 0C18 19.2 20 17 20 17Z"/></svg>
-                  <span class="board-tool-label">填充</span>
-                </button>
-                <button id="eraserButton" type="button" class="eraser-chip" aria-label="橡皮擦" aria-pressed="false" title="橡皮擦（E）">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 19.5-4-4a2.5 2.5 0 0 1 0-3.5l8.5-8.5a2.5 2.5 0 0 1 3.5 0l5 5a2.5 2.5 0 0 1 0 3.5L13 19.5Z"/><path d="m10 6 8 8"/><path d="M7.5 19.5H21"/></svg>
-                  <span class="board-tool-label">橡皮</span>
-                </button>
-              </div>
-              <p id="boardToolStatus" class="board-tool-status" role="status">当前工具：画笔</p>
-            </div>
-            <div id="simpleSizeControls" class="tool-row">
-              <span class="tool-label" title="点按选择，长按左右拖动精调">笔触</span>
-              <div class="size-list" title="点按选择，长按左右拖动精调">
-                <button type="button" class="size-button" data-size="2"><span class="size-dot" style="--dot:3px"></span></button>
-                <button type="button" class="size-button" data-size="5"><span class="size-dot" style="--dot:6px"></span></button>
-                <button type="button" class="size-button" data-size="9"><span class="size-dot" style="--dot:10px"></span></button>
-                <button type="button" class="size-button" data-size="14"><span class="size-dot" style="--dot:15px"></span></button>
-                <button type="button" class="size-button" data-size="22"><span class="size-dot" style="--dot:22px"></span></button>
-              </div>
-              <label class="brush-size-field" title="1–32">
-                <input id="simpleBrushSizeInput" class="slider-value brush-size-input" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="1" max="32" value="5" aria-label="笔触大小">
-                <span>px</span>
-              </label>
-            </div>
-            <div id="advancedTools" class="advanced-tools hidden">
-              <div class="advanced-grid">
-                <div>
-                  <label class="tool-label block mb-2" for="colorPicker">色轮</label>
-                  <input id="colorPicker" type="color" value="#111827" class="native-color">
-                  <input id="hexColorInput" type="text" value="#111827" maxlength="7" inputmode="text" autocomplete="off" spellcheck="false" class="hex-color-input" aria-label="十六进制颜色代码" aria-invalid="false">
+                <div class="tool-row color-tool-row">
+                  <span class="tool-label">颜色</span>
+                  <div class="color-slot-controls">
+                    <div class="color-slots" aria-label="前景色和背景色">
+                      <button id="foregroundColorButton" type="button" class="color-slot foreground is-selected" style="background:#111827" aria-label="选择前景色" aria-pressed="true"></button>
+                      <button id="backgroundColorButton" type="button" class="color-slot background" style="background:#ffffff" aria-label="选择背景色" aria-pressed="false"></button>
+                    </div>
+                    <button id="swapColorsButton" type="button" class="swap-colors-button" aria-label="交换前景色和背景色" title="交换颜色（X）">⇄</button>
+                  </div>
+                  <div class="palette">
+                    <button type="button" class="color-chip" data-color="#ef4444" style="background:#ef4444" aria-label="红色"></button>
+                    <button type="button" class="color-chip" data-color="#f97316" style="background:#f97316" aria-label="橙色"></button>
+                    <button type="button" class="color-chip" data-color="#facc15" style="background:#facc15" aria-label="黄色"></button>
+                    <button type="button" class="color-chip" data-color="#22c55e" style="background:#22c55e" aria-label="绿色"></button>
+                    <button type="button" class="color-chip" data-color="#3b82f6" style="background:#3b82f6" aria-label="蓝色"></button>
+                    <button type="button" class="color-chip" data-color="#a855f7" style="background:#a855f7" aria-label="紫色"></button>
+                    <button type="button" class="color-chip" data-color="#111827" style="background:#111827" aria-label="黑色"></button>
+                    <button type="button" class="color-chip" data-color="#ffffff" style="background:#ffffff" aria-label="白色"></button>
+                  </div>
+                  <p id="boardToolStatus" class="board-tool-status" role="status">当前工具：画笔</p>
                 </div>
-                <div>
-                  <div class="mb-2 flex items-center justify-between">
-                    <span class="tool-label">颜色滑块</span>
-                    <select id="colorSpace" class="rounded bg-[#2a2a44] px-2 py-1 text-xs"><option value="rgb">RGB</option><option value="hsv">HSV</option></select>
-                  </div>
-                  <div id="rgbControls" class="slider-stack">
-                    <div class="slider-row"><span>R</span><input id="rgbR" class="color-slider" type="range" min="0" max="255"><input id="rgbROut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="255" value="17" aria-label="红色"></div>
-                    <div class="slider-row"><span>G</span><input id="rgbG" class="color-slider" type="range" min="0" max="255"><input id="rgbGOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="255" value="24" aria-label="绿色"></div>
-                    <div class="slider-row"><span>B</span><input id="rgbB" class="color-slider" type="range" min="0" max="255"><input id="rgbBOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="255" value="39" aria-label="蓝色"></div>
-                  </div>
-                  <div id="hsvControls" class="slider-stack hidden">
-                    <div class="slider-row"><span>H</span><input id="hsvH" class="color-slider" type="range" min="0" max="360"><input id="hsvHOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="360" value="220" aria-label="色相"></div>
-                    <div class="slider-row"><span>S</span><input id="hsvS" class="color-slider" type="range" min="0" max="100"><input id="hsvSOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="100" value="56" aria-label="饱和度"></div>
-                    <div class="slider-row"><span>V</span><input id="hsvV" class="color-slider" type="range" min="0" max="100"><input id="hsvVOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="100" value="15" aria-label="明度"></div>
-                  </div>
-                </div>
-                <div class="advanced-size rounded-xl border border-white/10 bg-[#16162a] p-3">
-                  <div class="flex items-center justify-between gap-2 text-xs text-white/60"><span>连续笔触</span><label class="brush-size-field" title="1–32"><input id="brushSizeOutput" class="slider-value brush-size-input" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="1" max="32" value="5" aria-label="笔触大小"><span>px</span></label></div>
-                  <div class="brush-preview"><span id="brushPreviewDot" class="preview-dot" style="--size:5px;--color:#111827"></span></div>
-                  <input id="brushSizeSlider" type="range" min="1" max="32" value="5">
-                  <div class="pen-pressure-controls">
-                    <label class="pen-pressure-toggle" title="手机/平板触控笔按压力调节粗细"><input id="penPressureToggle" type="checkbox" checked>笔压</label>
-                    <label id="penPressureSensitivityRow" class="pen-pressure-sensitivity" title="越高越容易画出粗线">
-                      <span>灵敏度</span>
-                      <input id="penPressureSensitivity" type="range" min="25" max="200" step="5" value="100" aria-label="笔压灵敏度">
-                      <output id="penPressureSensitivityOut">100%</output>
-                    </label>
+                <div id="advancedTools" class="advanced-tools hidden">
+                  <div class="advanced-grid">
+                    <div>
+                      <label class="tool-label block mb-2" for="colorPicker">色轮</label>
+                      <input id="colorPicker" type="color" value="#111827" class="native-color">
+                      <input id="hexColorInput" type="text" value="#111827" maxlength="7" inputmode="text" autocomplete="off" spellcheck="false" class="hex-color-input" aria-label="十六进制颜色代码" aria-invalid="false">
+                    </div>
+                    <div>
+                      <div class="mb-2 flex items-center justify-between">
+                        <span class="tool-label">颜色滑块</span>
+                        <select id="colorSpace" class="rounded bg-[#2a2a44] px-2 py-1 text-xs"><option value="rgb">RGB</option><option value="hsv">HSV</option></select>
+                      </div>
+                      <div id="rgbControls" class="slider-stack">
+                        <div class="slider-row"><span>R</span><input id="rgbR" class="color-slider" type="range" min="0" max="255"><input id="rgbROut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="255" value="17" aria-label="红色"></div>
+                        <div class="slider-row"><span>G</span><input id="rgbG" class="color-slider" type="range" min="0" max="255"><input id="rgbGOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="255" value="24" aria-label="绿色"></div>
+                        <div class="slider-row"><span>B</span><input id="rgbB" class="color-slider" type="range" min="0" max="255"><input id="rgbBOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="255" value="39" aria-label="蓝色"></div>
+                      </div>
+                      <div id="hsvControls" class="slider-stack hidden">
+                        <div class="slider-row"><span>H</span><input id="hsvH" class="color-slider" type="range" min="0" max="360"><input id="hsvHOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="360" value="220" aria-label="色相"></div>
+                        <div class="slider-row"><span>S</span><input id="hsvS" class="color-slider" type="range" min="0" max="100"><input id="hsvSOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="100" value="56" aria-label="饱和度"></div>
+                        <div class="slider-row"><span>V</span><input id="hsvV" class="color-slider" type="range" min="0" max="100"><input id="hsvVOut" class="slider-value" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="0" max="100" value="15" aria-label="明度"></div>
+                      </div>
+                    </div>
+                    <div class="advanced-size rounded-xl border border-white/10 bg-[#16162a] p-3">
+                      <div class="flex items-center justify-between gap-2 text-xs text-white/60"><span>连续笔触</span><label class="brush-size-field" title="1–32"><input id="brushSizeOutput" class="slider-value brush-size-input" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="1" max="32" value="5" aria-label="笔触大小"><span>px</span></label></div>
+                      <div class="brush-preview"><span id="brushPreviewDot" class="preview-dot" style="--size:5px;--color:#111827"></span></div>
+                      <input id="brushSizeSlider" type="range" min="1" max="32" value="5">
+                      <div class="pen-pressure-controls">
+                        <label class="pen-pressure-toggle" title="手机/平板触控笔按压力调节粗细"><input id="penPressureToggle" type="checkbox" checked>笔压</label>
+                        <label id="penPressureSensitivityRow" class="pen-pressure-sensitivity" title="越高越容易画出粗线">
+                          <span>灵敏度</span>
+                          <input id="penPressureSensitivity" type="range" min="25" max="200" step="5" value="100" aria-label="笔压灵敏度">
+                          <output id="penPressureSensitivityOut">100%</output>
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 </div>
+                <button type="button" id="mobileColorClose" class="mobile-color-close" aria-label="关闭颜色面板">×</button>
               </div>
             </div>
-            <div class="tool-actions">
+
+            <div class="tool-rail" aria-label="笔刷工具">
+              <button id="brushButton" type="button" class="brush-chip is-active" aria-label="画笔" aria-pressed="true" title="画笔（B）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19 21 10a2.8 2.8 0 0 0-4-4L8 15"/><path d="m8 15-5 5"/><path d="m15 5 4 4"/></svg>
+                <span class="board-tool-label">画笔</span>
+              </button>
+              <button id="eraserButton" type="button" class="eraser-chip" aria-label="橡皮擦" aria-pressed="false" title="橡皮擦（E）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 19.5-4-4a2.5 2.5 0 0 1 0-3.5l8.5-8.5a2.5 2.5 0 0 1 3.5 0l5 5a2.5 2.5 0 0 1 0 3.5L13 19.5Z"/><path d="m10 6 8 8"/><path d="M7.5 19.5H21"/></svg>
+                <span class="board-tool-label">橡皮</span>
+              </button>
+              <button id="fillButton" type="button" class="fill-chip" aria-label="油漆桶填充" aria-pressed="false" title="油漆桶（F）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 14 8-8 7 7-8 8H4Z"/><path d="m9 3 10 10"/><path d="M20 17s2 2.2 2 3.5a2 2 0 0 1-4 0C18 19.2 20 17 20 17Z"/></svg>
+                <span class="board-tool-label">填充</span>
+              </button>
+              <div id="simpleSizeControls" class="tool-row tool-rail-sizes">
+                <span class="tool-label" title="点按选择，长按左右拖动精调">笔触</span>
+                <div class="size-list" title="点按选择，长按左右拖动精调">
+                  <button type="button" class="size-button" data-size="2"><span class="size-dot" style="--dot:3px"></span></button>
+                  <button type="button" class="size-button" data-size="5"><span class="size-dot" style="--dot:6px"></span></button>
+                  <button type="button" class="size-button" data-size="9"><span class="size-dot" style="--dot:10px"></span></button>
+                  <button type="button" class="size-button" data-size="14"><span class="size-dot" style="--dot:15px"></span></button>
+                  <button type="button" class="size-button" data-size="22"><span class="size-dot" style="--dot:22px"></span></button>
+                </div>
+                <label class="brush-size-field" title="1–32">
+                  <input id="simpleBrushSizeInput" class="slider-value brush-size-input" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="1" max="32" value="5" aria-label="笔触大小">
+                  <span>px</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="tool-actions sb-top-bar" aria-label="画板操作">
+              <button id="undoButton" type="button" class="tool-button text-xl" aria-label="撤销" title="撤销">↶</button>
+              <button id="redoButton" type="button" class="tool-button text-xl" aria-label="重做" title="重做">↷</button>
               <button id="eyedropperButton" type="button" class="tool-button" aria-pressed="false">取色</button>
-              <button id="undoButton" type="button" class="tool-button text-xl" aria-label="撤销">←</button>
-              <button id="redoButton" type="button" class="tool-button text-xl" aria-label="重做">→</button>
               <button id="canvasBackgroundButton" type="button" class="tool-button" title="使用当前前景色">背景</button>
               <button id="clearButton" type="button" class="tool-button danger" aria-pressed="false">清空</button>
+              <button id="mobileColorToggle" type="button" class="tool-button mobile-color-toggle" aria-expanded="false" aria-controls="mobileColorSheet" title="颜色">
+                <span id="mobileColorSwatch" class="mobile-color-swatch" style="background:#111827"></span>
+                <span class="mobile-color-toggle-label">颜色</span>
+              </button>
             </div>
+
             <div id="quickBrush" class="quick-brush hidden"><div class="mb-2 flex items-center justify-between gap-2 text-xs"><span>左右拖动精调笔触</span><label class="brush-size-field" title="1–32"><input id="quickBrushOutput" class="slider-value brush-size-input" type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" min="1" max="32" value="5" aria-label="笔触大小"><span>px</span></label></div><input id="quickBrushSlider" type="range" min="1" max="32" value="5"></div>
             </div>
+          </div>
           </div>
         </div>
 
@@ -1039,6 +1062,10 @@
     const eyedropperButton = byId('eyedropperButton');
     const fillButton = byId('fillButton');
     const eraserButton = byId('eraserButton');
+    const brushButton = byId('brushButton');
+    const mobileColorToggle = byId('mobileColorToggle');
+    const mobileColorSheet = byId('mobileColorSheet');
+    const mobileColorSwatch = byId('mobileColorSwatch');
     const undoButton = byId('undoButton');
     const redoButton = byId('redoButton');
     const canvasBackgroundButton = byId('canvasBackgroundButton');
@@ -1617,7 +1644,16 @@
 
     function syncMobileSections() {
       applyMobileSectionState(playerPanel, playerPanelToggle, playerPanelBody, playerPanelToggleIcon, mobilePlayerPanelExpanded);
-      applyMobileSectionState(drawingToolbar, drawingToolsToggle, drawingToolsBody, drawingToolsToggleIcon, mobileDrawingToolsExpanded);
+      // 移动端画板改为 Sketchbook 浮层，始终展开工具区。
+      applyMobileSectionState(drawingToolbar, drawingToolsToggle, drawingToolsBody, drawingToolsToggleIcon, true);
+    }
+
+    function setMobileColorSheetOpen(open) {
+      const isMobile = window.matchMedia('(max-width: 767px)').matches;
+      const next = Boolean(open) && isMobile;
+      mobileColorSheet.classList.toggle('is-open', next);
+      mobileColorSheet.setAttribute('aria-hidden', String(!next));
+      mobileColorToggle.setAttribute('aria-expanded', String(next));
     }
 
     function setLobbyCanvasMode(mode) {
@@ -3022,6 +3058,8 @@
       eyedropperButton.disabled = !canDraw();
       fillButton.disabled = !canDraw();
       eraserButton.disabled = !canDraw();
+      brushButton.disabled = !canDraw();
+      mobileColorToggle.disabled = !canDraw();
       if (!canClear()) resetClearConfirmation();
     }
 
@@ -3126,9 +3164,11 @@
 
     function setDrawingTool(tool) {
       currentDrawingTool = ['eraser', 'eyedropper', 'fill'].includes(tool) ? tool : 'brush';
+      brushButton.classList.toggle('is-active', currentDrawingTool === 'brush');
       eraserButton.classList.toggle('is-active', currentDrawingTool === 'eraser');
       eyedropperButton.classList.toggle('is-active', currentDrawingTool === 'eyedropper');
       fillButton.classList.toggle('is-active', currentDrawingTool === 'fill');
+      brushButton.setAttribute('aria-pressed', String(currentDrawingTool === 'brush'));
       eraserButton.setAttribute('aria-pressed', String(currentDrawingTool === 'eraser'));
       eyedropperButton.setAttribute('aria-pressed', String(currentDrawingTool === 'eyedropper'));
       fillButton.setAttribute('aria-pressed', String(currentDrawingTool === 'fill'));
@@ -3227,6 +3267,7 @@
       backgroundColorButton.classList.toggle('is-selected', activeColorSlot === 'background');
       foregroundColorButton.setAttribute('aria-pressed', String(activeColorSlot === 'foreground'));
       backgroundColorButton.setAttribute('aria-pressed', String(activeColorSlot === 'background'));
+      mobileColorSwatch.style.background = activeColorSlot === 'foreground' ? foregroundColor : backgroundColor;
     }
 
     function setActiveColorSlot(slot) {
@@ -3703,6 +3744,12 @@
     eyedropperButton.addEventListener('click', () => setDrawingTool(currentDrawingTool === 'eyedropper' ? 'brush' : 'eyedropper'));
     fillButton.addEventListener('click', () => setDrawingTool(currentDrawingTool === 'fill' ? 'brush' : 'fill'));
     eraserButton.addEventListener('click', () => setDrawingTool(currentDrawingTool === 'eraser' ? 'brush' : 'eraser'));
+    brushButton.addEventListener('click', () => setDrawingTool('brush'));
+    mobileColorToggle.addEventListener('click', () => {
+      setMobileColorSheetOpen(!mobileColorSheet.classList.contains('is-open'));
+    });
+    byId('mobileColorClose').addEventListener('click', () => setMobileColorSheetOpen(false));
+    byId('mobileColorSheetBackdrop').addEventListener('click', () => setMobileColorSheetOpen(false));
 
     document.querySelectorAll('.color-chip').forEach(button => button.addEventListener('click', () => setColor(button.dataset.color)));
     function showBrushFineTune(activeButton) {
@@ -4004,8 +4051,11 @@
     });
     drawingToolsToggle.addEventListener('click', () => {
       if (!window.matchMedia('(max-width: 767px)').matches) return;
-      mobileDrawingToolsExpanded = !mobileDrawingToolsExpanded;
+      // 移动端浮层工具栏不折叠；保留按钮避免桌面结构断裂。
       syncMobileSections();
+    });
+    window.addEventListener('resize', () => {
+      if (!window.matchMedia('(max-width: 767px)').matches) setMobileColorSheetOpen(false);
     });
 
     wordBankToggle.addEventListener('click', () => setWordBankExpanded(wordBankToggle.getAttribute('aria-expanded') !== 'true'));

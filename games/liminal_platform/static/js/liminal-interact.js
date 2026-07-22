@@ -74,8 +74,10 @@
       return false;
     }
 
-    fuel.level = Math.min(fuel.max, fuel.level + removed * FUEL_PER_COAL);
+    const added = removed * FUEL_PER_COAL;
+    fuel.level = Math.min(fuel.max, fuel.level + added);
     showToast(`消耗煤炭 ×${removed}（${fuel.level}/${fuel.max}）`);
+    window.LiminalNetworkSession?.sendFuelAdd?.(added);
     window.dispatchEvent(
       new CustomEvent('liminal:fuel-changed', {
         detail: { level: fuel.level, coalSpent: removed },
@@ -84,6 +86,20 @@
     const label = document.getElementById('lpBoilerFuelReadout');
     if (label) label.textContent = `${Math.round(fuel.level)}/100`;
     return true;
+  }
+
+  /** 应用联机共享燃料量（服务端权威）。 */
+  function applyFuelLevel(level) {
+    const next = Math.max(0, Math.min(fuel.max, Number(level) || 0));
+    if (Math.abs(next - fuel.level) < 0.01) return;
+    fuel.level = next;
+    window.dispatchEvent(
+      new CustomEvent('liminal:fuel-changed', {
+        detail: { level: fuel.level, fromNetwork: true },
+      })
+    );
+    const label = document.getElementById('lpBoilerFuelReadout');
+    if (label) label.textContent = `${Math.round(fuel.level)}/100`;
   }
 
   /** 打开引擎控制台。 */
@@ -203,6 +219,7 @@
     tryInteract,
     drawActivePrompt,
     getFuelLevel: () => fuel.level,
+    applyFuelLevel,
     addFuel,
     addFuelFromPanel: addFuel,
     showToast,

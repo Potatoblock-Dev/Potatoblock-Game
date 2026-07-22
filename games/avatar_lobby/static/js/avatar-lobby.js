@@ -194,21 +194,9 @@
   }
 
   const skinEditorElement = document.getElementById('skinEditor');
-  const speechChat = window.SpeechChat.createSpeechChat({
-    isBlocked() {
-      return !skinEditorElement.classList.contains('hidden')
-        || Boolean(document.querySelector('.overlay-panel:not(.hidden)'))
-        || !document.getElementById('contentPolicyPrompt')?.classList.contains('hidden');
-    },
-    onSend(text) {
-      Entity.setSpeechBubble(avatar, text);
-      if (!isOfflineSession) networkSession.sendChat(text);
-    },
-  });
-  speechChat.bind();
 
   function readInputFrame() {
-    if (!skinEditorElement.classList.contains('hidden') || speechChat.isOpen()) {
+    if (!skinEditorElement.classList.contains('hidden')) {
       return { direction: 0, jump: false, kneel: false, interact: false };
     }
     const touch = window.TouchControls.read();
@@ -361,21 +349,6 @@
     if (!detail.playerId || isLocalId(detail.playerId)) return;
     const remote = remotePlayers.get(String(detail.playerId));
     if (remote) Entity.loadAppearance(remote, detail.appearance);
-  });
-
-  networkSession.addEventListener('chat', (event) => {
-    const detail = event.detail || {};
-    const text = detail.text;
-    if (!text) return;
-    if (isLocalId(detail.playerId)) {
-      Entity.setSpeechBubble(avatar, text);
-      return;
-    }
-    const remote = remotePlayers.get(String(detail.playerId));
-    if (remote) {
-      if (detail.nickname) remote.nickname = detail.nickname;
-      Entity.setSpeechBubble(remote, text);
-    }
   });
 
   networkSession.addEventListener('roomchange', (event) => {

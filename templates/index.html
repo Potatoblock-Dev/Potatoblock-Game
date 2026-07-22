@@ -218,7 +218,7 @@
     <div class="site-topbar absolute text-sm text-gray-400">
         <div class="site-topbar-account">
         {% if user_id %}
-            <span>用户ID: {{ user_id }}</span>
+            <span id="accountLabel">{% if nickname %}{{ nickname }}{% else %}用户ID: {{ user_id }}{% endif %}</span>
             <form method="post" action="/logout" class="inline ml-2">
                 <button type="submit" class="text-gray-500 hover:text-white">登出</button>
             </form>

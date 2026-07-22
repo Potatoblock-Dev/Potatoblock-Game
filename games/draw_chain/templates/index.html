@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ game.name }}</title>
-  <link rel="icon" href="/static/icons/favicon.ico?v=1" sizes="any">
-  <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css?v=20260718a">
   <link rel="stylesheet" href="/static/games/draw-chain/css/theme.css?v=20260718d">
   <link rel="stylesheet" href="/static/games/draw-chain/css/drawing-board.css?v=20260718a">
@@ -333,7 +331,6 @@
     .word-bank-clipboard-field input:focus,
     .word-bank-clipboard-field textarea:focus { border-color: rgb(251 191 36 / .55); box-shadow: 0 0 0 2px rgb(245 158 11 / .18); }
     .word-bank-clipboard-field textarea { min-height: 180px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; }
-    .word-bank-clipboard-detected { margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--amber-text); }
     .app-confirm-panel.word-bank-clipboard-panel { width: min(520px, 100%); }
     #customBankList {
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
@@ -781,11 +778,10 @@
   <div id="wordBankClipboardPrompt" class="app-confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="wordBankClipboardPromptTitle">
     <section class="app-confirm-panel word-bank-clipboard-panel">
       <h2 id="wordBankClipboardPromptTitle" class="app-confirm-title">从剪贴板导入词库</h2>
-      <p class="app-confirm-message">格式与 TXT 相同：第一行可写“！词库名”设置显示名称；若无名称请在下方填写（8–32 字），导入后会记入你的词库记忆。空白行与“#”注释会被忽略。</p>
-      <p id="wordBankClipboardDetectedName" class="word-bank-clipboard-detected hidden" role="status"></p>
-      <div id="wordBankClipboardNameRow" class="word-bank-clipboard-field">
-        <label for="wordBankClipboardName">词库名称（8–32 字）</label>
-        <input id="wordBankClipboardName" type="text" minlength="8" maxlength="32" autocomplete="off" spellcheck="false" placeholder="例如：生活场景词库">
+      <p class="app-confirm-message">格式与 TXT 相同：第一行可写“！词库名”设置显示名称；其余每行一个答案，可用“；”加提示。空白行与“#”注释会被忽略。</p>
+      <div class="word-bank-clipboard-field">
+        <label for="wordBankClipboardFilename">词库文件名</label>
+        <input id="wordBankClipboardFilename" type="text" maxlength="96" autocomplete="off" spellcheck="false" placeholder="例如：剪贴板.txt">
       </div>
       <div class="word-bank-clipboard-field">
         <label for="wordBankClipboardContent">词库内容</label>
@@ -839,9 +835,6 @@
     // 各游戏共用同一份内容规范，同意一次即可；条款有实质修改时递增版本号重新弹出。
     const STORAGE_CONTENT_POLICY = 'potatoblock.contentPolicyAccepted.v1';
     const STORAGE_MUTED_PLAYERS = 'drawChain.mutedPlayers';
-    const STORAGE_CLIPBOARD_BANK_NAME = 'drawChain.lastClipboardBankName';
-    const CLIPBOARD_BANK_NAME_MIN = 8;
-    const CLIPBOARD_BANK_NAME_MAX = 32;
     const DEFAULT_SHORTCUTS = {
       undo: 'Mod+KeyZ',
       redo: 'Mod+Shift+KeyZ',
@@ -900,8 +893,6 @@
     let myDrawWord = '';
     let guessWatch = { active: false, text: '', name: '' };
     let drawerTurnNoticeTimer = null;
-    const drawerTurnSound = new Audio('/static/games/draw-chain/audio/ding.wav');
-    drawerTurnSound.preload = 'auto';
     let gameRedo = [];
     let foregroundColor = '#111827';
     let backgroundColor = '#ffffff';
@@ -2279,39 +2270,11 @@
       return '剪贴板-' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()) + '.txt';
     }
 
-    function parseWordBankHeaderFromContent(content) {
-      const lines = String(content || '').split(/\r?\n/);
-      if (!lines.length) return '';
-      const first = lines[0].replace(/^\ufeff/, '').trim();
-      if (!first.startsWith('!') && !first.startsWith('！')) return '';
-      return first.slice(1).trim().slice(0, CLIPBOARD_BANK_NAME_MAX);
-    }
-
-    function filenameFromBankDisplayName(displayName) {
-      let base = String(displayName || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
-      if (!base) return defaultClipboardBankFilename();
-      if (!base.toLowerCase().endsWith('.txt')) base += '.txt';
-      return base.slice(0, 100);
-    }
-
-    function syncWordBankClipboardNameUi() {
-      const content = byId('wordBankClipboardContent').value;
-      const headerName = parseWordBankHeaderFromContent(content);
-      const nameRow = byId('wordBankClipboardNameRow');
-      const nameInput = byId('wordBankClipboardName');
-      const detected = byId('wordBankClipboardDetectedName');
-      if (headerName) {
-        nameRow.classList.add('hidden');
-        detected.textContent = '已识别词库名：' + headerName;
-        detected.classList.remove('hidden');
-        return;
-      }
-      detected.classList.add('hidden');
-      nameRow.classList.remove('hidden');
-      if (!nameInput.value.trim()) {
-        const saved = localStorage.getItem(STORAGE_CLIPBOARD_BANK_NAME);
-        if (saved) nameInput.value = saved;
-      }
+    function normalizeClipboardBankFilename(name) {
+      let filename = String(name || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
+      if (!filename) filename = defaultClipboardBankFilename();
+      if (!filename.toLowerCase().endsWith('.txt')) filename += '.txt';
+      return filename.slice(0, 100);
     }
 
     function closeWordBankClipboardPrompt() {
@@ -2336,12 +2299,11 @@
     async function openWordBankClipboardImport(initialContent) {
       if (!isHost || phase !== 'lobby' || wordBankImportBusy) return;
       const contentInput = byId('wordBankClipboardContent');
-      const nameInput = byId('wordBankClipboardName');
-      nameInput.value = localStorage.getItem(STORAGE_CLIPBOARD_BANK_NAME) || '';
+      const nameInput = byId('wordBankClipboardFilename');
+      nameInput.value = defaultClipboardBankFilename();
       let content = typeof initialContent === 'string' ? initialContent : '';
       if (!content) content = await readClipboardTextSafe();
       contentInput.value = content;
-      syncWordBankClipboardNameUi();
       setWordBankClipboardHint(
         content
           ? '已填入剪贴板内容，可修改后导入'
@@ -2349,37 +2311,19 @@
         false
       );
       byId('wordBankClipboardPrompt').classList.remove('hidden');
-      if (parseWordBankHeaderFromContent(content)) contentInput.focus();
-      else if (content && !nameInput.value.trim()) nameInput.focus();
-      else if (content) contentInput.focus();
+      if (content) nameInput.focus();
       else contentInput.focus();
     }
 
     function submitWordBankClipboardImport() {
       if (!isHost || phase !== 'lobby' || wordBankImportBusy) return;
-      let content = String(byId('wordBankClipboardContent').value || '');
+      const filename = normalizeClipboardBankFilename(byId('wordBankClipboardFilename').value);
+      const content = String(byId('wordBankClipboardContent').value || '');
       if (!content.trim()) {
         setWordBankClipboardHint('请粘贴词库内容', true);
         byId('wordBankClipboardContent').focus();
         return;
       }
-      let displayName = parseWordBankHeaderFromContent(content);
-      if (!displayName) {
-        displayName = String(byId('wordBankClipboardName').value || '').trim();
-        if (displayName.length < CLIPBOARD_BANK_NAME_MIN) {
-          setWordBankClipboardHint('请填写词库名称（至少 ' + CLIPBOARD_BANK_NAME_MIN + ' 个字）', true);
-          byId('wordBankClipboardName').focus();
-          return;
-        }
-        if (displayName.length > CLIPBOARD_BANK_NAME_MAX) {
-          setWordBankClipboardHint('词库名称不能超过 ' + CLIPBOARD_BANK_NAME_MAX + ' 个字', true);
-          byId('wordBankClipboardName').focus();
-          return;
-        }
-        content = '!' + displayName + '\n' + content.replace(/^\ufeff/, '');
-        localStorage.setItem(STORAGE_CLIPBOARD_BANK_NAME, displayName);
-      }
-      const filename = filenameFromBankDisplayName(displayName);
       const bytes = new TextEncoder().encode(content).length;
       if (bytes > 64 * 1024) {
         setWordBankClipboardHint('内容不能超过 64 KB（当前约 ' + Math.ceil(bytes / 1024) + ' KB）', true);
@@ -2852,14 +2796,6 @@
       updateHistoryButtons();
     }
 
-    function playDrawerTurnSound() {
-      try {
-        drawerTurnSound.currentTime = 0;
-        const playPromise = drawerTurnSound.play();
-        if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {});
-      } catch (_) {}
-    }
-
     function showTurnNotice(title, hint) {
       if (drawerTurnNoticeTimer) clearTimeout(drawerTurnNoticeTimer);
       byId('turnNoticeTitle').textContent = title;
@@ -2985,7 +2921,6 @@
       updateChainProgress(message.chain_index, message.chain_length, activeName, turnPhase);
       updatePlayerList(message.players);
       if (!wasDrawer && role === 'drawer' && turnPhase === 'draw' && !wasDrawPhase) {
-        playDrawerTurnSound();
         showTurnNotice('轮到你作画了！', '准备好后开始绘画');
       } else if (!wasGuesserTurn && role === 'guesser' && turnPhase === 'guess') {
         showTurnNotice('轮到你猜词了！', '看画作后在猜词窗口输入答案');
@@ -4367,7 +4302,6 @@
     }
     byId('wordBankClipboardCancel').addEventListener('click', closeWordBankClipboardPrompt);
     byId('wordBankClipboardConfirm').addEventListener('click', submitWordBankClipboardImport);
-    byId('wordBankClipboardContent').addEventListener('input', syncWordBankClipboardNameUi);
     byId('wordBankClipboardPrompt').addEventListener('click', event => {
       if (event.target === byId('wordBankClipboardPrompt')) closeWordBankClipboardPrompt();
     });
