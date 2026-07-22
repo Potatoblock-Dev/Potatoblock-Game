@@ -6,6 +6,7 @@
 - 服务器：`git pull --ff-only` 增量更新（见 `auto_update.py`）
 - 未纳入本仓库的文件（`main.py`、`routers/`、`var/` 等）保留在服务器本地
 - **CD 流水线**：push 到 `main` 分支自动部署到 MCSManager（见下方）
+- **音效授权**：[THIRD_PARTY_AUDIO.md](./THIRD_PARTY_AUDIO.md)（游戏音效均为 CC0）
 
 ---
 
