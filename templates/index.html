@@ -203,10 +203,10 @@
         margin-bottom: 2rem;
       }
     }
-    /* 深浅色切换时的柔和过渡；排除动画开关本体，避免干扰其自身过渡 */
+    /* 深浅色切换：背景/描边渐变，文字颜色立即切换 */
     html.theme-fading,
     html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
-      transition: background-color .45s ease, color .45s ease, border-color .45s ease,
+      transition: background-color .45s ease, border-color .45s ease,
         box-shadow .45s ease !important;
     }
     </style>

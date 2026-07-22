@@ -138,12 +138,12 @@ html[data-theme='light'] {
 .disabled\:hover\:bg-white\/10:disabled:hover{background-color:var(--chip-bg-strong)}
 /* 实心彩色按钮固定白字，避免浅色模式下继承深色正文颜色 */
 .bg-blue-600,.bg-emerald-600{color:#fff}
-/* 深浅色切换时的柔和过渡：仅在切换瞬间由 JS 挂上 theme-fading，
-   结束后移除，避免常驻过渡拖慢其他交互动画；
+/* 深浅色切换：仅在切换瞬间由 JS 挂上 theme-fading；
+   背景/描边渐变，文字与图标色（color/fill/stroke）立即切换；
    白天黑夜开关组件有自己的动画，排除在外 */
 html.theme-fading,
 html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
-  transition: background-color .45s ease, color .45s ease, border-color .45s ease,
-    box-shadow .45s ease, fill .45s ease, stroke .45s ease !important;
+  transition: background-color .45s ease, border-color .45s ease,
+    box-shadow .45s ease !important;
 }
 
