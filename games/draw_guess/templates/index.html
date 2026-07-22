@@ -303,6 +303,15 @@
     .chat-line-guess { color: var(--chat-guess); }
     .chat-line-correct { color: var(--chat-correct); }
     .chat-line-other { color: var(--chat-other); }
+
+    .ui-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; line-height: 0; color: inherit; vertical-align: middle; }
+    .ui-icon svg { width: 1em; height: 1em; display: block; }
+    .ui-icon-hero { font-size: 3.75rem; color: #93c5fd; }
+    .ui-icon-title { font-size: 1.5rem; color: #93c5fd; }
+    .ui-icon-inline { font-size: 1em; }
+    .word-bank-title { display: inline-flex; align-items: center; gap: .4rem; }
+    .chat-system-icon { margin-right: .3em; font-size: .95em; opacity: .92; }
+    .import-result-icon { margin-right: .3em; font-size: .95em; }
     .mobile-section-toggle { min-width: 0; color: inherit; text-align: left; }
     .mobile-collapse-icon { display: none; color: var(--text-muted); font-size: 12px; }
 
@@ -544,7 +553,7 @@
         <div class="theme-flip js-theme-flip" title="切换深浅色"></div>
         <button type="button" class="theme-mode-button js-theme-mode"></button>
       </div>
-      <div class="mb-3 text-6xl">🎨</div>
+      <div class="ui-icon ui-icon-hero mb-3" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r="2"/><circle cx="17.5" cy="10.5" r="2"/><circle cx="8.5" cy="7.5" r="2"/><circle cx="6.5" cy="12.5" r="2"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.1 2.5-.3"/><path d="M15.5 15.5c.5-1.5 2-2.5 3.5-2.5 1.5 0 2.2 1.2 2.2 2.7 0 3.3-2.7 5.8-6.2 5.8-5 0-9-4-9-9 0-4.1 2.7-7.5 6.5-8.7"/></svg></div>
       <h1 class="text-3xl font-bold">{{ game.name }}</h1>
       <p class="mt-1 text-sm text-white/50">{% if nickname %}昵称来自土豆方块通行证，只需输入房间号{% else %}通行证未设置昵称，请输入昵称和房间号{% endif %}</p>
       <div class="mt-6 space-y-3">
@@ -564,7 +573,7 @@
     <section id="roomScreen" class="mx-auto hidden w-full max-w-6xl">
       <header class="game-header mb-4">
         <div class="flex flex-wrap items-center gap-3">
-          <span class="text-2xl">🎨</span>
+          <span class="ui-icon ui-icon-title" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r="2"/><circle cx="17.5" cy="10.5" r="2"/><circle cx="8.5" cy="7.5" r="2"/><circle cx="6.5" cy="12.5" r="2"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.1 2.5-.3"/><path d="M15.5 15.5c.5-1.5 2-2.5 3.5-2.5 1.5 0 2.2 1.2 2.2 2.7 0 3.3-2.7 5.8-6.2 5.8-5 0-9-4-9-9 0-4.1 2.7-7.5 6.5-8.7"/></svg></span>
           <span class="text-xl font-bold">{{ game.name }}</span>
           <span class="room-id-badge rounded-full bg-white/10 px-3 py-1 text-sm">
             <button id="copyRoomButton" type="button" class="room-copy-button" title="复制房间链接" aria-label="复制房间链接">
@@ -604,7 +613,7 @@
           <div class="flex flex-wrap items-center gap-2">
             <button id="wordBankToggle" type="button" aria-expanded="false" aria-controls="wordBankBody"
                     class="flex min-h-10 items-center gap-2 rounded-lg px-2 text-amber-200 hover:bg-white/5">
-              <span id="wordBankPanelTitle" class="font-bold">📚 本局词库</span>
+              <span id="wordBankPanelTitle" class="word-bank-title font-bold"><span class="ui-icon ui-icon-inline" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span id="wordBankPanelTitleText">本局词库</span></span>
               <span id="wordBankToggleText" class="text-xs">展开</span>
               <span id="wordBankToggleIcon">▼</span>
             </button>
@@ -2257,7 +2266,9 @@
       hostWordBankPanel.classList.remove('hidden');
       hostWordBankPanel.classList.toggle('is-readonly', !isHost);
       const title = byId('wordBankPanelTitle');
-      if (title) title.textContent = isHost ? '📚 房主词库管理' : '📚 本局词库';
+      const titleText = byId('wordBankPanelTitleText');
+      if (titleText) titleText.textContent = isHost ? '房主词库管理' : '本局词库';
+      else if (title) title.textContent = isHost ? '房主词库管理' : '本局词库';
       disableHints.disabled = !isHost;
       const hintsLabel = byId('disableHintsLabel');
       if (hintsLabel) {
@@ -2344,9 +2355,13 @@
       (results || []).forEach(result => {
         const item = document.createElement('li');
         item.className = result.success ? 'text-emerald-300' : 'text-red-300';
-        item.textContent = (result.success ? '✓ ' : '✕ ')
-          + (result.success ? (result.name || result.filename) : result.filename)
-          + '：' + (result.success ? '已导入 ' + result.count + ' 题' : result.message);
+        item.append(
+          createUiIcon(result.success ? 'check' : 'x', 'import-result-icon'),
+          document.createTextNode(
+            (result.success ? (result.name || result.filename) : result.filename)
+            + '：' + (result.success ? '已导入 ' + result.count + ' 题' : result.message)
+          )
+        );
         wordBankImportResults.appendChild(item);
       });
     }
@@ -2538,6 +2553,52 @@
       wordBankFeedback.className = 'word-bank-host-only ' + (error ? 'text-red-300' : 'text-emerald-300');
     }
 
+
+    const UI_ICON_SVGS = {
+      palette: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2"/><circle cx="17.5" cy="10.5" r="2"/><circle cx="8.5" cy="7.5" r="2"/><circle cx="6.5" cy="12.5" r="2"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.1 2.5-.3"/><path d="M15.5 15.5c.5-1.5 2-2.5 3.5-2.5 1.5 0 2.2 1.2 2.2 2.7 0 3.3-2.7 5.8-6.2 5.8-5 0-9-4-9-9 0-4.1 2.7-7.5 6.5-8.7"/></svg>',
+      book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+      check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+      x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+      target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>',
+      home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
+      door: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9v18H6z"/><path d="M15 3h3v18h-3"/><path d="M12.5 12h.01"/></svg>',
+      link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2"/></svg>',
+      break: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 8.5 7 7a5 5 0 0 0-7.1 7.1l2 2"/><path d="M15.5 15.5 17 17a5 5 0 0 0 7.1-7.1l-2-2"/><path d="m8 16 8-8"/></svg>',
+      crown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4 3 5-6 5 6 4-3v11H3z"/></svg>',
+      film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16"/><path d="M17 4v16"/><path d="M3 8h4"/><path d="M3 16h4"/><path d="M17 8h4"/><path d="M17 16h4"/></svg>',
+      warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 16H3z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+      info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v4h1"/></svg>'
+    };
+
+    function createUiIcon(name, className) {
+      const wrap = document.createElement('span');
+      wrap.className = 'ui-icon' + (className ? ' ' + className : '');
+      wrap.setAttribute('aria-hidden', 'true');
+      wrap.innerHTML = UI_ICON_SVGS[name] || UI_ICON_SVGS.info;
+      return wrap;
+    }
+
+    function resolveSystemSenderIcon(sender, senderIcon) {
+      if (senderIcon && UI_ICON_SVGS[senderIcon]) return senderIcon;
+      const raw = String(sender || '');
+      if (raw.includes('🎯') || raw.includes('target')) return 'target';
+      if (raw.includes('🏠')) return 'home';
+      if (raw.includes('🚪')) return 'door';
+      if (raw.includes('🔗')) return 'link';
+      if (raw.includes('💥') || raw.includes('⛓')) return 'break';
+      if (raw.includes('📚')) return 'book';
+      if (raw.includes('👑')) return 'crown';
+      if (raw.includes('🎬')) return 'film';
+      if (raw.includes('⚠')) return 'warning';
+      return 'info';
+    }
+
+    function systemSenderLabel(sender) {
+      const raw = String(sender || '').trim();
+      if (raw === '提示' || raw.includes('提示')) return '提示';
+      return '系统';
+    }
+
     function getChatClass(type) {
       if (type === 'system') return 'chat-line chat-line-system';
       if (type === 'guess') return 'chat-line chat-line-guess';
@@ -2546,8 +2607,8 @@
     }
 
     function isSystemChatSender(sender) {
-      const name = String(sender || '');
-      return name === '⚠️ 提示' || name.endsWith('系统');
+      const name = String(sender || '').trim();
+      return name === '系统' || name === '提示' || name === '⚠️ 提示' || name.endsWith('系统') || name.endsWith('提示');
     }
 
     function loadMutedPlayerIds() {
@@ -2575,6 +2636,17 @@
       const line = document.createElement('div');
       line.className = getChatClass(type || 'other');
       line.textContent = text;
+      chatBox.appendChild(line);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function appendSystemChat(sender, text, senderIcon) {
+      const line = document.createElement('div');
+      line.className = getChatClass('system');
+      line.append(
+        createUiIcon(resolveSystemSenderIcon(sender, senderIcon), 'chat-system-icon'),
+        document.createTextNode(systemSenderLabel(sender) + '：' + String(text || ''))
+      );
       chatBox.appendChild(line);
       chatBox.scrollTop = chatBox.scrollHeight;
     }
@@ -2984,7 +3056,7 @@
       }
       if (message.type === 'message') {
         if (isSystemChatSender(message.sender)) {
-          appendChat(message.sender + '：' + message.text, 'system');
+          appendSystemChat(message.sender, message.text, message.sender_icon);
         } else if (!isPlayerMuted(message.sender_id)) {
           appendPlayerChat(message.sender, '：' + message.text, 'other');
         }
