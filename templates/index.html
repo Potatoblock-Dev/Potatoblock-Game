@@ -207,7 +207,7 @@
                 <div class="settings-label">账号</div>
                 {% if not user_id %}
                 <button type="button" data-passport-login data-next="/" class="settings-link w-full text-left bg-transparent cursor-pointer">
-                    <span>通行证登录（弹窗）</span><span aria-hidden="true">↗</span>
+                    <span>通行证登录</span><span aria-hidden="true">↗</span>
                 </button>
                 {% endif %}
                 <a href="https://passport.potatoblock.com/" target="_blank" rel="noopener" class="settings-link">
@@ -215,26 +215,26 @@
                 </a>
             </div>
             <div class="settings-section">
-                <div class="settings-label">安装应用（PWA）</div>
-                <p id="pwaInstallStatus" class="pwa-hint hidden"></p>
-                <button id="pwaInstallButton" type="button" class="pwa-action hidden">添加到主屏幕 / 安装应用</button>
-                <button id="pwaUpdateButton" type="button" class="pwa-action hidden">更新应用</button>
-                <p id="pwaUpdateHint" class="pwa-hint hidden"></p>
-                <p id="pwaIosHint" class="pwa-hint hidden">iPhone / iPad：点上方按钮查看图文安装步骤（Safari 分享 → 添加到主屏幕）。</p>
-                <p id="pwaAndroidHint" class="pwa-hint hidden">Android：用 Chrome 打开本站 → 右上角菜单 →「安装应用」或「添加到主屏幕」。</p>
-                <p id="pwaDesktopHint" class="pwa-hint hidden">电脑：用 Chrome / Edge 打开本站 → 地址栏右侧安装图标，或菜单里的「安装应用」。</p>
-            </div>
-            <div class="settings-section">
-                <div class="settings-label">深浅色模式</div>
+                <div class="settings-label">外观</div>
                 <div class="theme-mode-grid">
-                    <button type="button" class="theme-mode-option" data-mode="auto">🕒 自动切换</button>
-                    <button type="button" class="theme-mode-option" data-mode="system">💻 跟随系统</button>
+                    <button type="button" class="theme-mode-option" data-mode="auto">自动</button>
+                    <button type="button" class="theme-mode-option" data-mode="system">跟随系统</button>
                 </div>
                 <div id="themeManualRow" class="theme-manual-row">
-                    <span class="theme-manual-label">手动切换</span>
+                    <span class="theme-manual-label">手动</span>
                     <div id="themeFlip" class="theme-flip" title="切换深浅色"></div>
                 </div>
                 <div id="themeModeHint" class="theme-mode-hint"></div>
+            </div>
+            <div class="settings-section">
+                <div class="settings-label">安装应用</div>
+                <button id="pwaInstallButton" type="button" class="pwa-action hidden">添加到主屏幕</button>
+                <button id="pwaUpdateButton" type="button" class="pwa-action hidden">更新应用</button>
+                <p id="pwaInstallStatus" class="pwa-hint hidden"></p>
+                <p id="pwaUpdateHint" class="pwa-hint hidden"></p>
+                <p id="pwaIosHint" class="pwa-hint hidden"></p>
+                <p id="pwaAndroidHint" class="pwa-hint hidden">Chrome 菜单 →「安装应用」或「添加到主屏幕」。</p>
+                <p id="pwaDesktopHint" class="pwa-hint hidden">地址栏安装图标，或浏览器菜单「安装应用」。</p>
             </div>
         </div>
     </div>
@@ -274,7 +274,7 @@
         </div>
     </div>
 
-    <script src="/static/js/pwa.js?v=3"></script>
+    <script src="/static/js/pwa.js?v=4"></script>
     <script src="/static/js/passport-login.js"></script>
     <script src="/static/js/main.js"></script>
     <script>
@@ -291,10 +291,10 @@
       const systemThemeQuery = matchMedia('(prefers-color-scheme: light)');
 
       const MODE_HINTS = {
-        auto: '7:00–19:00 浅色，其余时间深色',
-        system: '跟随操作系统的深浅色设置',
-        dark: '始终使用深色（拨动开关可改）',
-        light: '始终使用浅色（拨动开关可改）',
+        auto: '7:00–19:00 浅色，其余深色',
+        system: '跟随系统',
+        dark: '始终深色',
+        light: '始终浅色',
       };
 
       // 读取当前模式（页首脚本已保证存在且合法）

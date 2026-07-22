@@ -111,30 +111,29 @@
         hideAllInstallHints();
         installGuide.close();
         if (installStatus) {
-          installStatus.textContent = '已安装为应用，可从主屏幕打开。';
+          installStatus.textContent = '已安装，可从主屏幕打开。';
           setHidden(installStatus, false);
         }
         return;
       }
 
-      if (installStatus) {
-        installStatus.textContent = deferredPrompt
-          ? '可一键安装到主屏幕。'
-          : '按下方说明添加到主屏幕。';
-        setHidden(installStatus, false);
-      }
-
+      setHidden(installStatus, true);
       setHidden(installBtn, false);
+
       if (deferredPrompt) {
         hideAllInstallHints();
-        if (installBtn) installBtn.textContent = '添加到主屏幕 / 安装应用';
+        if (installBtn) installBtn.textContent = '添加到主屏幕';
+        return;
+      }
+
+      if (installBtn) {
+        installBtn.textContent = isIOS() ? '查看安装步骤' : '添加到主屏幕';
+      }
+      // iOS 步骤在弹窗里，面板上不再重复说明；其它平台保留一行短提示。
+      if (isIOS()) {
+        hideAllInstallHints();
       } else {
         showPlatformHint();
-        if (installBtn) {
-          installBtn.textContent = isIOS()
-            ? '查看安装步骤（iPhone / iPad）'
-            : '查看安装步骤';
-        }
       }
     }
 
