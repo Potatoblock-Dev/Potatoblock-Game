@@ -177,6 +177,32 @@
     .pwa-guide-actions { margin-top: 14px; display: flex; gap: 8px; }
     .pwa-guide-actions .pwa-action { margin-top: 0; }
     .hidden { display: none !important; }
+    /* 顶栏避开刘海/状态栏；手机端标题下移，避免与顶栏挤在一起 */
+    .site-topbar {
+      top: max(1rem, calc(env(safe-area-inset-top, 0px) + 0.5rem));
+      left: 1rem;
+      right: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .site-topbar-actions {
+      display: inline-flex;
+      align-items: center;
+      flex: none;
+    }
+    @media (max-width: 639px) {
+      body.home-page {
+        justify-content: flex-start;
+        padding-top: calc(3.75rem + env(safe-area-inset-top, 0px));
+        padding-bottom: max(2rem, env(safe-area-inset-bottom, 0px));
+      }
+      .site-brand {
+        margin-top: 0.75rem;
+        margin-bottom: 2rem;
+      }
+    }
     /* 深浅色切换时的柔和过渡；排除动画开关本体，避免干扰其自身过渡 */
     html.theme-fading,
     html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
@@ -185,9 +211,10 @@
     }
     </style>
 </head>
-<body class="bg-gray-950 text-white min-h-screen flex flex-col items-center justify-center p-8">
+<body class="home-page bg-gray-950 text-white min-h-screen flex flex-col items-center justify-center p-8">
     <!-- 用户状态栏（可选） -->
-    <div class="absolute top-4 right-4 text-sm text-gray-400">
+    <div class="site-topbar absolute text-sm text-gray-400">
+        <div class="site-topbar-account">
         {% if user_id %}
             <span>用户ID: {{ user_id }}</span>
             <form method="post" action="/logout" class="inline ml-2">
@@ -196,6 +223,8 @@
         {% else %}
             <button type="button" data-passport-login data-next="/" class="hover:text-white bg-transparent border-0 cursor-pointer p-0 text-inherit text-sm">登录</button>
         {% endif %}
+        </div>
+        <div class="site-topbar-actions">
         <button id="changelogButton" type="button" class="topbar-icon-btn" title="更新日志" aria-label="更新日志">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" stroke="currentColor" stroke-width="1.7"/>
@@ -204,11 +233,12 @@
             <span id="changelogBadge" class="changelog-badge hidden" aria-hidden="true"></span>
         </button>
         <button id="settingsButton" type="button" class="settings-button" title="系统设置" aria-label="系统设置">⚙️</button>
+        </div>
     </div>
 
     <div class="w-full max-w-4xl">
         {% if logo or site_title %}
-        <div class="text-center mb-12">
+        <div class="site-brand text-center mb-12">
             {% if logo %}
             <img src="{{ logo }}" alt="{{ site_title }}" class="h-16 mx-auto mb-4 object-contain">
             {% endif %}
