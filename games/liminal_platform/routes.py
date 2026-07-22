@@ -23,6 +23,8 @@ game_info = {
     "name": "阈限月台",
     "logo": "/static/img/logo.svg",
     "url": "/liminal-platform",
+    "menu_order": 40,
+    "badge": "测试版",
     "router": router,
     "static_dir": GAME_ROOT / "static",
     "static_url": STATIC_URL,

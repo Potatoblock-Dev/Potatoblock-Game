@@ -67,6 +67,7 @@ game_info = {
     "name": "画画接龙",
     "logo": "/static/img/logo.svg",
     "url": "/draw-chain",
+    "menu_order": 20,
     "router": router,
     "static_dir": GAME_DIR / "static",
     "static_url": STATIC_URL,

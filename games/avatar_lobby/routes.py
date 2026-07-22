@@ -52,6 +52,7 @@ game_info = {
     "name": "avatar",
     "logo": "/static/img/logo.svg",
     "url": "/avatar-lobby",
+    "menu_order": 30,
     "router": router,
     "static_dir": GAME_DIR / "static",
     "static_url": STATIC_URL,

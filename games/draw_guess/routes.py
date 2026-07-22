@@ -49,6 +49,7 @@ game_info = {
     "name": "你画我猜",
     "logo": "/static/img/logo.svg",
     "url": "/draw-guess",
+    "menu_order": 10,
     "router": router,
     "static_dir": GAME_DIR / "static",
     "static_url": STATIC_URL,

@@ -25,6 +25,7 @@ def get_games():
             info.pop("router", None)
             info.pop("static_dir", None)
             games.append(info)
+    games.sort(key=lambda g: (g.get("menu_order", 1000), str(g.get("name") or "")))
     return games
 
 
