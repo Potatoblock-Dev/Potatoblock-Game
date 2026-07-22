@@ -35,6 +35,20 @@
     y: Spec.FLOOR_Y,
   });
 
+  const speechChat = window.SpeechChat.createSpeechChat({
+    isBlocked() {
+      return (
+        (window.LpInventory?.isOpen() ?? false) ||
+        (window.LpBoilerPanel?.isOpen() ?? false) ||
+        (window.LpFuelFeed?.isOpen() ?? false)
+      );
+    },
+    onSend(text) {
+      Entity.setSpeechBubble(avatar, text);
+    },
+  });
+  speechChat.bind();
+
   const keys = new Set();
   const carImages = new Map();
   let viewW = 0;
@@ -76,12 +90,13 @@
     return label.split(' / ')[0];
   }
 
-  /** 是否有全屏 UI（物品栏 / 锅炉控制台 / 加燃料）。 */
+  /** 是否有全屏 UI（物品栏 / 锅炉控制台 / 加燃料 / 聊天输入）。 */
   function isUiOpen() {
     return (
       (window.LpInventory?.isOpen() ?? false) ||
       (window.LpBoilerPanel?.isOpen() ?? false) ||
-      (window.LpFuelFeed?.isOpen() ?? false)
+      (window.LpFuelFeed?.isOpen() ?? false) ||
+      (speechChat?.isOpen() ?? false)
     );
   }
 

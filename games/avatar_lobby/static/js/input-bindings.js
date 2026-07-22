@@ -179,7 +179,7 @@
     document.getElementById('controlHint').textContent =
       `${formatAction('left')} 向左，${formatAction('right')} 向右，` +
       `${formatAction('jump')} 跳跃，${formatAction('kneel')} 单膝跪地，` +
-      `${formatAction('interact')} 交互`;
+      `${formatAction('interact')} 交互，Enter 说话`;
   }
 
   function beginCapture(action, slot) {

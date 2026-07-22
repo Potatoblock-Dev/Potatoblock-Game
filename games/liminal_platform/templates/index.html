@@ -11,7 +11,7 @@
   <link rel="icon" href="/static/icons/favicon.ico?v=1" sizes="any">
   <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=19">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=20">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -36,7 +36,21 @@
           </a>
         </nav>
       </header>
-      <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · F 交互 · Tab 物品栏</p>
+      <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · F 交互 · Tab 物品栏 · Enter 说话</p>
+      <div id="speechChatBar" class="speech-chat-bar" aria-hidden="true">
+        <input
+          id="speechChatInput"
+          type="text"
+          maxlength="40"
+          enterkeyhint="send"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="输入消息，Enter 发送"
+          aria-label="聊天消息"
+        >
+        <button type="button" data-speech-chat-send class="speech-chat-send">发送</button>
+        <button type="button" data-speech-chat-cancel class="speech-chat-cancel">取消</button>
+      </div>
       <div id="lpMobileControls" class="lp-mobile-controls" aria-label="触控操作">
         <div
           id="lpMoveJoystick"
@@ -315,7 +329,8 @@
   </div>
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=2"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=10"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=12"></script>
+  <script src="/static/games/avatar-lobby/js/speech-chat.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/carriage-spec.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=5"></script>
@@ -329,6 +344,6 @@
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=13"></script>
 </body>
 </html>

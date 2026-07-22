@@ -199,6 +199,9 @@ async def avatar_lobby_ws(websocket: WebSocket):
             if message_type == "appearance":
                 await lobby_manager.handle_appearance(connection.user_id, payload)
                 continue
+            if message_type == "chat":
+                await lobby_manager.handle_chat(connection.user_id, payload)
+                continue
     except WebSocketDisconnect:
         pass
     except Exception:
