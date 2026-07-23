@@ -6,18 +6,30 @@
 (() => {
   const Catalog = window.LpItemCatalog;
   const Entity = window.AvatarEntity;
+  /** @type {Map<string, { img: HTMLImageElement, ok: boolean, failed: boolean }>} */
   const spriteCache = new Map();
 
-  /** 加载武器世界贴图（优先 holdSprite，否则 icon）。 */
+  /** 加载武器世界贴图（优先 holdSprite，否则 icon）；失败不永久卡死缓存。 */
   function getSprite(item) {
     const url = item?.holdSprite || item?.icon;
     if (!url) return null;
-    let img = spriteCache.get(url);
-    if (img) return img.complete && img.naturalWidth ? img : null;
-    img = new Image();
-    img.src = url;
-    spriteCache.set(url, img);
-    return img.complete && img.naturalWidth ? img : null;
+    let entry = spriteCache.get(url);
+    if (!entry) {
+      const img = new Image();
+      entry = { img, ok: false, failed: false };
+      spriteCache.set(url, entry);
+      img.onload = () => {
+        entry.ok = img.naturalWidth > 0;
+        entry.failed = !entry.ok;
+      };
+      img.onerror = () => {
+        entry.ok = false;
+        entry.failed = true;
+      };
+      img.src = url;
+    }
+    if (entry.failed || !entry.ok) return null;
+    return entry.img;
   }
 
   /**

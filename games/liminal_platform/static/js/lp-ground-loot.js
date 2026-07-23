@@ -42,8 +42,9 @@
     }
   }
 
-  /** 写入本地。 */
+  /** 写入本地（联机时跳过，改由服务端快照）。 */
   function save() {
+    if (window.LpInventoryNet?.isActive?.()) return;
     const payload = {
       piles: piles
         .filter((p) => Core.collectStacks(p.inv).length > 0)
@@ -55,6 +56,27 @@
     };
     piles = piles.filter((p) => Core.collectStacks(p.inv).length > 0);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }
+
+  /** 用服务端地面堆列表整体替换本地 piles。 */
+  function applyFromSnapshot(groundList) {
+    const next = [];
+    let maxSeq = 0;
+    for (const entry of groundList || []) {
+      const inv = Core.Inventory.fromJSON(entry.inv || entry);
+      const id = String(entry.id || `pile-${idSeq}`);
+      const m = /^pile-(\d+)$/.exec(id);
+      if (m) maxSeq = Math.max(maxSeq, Number(m[1]));
+      inv.id = String(entry.inv?.id || `ground-${id.replace(/^pile-/, '')}`);
+      next.push({
+        id,
+        x: Number(entry.x) || 0,
+        y: Number(entry.y) || Spec?.FLOOR_Y || 0,
+        inv,
+      });
+    }
+    piles = next.filter((p) => !isEmpty(p));
+    if (maxSeq >= idSeq) idSeq = maxSeq + 1;
   }
 
   /** 堆是否为空。 */
@@ -108,6 +130,9 @@
   /** 把堆叠放入地面（满则另开新堆）。 */
   function dropStacks(worldX, stacks, worldY) {
     if (!stacks?.length) return;
+    if (window.LpInventoryNet?.isActive?.()) {
+      // 联机掉落应由 inventory UI / 服务端 drop 意图处理；此处仅作本地预览时不写盘
+    }
     let pile = findMergeTarget(worldX) || createPile(worldX, worldY);
     for (const raw of stacks) {
       const stack = Core.normalizeStack(raw);
@@ -189,6 +214,7 @@
     pruneAndSave,
     draw,
     seedIfEmpty,
+    applyFromSnapshot,
     NEAR_RADIUS,
     PILE_COLS,
     PILE_ROWS,

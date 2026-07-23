@@ -74,7 +74,7 @@ async def liminal_platform_page(request: Request, identity=Depends(get_optional_
 
 @router.websocket("/liminal-platform/ws")
 async def liminal_platform_ws(websocket: WebSocket):
-    """多人同屏 WebSocket：join/create/pose/train/fuel/fire/chat/appearance。"""
+    """多人同屏 WebSocket：join/create/pose/train/fuel/fire/inv/chat/appearance。"""
     identity = await get_current_identity_ws(websocket)
     if identity is None:
         await websocket.close(code=4401)
@@ -132,6 +132,9 @@ async def liminal_platform_ws(websocket: WebSocket):
                 continue
             if message_type == "fire":
                 await lobby_manager.handle_fire(connection.user_id, payload)
+                continue
+            if message_type == "inv":
+                await lobby_manager.handle_inv(connection.user_id, payload)
                 continue
             if message_type == "appearance":
                 await lobby_manager.handle_appearance(connection.user_id, payload)

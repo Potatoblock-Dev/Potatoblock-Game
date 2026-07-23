@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=51">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=57">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -69,9 +69,12 @@
         <button type="button" class="lp-hands-hud-slot is-primary" data-lp-hand-hud="1" aria-label="2"></button>
         <button type="button" class="lp-hands-hud-slot is-utility" data-lp-hand-hud="2" aria-label="工具"></button>
       </div>
+      <!-- Mobile touch chrome: Kenney Mobile Controls 1.0 (CC0, kenney.nl) Style A Large -->
       <div id="lpMobileControls" class="lp-mobile-controls" aria-label="触控操作">
         <div class="lp-mobile-move-cluster">
-          <button type="button" id="lpMobileSprintButton" class="lp-mobile-sprint-button" aria-pressed="false">跑</button>
+          <button type="button" id="lpMobileSprintButton" class="lp-mobile-sprint-button" aria-pressed="false" aria-label="奔跑" title="奔跑">
+            <span class="lp-mc-icon" aria-hidden="true"></span>
+          </button>
           <div
             id="lpMoveJoystick"
             class="lp-move-joystick"
@@ -94,20 +97,100 @@
             <span id="lpLookJoystickKnob" class="lp-look-joystick-knob"></span>
           </div>
           <div class="lp-mobile-action-secondary">
-            <button type="button" id="lpMobileInventoryButton" class="lp-mobile-inventory-button" data-mode="inventory">物品</button>
+            <button type="button" id="lpMobileInventoryButton" class="lp-mobile-inventory-button" data-mode="inventory" aria-label="物品" title="物品">
+              <span class="lp-mc-icon" aria-hidden="true"></span>
+            </button>
           </div>
           <div class="lp-mobile-action-buttons">
-            <button type="button" id="lpMobileFireButton" class="lp-mobile-fire-button">开火</button>
-            <button type="button" id="lpMobileJumpButton" class="lp-mobile-jump-button">跳跃</button>
+            <button type="button" id="lpMobileFireButton" class="lp-mobile-fire-button" aria-label="开火" title="开火">
+              <span class="lp-mc-icon" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="lpMobileJumpButton" class="lp-mobile-jump-button" aria-label="跳跃" title="跳跃">
+              <span class="lp-mc-icon" aria-hidden="true"></span>
+            </button>
           </div>
         </div>
       </div>
       <div id="lpLoadError" class="lp-load-error" hidden>
-        <p>车厢素材加载失败，请确认 static/img 下已有 power-car.png、storage-car.png 与 guard-car.png。</p>
+        <p>车厢素材加载失败，请确认 static/img/cars 下已有 power-car.png、storage-car.png 与 guard-car.png。</p>
       </div>
     </div>
     <div id="lpInventoryRoot" class="lp-inventory-root" hidden aria-hidden="true">
       <div class="lp-inventory-backdrop"></div>
+      <button
+        type="button"
+        id="lpInventorySettingsToggle"
+        class="lp-inv-settings-fab"
+        aria-label="设置"
+        title="设置"
+        aria-controls="lpInventorySettings"
+        aria-expanded="false"
+      >
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M19.4 13.1a1.5 1.5 0 0 0 .3 1.6l.1.1a1.8 1.8 0 1 1-2.5 2.5l-.1-.1a1.5 1.5 0 0 0-1.6-.3 1.5 1.5 0 0 0-.9 1.4V18a1.8 1.8 0 1 1-3.6 0v-.1a1.5 1.5 0 0 0-1-1.4 1.5 1.5 0 0 0-1.6.3l-.1.1a1.8 1.8 0 1 1-2.5-2.5l.1-.1a1.5 1.5 0 0 0 .3-1.6 1.5 1.5 0 0 0-1.4-.9H6a1.8 1.8 0 1 1 0-3.6h.1a1.5 1.5 0 0 0 1.4-1 1.5 1.5 0 0 0-.3-1.6l-.1-.1a1.8 1.8 0 1 1 2.5-2.5l.1.1a1.5 1.5 0 0 0 1.6.3h.1a1.5 1.5 0 0 0 .9-1.4V6a1.8 1.8 0 1 1 3.6 0v.1a1.5 1.5 0 0 0 .9 1.4 1.5 1.5 0 0 0 1.6-.3l.1-.1a1.8 1.8 0 1 1 2.5 2.5l-.1.1a1.5 1.5 0 0 0-.3 1.6v.1a1.5 1.5 0 0 0 1.4.9H18a1.8 1.8 0 1 1 0 3.6h-.1a1.5 1.5 0 0 0-1.4.9Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div id="lpInventorySettings" class="lp-inventory-settings" hidden>
+        <p class="lp-inventory-settings-title">设置</p>
+
+        <details class="lp-settings-group lp-desktop-only">
+          <summary class="lp-settings-group-summary">界面</summary>
+          <div class="lp-settings-group-body">
+            <div class="lp-binding-row">
+              <span>物品栏</span>
+              <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="1"></button>
+            </div>
+          </div>
+        </details>
+
+        <details class="lp-settings-group lp-desktop-only">
+          <summary class="lp-settings-group-summary">操作</summary>
+          <div class="lp-settings-group-body">
+            <div class="lp-binding-row">
+              <span>交互</span>
+              <button type="button" data-lp-binding-action="interact" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="interact" data-lp-binding-slot="1"></button>
+            </div>
+            <div class="lp-binding-row">
+              <span>开火</span>
+              <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="1"></button>
+            </div>
+            <div class="lp-binding-row">
+              <span>装填</span>
+              <button type="button" data-lp-binding-action="reload" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="reload" data-lp-binding-slot="1"></button>
+            </div>
+            <div class="lp-binding-row">
+              <span>切换手部</span>
+              <button type="button" data-lp-binding-action="handsHud" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="handsHud" data-lp-binding-slot="1"></button>
+            </div>
+          </div>
+        </details>
+
+        <details class="lp-settings-group" open>
+          <summary class="lp-settings-group-summary">移动</summary>
+          <div class="lp-settings-group-body">
+            <div class="lp-binding-row lp-desktop-only">
+              <span>奔跑</span>
+              <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="1"></button>
+            </div>
+            <label class="lp-setting-toggle">
+              <input type="checkbox" id="lpAutoRunToggle" />
+              <span class="lp-desktop-only">自动奔跑（默认奔跑，按住奔跑键改为行走）</span>
+              <span class="lp-mobile-only">自动奔跑（点左侧「跑」切换走/跑）</span>
+            </label>
+          </div>
+        </details>
+
+        <p id="lpBindingStatus" class="lp-binding-status lp-desktop-only"></p>
+        <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button lp-desktop-only">恢复默认</button>
+      </div>
+
       <div class="lp-inventory-shell" role="dialog" aria-modal="true" aria-label="物品栏">
         <header class="lp-inventory-header">
           <div>
@@ -115,10 +198,6 @@
             <h2 class="lp-inventory-title">物品栏</h2>
           </div>
           <div class="lp-inventory-header-actions">
-            <button type="button" id="lpInventorySettingsToggle" class="lp-inventory-ghost-button">
-              <span class="lp-label-long">键位</span>
-              <span class="lp-label-short">设置</span>
-            </button>
             <button type="button" id="lpInventoryClose" class="lp-inventory-close-button">关闭</button>
           </div>
         </header>
@@ -127,49 +206,6 @@
           <button type="button" class="lp-inventory-tab" data-lp-inv-tab="gear">人物</button>
           <button type="button" class="lp-inventory-tab" data-lp-inv-tab="nearby" hidden>附近</button>
         </nav>
-        <div id="lpInventorySettings" class="lp-inventory-settings" hidden>
-          <p class="lp-inventory-settings-title">
-            <span class="lp-desktop-only">键位与移动</span>
-            <span class="lp-mobile-only">移动设置</span>
-          </p>
-          <div class="lp-binding-row lp-desktop-only">
-            <span>物品栏</span>
-            <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="0"></button>
-            <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="1"></button>
-          </div>
-          <div class="lp-binding-row lp-desktop-only">
-            <span>交互</span>
-            <button type="button" data-lp-binding-action="interact" data-lp-binding-slot="0"></button>
-            <button type="button" data-lp-binding-action="interact" data-lp-binding-slot="1"></button>
-          </div>
-          <div class="lp-binding-row lp-desktop-only">
-            <span>开火</span>
-            <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="0"></button>
-            <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="1"></button>
-          </div>
-          <div class="lp-binding-row lp-desktop-only">
-            <span>装填</span>
-            <button type="button" data-lp-binding-action="reload" data-lp-binding-slot="0"></button>
-            <button type="button" data-lp-binding-action="reload" data-lp-binding-slot="1"></button>
-          </div>
-          <div class="lp-binding-row lp-desktop-only">
-            <span>奔跑</span>
-            <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="0"></button>
-            <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="1"></button>
-          </div>
-          <div class="lp-binding-row lp-desktop-only">
-            <span>切换手部</span>
-            <button type="button" data-lp-binding-action="handsHud" data-lp-binding-slot="0"></button>
-            <button type="button" data-lp-binding-action="handsHud" data-lp-binding-slot="1"></button>
-          </div>
-          <label class="lp-setting-toggle">
-            <input type="checkbox" id="lpAutoRunToggle" />
-            <span class="lp-desktop-only">自动奔跑（桌面：默认奔跑、按住奔跑键行走；移动端：默认打开奔跑切换）</span>
-            <span class="lp-mobile-only">自动奔跑（点左侧「跑」切换走/跑）</span>
-          </label>
-          <p id="lpBindingStatus" class="lp-binding-status lp-desktop-only"></p>
-          <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button lp-desktop-only">恢复默认</button>
-        </div>
         <div class="lp-inventory-body">
           <aside id="lpGearPanel" class="lp-gear-panel" data-lp-inv-pane="gear" aria-label="手部与装备">
             <h3 class="lp-inventory-panel-title">旅人</h3>
@@ -454,30 +490,31 @@
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=7"></script>
   <script src="/static/games/avatar-lobby/js/avatar-skin-cache.js?v=1"></script>
   <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=21"></script>
-  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=11"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=22"></script>
+  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=13"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=24"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=12"></script>
   <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=10"></script>
   <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=9"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=15"></script>
-  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=20"></script>
-  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=8"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=14"></script>
-  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=7"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=16"></script>
+  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-net.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=23"></script>
+  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=9"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=15"></script>
+  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=8"></script>
   <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-combat.js?v=13"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=17"></script>
+  <script src="/static/games/liminal-platform/js/lp-combat.js?v=16"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=20"></script>
   <script src="/static/games/liminal-platform/js/lp-sfx.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=11"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-minimap.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-minimap.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=10"></script>
-  <script src="/static/games/liminal-platform/js/lp-network.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-network.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-session.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/liminal-platform.js?v=42"></script>
 </body>
 </html>

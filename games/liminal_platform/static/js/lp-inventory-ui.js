@@ -85,6 +85,8 @@
 
   /** 开局溢出：等主循环给出坐标后再丢地面。 */
   let pendingSeedOverflow = loaded.seedOverflow || loaded.overflow || null;
+  /** 联机时记录拾起源，关闭时原位退回（服务端尚未得知 take）。 */
+  let cursorSource = null;
 
   const previewEntity = Entity?.createAvatarEntity
     ? Entity.createAvatarEntity({ nickname: '' })
@@ -109,7 +111,7 @@
     previewEntity.nickname = '';
   }
 
-  /** 在装备栏中间画玩家皮套。 */
+  /** 在装备栏中间画玩家皮套；缓冲尺寸跟 CSS 盒走，禁止用位图属性撑高布局。 */
   function paintEquipPreview(dt) {
     if (!equipPreview || !Entity?.drawAvatar || !previewEntity) return;
     const source = window.LpGame?.getLocalAvatar?.();
@@ -120,8 +122,13 @@
       Entity.updateEntityMotion(previewEntity, dt);
     }
 
-    const cssW = Math.max(1, equipPreview.clientWidth || 120);
-    const cssH = Math.max(1, equipPreview.clientHeight || 220);
+    const rect = equipPreview.getBoundingClientRect();
+    const cssW = Math.max(1, Math.round(rect.width) || equipPreview.clientWidth || 120);
+    // 上限防止 DPR 反馈环：未约束的 canvas.height 会每帧把布局拉高
+    const cssH = Math.max(
+      1,
+      Math.min(280, Math.round(rect.height) || equipPreview.clientHeight || 220),
+    );
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const pixelW = Math.round(cssW * dpr);
     const pixelH = Math.round(cssH * dpr);
@@ -192,6 +199,37 @@
     return null;
   }
 
+  /** 生成发给服务端的 bag 引用。 */
+  function bagRef(inventory, index) {
+    if (!inventory) return null;
+    if (inventory === player || inventory.id === 'player') {
+      return { bag: 'player', index };
+    }
+    if (inventory === storage || inventory.id === 'storage') {
+      return { bag: 'storage', index };
+    }
+    if (inventory === hands || inventory.id === 'hands') {
+      return { bag: 'hands', index };
+    }
+    if (inventory === equip || inventory.id === 'equip') {
+      return { bag: 'equip', index };
+    }
+    if (inventory === state.groundInv || inventory?.id?.startsWith?.('ground')) {
+      return {
+        bag: 'ground',
+        index,
+        pileId: state.groundPile?.id || null,
+      };
+    }
+    return null;
+  }
+
+  /** 联机时把本地变更同步为服务端意图。 */
+  function netSend(payload) {
+    if (!window.LpInventoryNet?.isActive?.()) return;
+    window.LpInventoryNet.sendOp(payload);
+  }
+
   /** Shift 快速转移的目标库存。 */
   function shiftTarget(inventory, index) {
     if (inventory?.id?.startsWith?.('ground') || inventory === state.groundInv) {
@@ -245,6 +283,10 @@
 
   /** 装备变更后同步背包容量，溢出丢地面。 */
   function applyBagCapacity(worldX = state.openWorldX) {
+    if (window.LpInventoryNet?.isActive?.()) {
+      syncGroundPanel(worldX);
+      return;
+    }
     const dropped = Core.syncPlayerBagToEquip(player, equip);
     if (dropped.length) {
       window.LpGroundLoot?.dropStacks?.(worldX, dropped);
@@ -259,11 +301,13 @@
     syncGroundPanel(worldX);
   }
 
-  /** 持久化并刷新界面。 */
+  /** 持久化并刷新界面（联机时跳过 localStorage，等服务端快照）。 */
   function persistAndRender() {
     applyBagCapacity();
-    Core.saveInventories(player, storage, hands, equip);
-    window.LpGroundLoot?.pruneAndSave?.();
+    if (!window.LpInventoryNet?.isActive?.()) {
+      Core.saveInventories(player, storage, hands, equip);
+      window.LpGroundLoot?.pruneAndSave?.();
+    }
     renderGrids();
     renderCursor();
     window.LpHandsHud?.render?.();
@@ -280,6 +324,24 @@
     } else if (!state.inspectPinned) {
       clearDetail();
     }
+  }
+
+  /** 权威快照到达后仅刷新 UI（不写盘、不改容量）。 */
+  function renderAfterAuthority() {
+    if (state.open) {
+      syncGroundPanel(state.openWorldX);
+    }
+    renderGrids();
+    renderCursor();
+    window.LpHandsHud?.render?.();
+    updateInventoryHint();
+  }
+
+  /** 快照覆盖后清空本地光标，避免与权威状态叠放。 */
+  function clearCursorAfterAuthority() {
+    state.cursor = null;
+    cursorSource = null;
+    renderCursor();
   }
 
   /** 判断玩家是否在仓储车厢。 */
@@ -343,10 +405,12 @@
       detailIcon.style.setProperty('--item-accent', item.accent);
       if (item.icon) {
         detailIcon.classList.add('has-image');
-        detailIcon.style.backgroundImage = `url("${item.icon}")`;
+        detailIcon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
+        detailIcon.style.backgroundImage = '';
         detailIcon.textContent = '';
       } else {
         detailIcon.classList.remove('has-image');
+        detailIcon.style.removeProperty('--lp-item-icon');
         detailIcon.style.backgroundImage = '';
         detailIcon.textContent = item.short;
       }
@@ -461,7 +525,8 @@
     icon.style.setProperty('--item-accent', item.accent);
     if (item.icon) {
       icon.classList.add('has-image');
-      icon.style.backgroundImage = `url("${item.icon}")`;
+      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
+      icon.style.backgroundImage = '';
       icon.textContent = '';
     } else {
       icon.textContent = item.short;
@@ -794,7 +859,8 @@
     icon.style.setProperty('--item-accent', item.accent);
     if (item.icon) {
       icon.classList.add('has-image');
-      icon.style.backgroundImage = `url("${item.icon}")`;
+      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
+      icon.style.backgroundImage = '';
       icon.textContent = '';
     } else {
       icon.textContent = item.short;
@@ -849,8 +915,29 @@
     if (event.shiftKey) {
       const other = shiftTarget(inventory, index);
       if (other) {
+        const from = bagRef(inventory, index);
+        const toBag =
+          other === player
+            ? 'player'
+            : other === storage
+              ? 'storage'
+              : other === hands
+                ? 'hands'
+                : other === equip
+                  ? 'equip'
+                  : other === state.groundInv
+                    ? 'ground'
+                    : null;
         Core.quickTransfer(inventory, index, other);
         persistAndRender();
+        if (from && toBag) {
+          netSend({
+            action: 'quick_transfer',
+            from,
+            toBag,
+            pileId: state.groundPile?.id || from.pileId || null,
+          });
+        }
         if (stackBefore) {
           showDetail(stackBefore, {
             pinned: isCoarse(),
@@ -863,9 +950,11 @@
     }
 
     if (!state.cursor) {
+      const origin = inventory.originIndex(index);
       const taken = inventory.takeSlot(index);
       if (taken) {
         state.cursor = taken;
+        cursorSource = bagRef(inventory, origin);
         showDetail(taken, {
           pinned: isCoarse(),
           slotEl,
@@ -877,9 +966,16 @@
       return;
     }
 
+    const placeIndex = inventory.originIndex(index);
+    const to = bagRef(inventory, placeIndex);
+    const from = cursorSource;
     const returned = Core.placeOnSlot(inventory, index, state.cursor);
     state.cursor = returned;
     persistAndRender();
+    if (from && to) {
+      netSend({ action: 'transfer', from, to });
+      cursorSource = returned ? { ...to } : null;
+    }
     if (returned) {
       showDetail(returned, {
         pinned: isCoarse(),
@@ -988,11 +1084,16 @@
 
     const moving = source.inventory.takeSlot(source.index);
     if (!moving) return;
+    const from = bagRef(source.inventory, source.index);
+    const to = bagRef(targetInventory, targetInventory.originIndex(targetIndex));
     const returned = Core.placeOnSlot(targetInventory, targetIndex, moving);
     if (returned) {
       source.inventory.placeStack(source.index, returned);
     }
     persistAndRender();
+    if (from && to) {
+      netSend({ action: 'transfer', from, to });
+    }
   }
 
   /** 关闭时把手上物品退回背包，塞不下则掉地上。 */
@@ -1000,6 +1101,17 @@
     if (!state.cursor) return;
     const stack = state.cursor;
     state.cursor = null;
+    if (cursorSource && window.LpInventoryNet?.isActive?.()) {
+      const inv =
+        cursorSource.bag === 'ground'
+          ? state.groundInv
+          : inventoryById(cursorSource.bag);
+      if (inv?.placeStack?.(cursorSource.index, stack)) {
+        cursorSource = null;
+        return;
+      }
+    }
+    cursorSource = null;
     const leftoverQty = player.addItem(stack.itemId, stack.qty);
     if (leftoverQty < stack.qty && stack.mag != null) {
       for (let i = 0; i < player.size(); i += 1) {
@@ -1040,8 +1152,10 @@
   function close() {
     returnCursorToPlayer();
     applyBagCapacity(state.openWorldX);
-    Core.saveInventories(player, storage, hands, equip);
-    window.LpGroundLoot?.pruneAndSave?.();
+    if (!window.LpInventoryNet?.isActive?.()) {
+      Core.saveInventories(player, storage, hands, equip);
+      window.LpGroundLoot?.pruneAndSave?.();
+    }
     state.open = false;
     state.inStorageCar = false;
     state.groundPile = null;
@@ -1070,8 +1184,12 @@
     window.LpTouchControls?.setEnabled(true);
   }
 
-  /** 首次把开局溢出丢到脚边。 */
+  /** 首次把开局溢出丢到脚边（联机由服务端种子负责，跳过本地种子）。 */
   function flushSeedOverflow(worldX) {
+    if (window.LpInventoryNet?.isActive?.()) {
+      pendingSeedOverflow = null;
+      return;
+    }
     if (!pendingSeedOverflow?.length) return;
     window.LpGroundLoot?.seedIfEmpty?.(worldX, pendingSeedOverflow);
     pendingSeedOverflow = null;
@@ -1093,6 +1211,21 @@
 
   /** 扣除物品并保存（优先手部，再背包；供锅炉等系统调用）。 */
   function consumeItem(itemId, qty) {
+    if (window.LpInventoryNet?.isActive?.()) {
+      netSend({ action: 'consume', itemId, qty });
+      let need = qty;
+      let removed = 0;
+      if (need > 0) {
+        const fromHands = hands.removeItem(itemId, need);
+        removed += fromHands;
+        need -= fromHands;
+      }
+      if (need > 0) {
+        removed += player.removeItem(itemId, need);
+      }
+      if (removed > 0) persistAndRender();
+      return removed;
+    }
     let need = qty;
     let removed = 0;
     if (need > 0) {
@@ -1141,6 +1274,9 @@
     consumeItem,
     persistAndRender,
     flushSeedOverflow,
+    renderAfterAuthority,
+    clearCursorAfterAuthority,
+    bagRef,
   };
 
   renderGrids();

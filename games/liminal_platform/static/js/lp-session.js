@@ -36,10 +36,17 @@
     session = Net.createSession();
     window.LiminalMultiplayerUi?.bindMultiplayerUi?.(session);
     session.connect(identity);
+    window.LpInventoryNet?.bindSession?.(session);
     window.addEventListener('beforeunload', () => session.disconnect());
 
     session.addEventListener('worldsnapshot', (event) => {
       applyWorldSnapshot(event.detail);
+    });
+    session.addEventListener('invsnapshot', (event) => {
+      window.LpInventoryNet?.applySnapshot?.(event.detail);
+    });
+    session.addEventListener('invroom', (event) => {
+      window.LpInventoryNet?.applyRoomOnly?.(event.detail);
     });
     session.addEventListener('playerleave', (event) => {
       const id = String(event.detail?.playerId || '');
@@ -196,10 +203,16 @@
     });
   }
 
-  /** 上报加燃料。 */
-  function notifyFuelAdd(amount) {
+  /** 上报加燃料（服务端扣物品）。 */
+  function notifyFuelAdd(amount, itemId) {
     if (!session?.connected) return;
-    session.sendFuelAdd(amount);
+    session.sendFuelAdd(amount, itemId);
+  }
+
+  /** 上报库存意图。 */
+  function sendInv(payload) {
+    if (!session?.connected) return;
+    session.sendInv(payload);
   }
 
   /**
@@ -267,6 +280,7 @@
     maybeSendPose,
     notifyTrain,
     notifyFuelAdd,
+    sendInv,
     tickRemotes,
     drawRemotes,
     setAppearance,

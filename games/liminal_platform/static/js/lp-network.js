@@ -1,10 +1,10 @@
 /**
- * 阈限月台联机会话：姿态转发 + 共享列车/燃料。
+ * 阈限月台联机会话：姿态转发 + 共享列车/燃料/库存。
  *
  * 接口：connect / disconnect / sendPose / sendTrain / sendFuelAdd / sendFire /
- *       createRoom / joinRoom / returnPublic / setAppearance / sendChat
+ *       sendInv / createRoom / joinRoom / returnPublic / setAppearance / sendChat
  * 事件：connectionchange、worldsnapshot、playerleave、playerjoin、appearance、
- *       roomchange、roomerror、fuelchanged、weaponfired、chat
+ *       roomchange、roomerror、fuelchanged、weaponfired、chat、invsnapshot、invroom
  */
 (() => {
   const PROTOCOL_VERSION = 1;
@@ -100,11 +100,12 @@
       this._send(payload);
     }
 
-    sendFuelAdd(amount) {
+    sendFuelAdd(amount, itemId) {
       this._send({
         type: 'fuel_add',
         protocolVersion: PROTOCOL_VERSION,
         amount: amount ?? undefined,
+        itemId: itemId || 'coal',
       });
     }
 
@@ -117,6 +118,18 @@
         dirX: detail.dirX,
         dirY: detail.dirY,
         facing: detail.facing,
+        source: detail.source || (detail.turret ? 'turret' : undefined),
+        handIndex: detail.handIndex,
+        weaponId: detail.weaponId,
+      });
+    }
+
+    /** 发送库存意图（transfer / reload / crate 等）。 */
+    sendInv(detail) {
+      this._send({
+        type: 'inv',
+        protocolVersion: PROTOCOL_VERSION,
+        ...(detail || {}),
       });
     }
 
@@ -296,6 +309,14 @@
       }
       if (type === 'weapon_fired') {
         this._emit('weaponfired', payload);
+        return;
+      }
+      if (type === 'inv_snapshot') {
+        this._emit('invsnapshot', payload);
+        return;
+      }
+      if (type === 'inv_room') {
+        this._emit('invroom', payload);
         return;
       }
       if (type === 'chat') {

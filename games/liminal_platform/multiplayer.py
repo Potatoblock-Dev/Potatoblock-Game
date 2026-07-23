@@ -1,10 +1,10 @@
-"""阈限月台联机：姿态转发 + 共享列车/燃料。
+"""阈限月台联机：姿态转发 + 共享列车/燃料 + 服务端权威库存。
 
 角色物理暂由客户端权威（含瞄准朝向）；服务端钳制坐标并广播快照。
-个人物品栏仍为本地；开火仅广播曳光特效。
+库存（个人背包/手/装备 + 房间仓库/地面/炮塔箱）由服务端权威；开火扣弹匣/箱弹。
 
-约定（与 Avatar 大厅一致，后续接线/改权威时遵守）：
-- 共享状态（房间、列车、燃料、聊天）服务端权威。
+约定（与 Avatar 大厅一致）：
+- 共享状态（房间、列车、燃料、聊天、库存）服务端权威。
 - 本地角色画面禁止每帧硬拽到 snapshot（会卡顿/闪现）；进房对齐，大误差才软校正。
 - 远端用延迟插值；勿把本地预测关掉换成纯跟服。
 """
@@ -25,6 +25,7 @@ from starlette.websockets import WebSocketState
 
 from app.games.avatar_lobby import skins
 from app.games.common.room_registry import evict_from_other_games, register_game
+from app.games.liminal_platform import inventory_authority as Inv
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ FLOOR_Y = 972.0 * WORLD_SCALE
 WALK_LEFT = 456.0 * WORLD_SCALE
 WALK_RIGHT = 1793.0 * WORLD_SCALE
 COUPLER_JOIN = 1526.0 * WORLD_SCALE
-MAX_MESSAGE_BYTES = 4096
+MAX_MESSAGE_BYTES = 16384
 MAX_POSE_HZ = 30
 ROOM_CODE_ALPHABET = string.ascii_uppercase + string.digits
 ROOM_CODE_LENGTH = 6
@@ -49,6 +50,8 @@ DEFAULT_FUEL = 35.0
 FUEL_MAX = 100.0
 FUEL_PER_ADD = 18.0
 CHAT_MAX_LEN = 40
+INV_OP_MIN_INTERVAL = 0.04
+ROOM_BAGS = frozenset({"storage", "ground", "crate_ammo", "crate_recycle"})
 
 CLOSE_REPLACED = 4002
 CLOSE_ROOM_FULL = 4005
@@ -167,7 +170,7 @@ class PlayerConnection:
 
 
 class LiminalPlayer:
-    """房间内一名玩家（姿态由客户端上报）。"""
+    """房间内一名玩家（姿态由客户端上报；库存服务端权威）。"""
 
     def __init__(self, user_id: str, nickname: str, connection: PlayerConnection):
         self.user_id = user_id
@@ -188,8 +191,26 @@ class LiminalPlayer:
         self.held_id: Optional[str] = None
         self.aim_x: Optional[float] = None
         self.aim_y: Optional[float] = None
+        self.inventories = Inv.PlayerInventories()
+        self.sync_held_from_inv()
+
+    def sync_held_from_inv(self) -> None:
+        """从手部库存同步持枪 id（忽略客户端 pose 上报）。"""
+        self.held_id = Inv.held_weapon_id(self.inventories)
+
+    def inv_message(self, room: "LiminalRoom") -> Dict[str, Any]:
+        """组装发给本人的完整库存快照（个人 + 房间共享）。"""
+        self.sync_held_from_inv()
+        return {
+            "type": "inv_snapshot",
+            "protocolVersion": PROTOCOL_VERSION,
+            "roomId": room.room_id,
+            "personal": self.inventories.personal_snapshot(),
+            "room": room.inventories.room_snapshot(),
+        }
 
     def snapshot(self) -> Dict[str, Any]:
+        self.sync_held_from_inv()
         data = {
             "id": self.user_id,
             "nickname": self.nickname,
@@ -212,7 +233,7 @@ class LiminalPlayer:
 
 
 class LiminalRoom:
-    """阈限月台房间：姿态广播 + 共享列车/燃料。"""
+    """阈限月台房间：姿态广播 + 共享列车/燃料/库存。"""
 
     def __init__(self, room_id: str, is_public: bool = False):
         self.room_id = room_id
@@ -223,8 +244,11 @@ class LiminalRoom:
         self.running = False
         self.train = {"throttle": 0.0, "brake": 0.0, "speed": 0.0, "emergency": False}
         self.fuel_level = DEFAULT_FUEL
+        self.inventories = Inv.RoomInventories()
         self._fuel_add_times: Dict[str, float] = {}
         self._train_set_times: Dict[str, float] = {}
+        self._inv_op_times: Dict[str, float] = {}
+        self._fire_times: Dict[str, float] = {}
 
     def connected_count(self) -> int:
         return sum(1 for player in self.players.values() if player.connected)
@@ -439,6 +463,8 @@ class LiminalLobbyManager:
             }
         )
         await connection.enqueue(room.world_snapshot())
+        joined = room.players[connection.user_id]
+        await connection.enqueue(joined.inv_message(room))
         await room.broadcast(
             {
                 "type": "player_join",
@@ -476,12 +502,8 @@ class LiminalLobbyManager:
         gait = str(payload.get("gait") or "walk")
         player.gait = "run" if gait == "run" else "walk"
         player.ack_sequence = sequence
-        held_raw = payload.get("heldId")
-        if held_raw is None or held_raw == "":
-            player.held_id = None
-        else:
-            held = str(held_raw).strip()[:64]
-            player.held_id = held or None
+        # heldId 由库存权威决定，忽略客户端 pose
+        player.sync_held_from_inv()
         if "aimX" in payload and "aimY" in payload:
             try:
                 player.aim_x = _clamp(float(payload["aimX"]), WORLD_LEFT - 400.0, WORLD_RIGHT + 400.0)
@@ -519,6 +541,7 @@ class LiminalLobbyManager:
             room.train["throttle"] = 0.0
 
     async def handle_fuel_add(self, user_id: str, payload: Dict[str, Any]) -> None:
+        """加燃料：从个人库存扣煤，再提升房间燃料。"""
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
@@ -529,13 +552,17 @@ class LiminalLobbyManager:
         room._fuel_add_times[user_id] = now
         if room.fuel_level >= FUEL_MAX - 0.01:
             return
-        amount = FUEL_PER_ADD
-        try:
-            if payload.get("amount") is not None:
-                amount = _clamp(float(payload["amount"]), 1.0, FUEL_PER_ADD * 2)
-        except (TypeError, ValueError):
-            amount = FUEL_PER_ADD
-        room.fuel_level = min(FUEL_MAX, room.fuel_level + amount)
+        item_id = str(payload.get("itemId") or "coal")
+        item = Inv.ITEMS.get(item_id) or {}
+        if item.get("type") != "fuel" and item_id != "coal":
+            return
+        energy = float(item.get("boilerFuel") or FUEL_PER_ADD)
+        spent = Inv.consume_from_personal(player.inventories, item_id, 1)
+        if spent <= 0:
+            await player.connection.enqueue(player.inv_message(room))
+            return
+        room.fuel_level = min(FUEL_MAX, room.fuel_level + energy * spent)
+        await player.connection.enqueue(player.inv_message(room))
         await room.broadcast(
             {
                 "type": "fuel_changed",
@@ -547,23 +574,85 @@ class LiminalLobbyManager:
         )
 
     async def handle_fire(self, user_id: str, payload: Dict[str, Any]) -> None:
+        """开火：炮塔扣箱弹，否则扣手持武器弹匣，再广播曳光。"""
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
+        now = _now()
+        last = room._fire_times.get(user_id, 0.0)
+        if now - last < 0.05:
+            return
+        room._fire_times[user_id] = now
+        source = str(payload.get("source") or "").strip().lower()
+        weapon_id: Optional[str] = None
+        room_changed = False
+        if source == "turret":
+            spent = room.inventories.crates["ammo"].remove_item("turret_ammo", 1)
+            if spent <= 0:
+                await player.connection.enqueue(player.inv_message(room))
+                return
+            weapon_id = "guard_turret"
+            room_changed = True
+        else:
+            hand_index = payload.get("handIndex")
+            fired = self._consume_hand_mag(player, hand_index)
+            if fired is None:
+                await player.connection.enqueue(player.inv_message(room))
+                return
+            weapon_id = fired
+        await player.connection.enqueue(player.inv_message(room))
+        if room_changed:
+            await self._broadcast_inv_room(room, exclude_id=user_id)
         await room.broadcast(
             {
                 "type": "weapon_fired",
                 "protocolVersion": PROTOCOL_VERSION,
                 "roomId": room.room_id,
                 "playerId": user_id,
+                "weaponId": weapon_id,
                 "x": payload.get("x"),
                 "y": payload.get("y"),
                 "dirX": payload.get("dirX"),
                 "dirY": payload.get("dirY"),
                 "facing": payload.get("facing", player.facing),
+                "source": source or None,
             },
             exclude_id=user_id,
         )
+
+    async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:
+        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop。"""
+        room, player = self._room_player(user_id)
+        if room is None or player is None or not player.connected:
+            return
+        now = _now()
+        last = room._inv_op_times.get(user_id, 0.0)
+        if now - last < INV_OP_MIN_INTERVAL:
+            return
+        room._inv_op_times[user_id] = now
+        action = str(payload.get("action") or "").strip()
+        room_changed = False
+        if action == "transfer":
+            room_changed = self._inv_transfer(room, player, payload)
+        elif action == "quick_transfer":
+            room_changed = self._inv_quick_transfer(room, player, payload)
+        elif action == "consume":
+            self._inv_consume(player, payload)
+        elif action == "reload":
+            self._inv_reload(player, payload)
+        elif action == "crate":
+            room_changed = self._inv_crate(room, player, payload)
+        elif action == "drop":
+            room_changed = self._inv_drop(room, player, payload)
+        else:
+            return
+        overflow = Inv.sync_player_to_equip(player.inventories.player, player.inventories.equip)
+        if overflow:
+            room.inventories.drop_stacks(player.x, FLOOR_Y, overflow)
+            room_changed = True
+        await player.connection.enqueue(player.inv_message(room))
+        if room_changed:
+            await self._broadcast_inv_room(room, exclude_id=user_id)
 
     async def handle_chat(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)
@@ -601,6 +690,254 @@ class LiminalLobbyManager:
                 "appearance": appearance,
             }
         )
+
+    async def _broadcast_inv_room(
+        self, room: LiminalRoom, exclude_id: Optional[str] = None
+    ) -> None:
+        """向房间其他人推送共享库存快照。"""
+        await room.broadcast(
+            {
+                "type": "inv_room",
+                "protocolVersion": PROTOCOL_VERSION,
+                "roomId": room.room_id,
+                "room": room.inventories.room_snapshot(),
+            },
+            exclude_id=exclude_id,
+        )
+
+    def _resolve_bag(
+        self,
+        room: LiminalRoom,
+        player: LiminalPlayer,
+        ref: Any,
+    ) -> Optional[Inv.Inventory]:
+        """解析客户端 bag 引用为服务端 Inventory。"""
+        if not isinstance(ref, dict):
+            return None
+        name = str(ref.get("bag") or ref.get("inv") or "").strip()
+        pile_id = ref.get("pileId")
+        pile = str(pile_id) if pile_id else None
+        return room.inventories.get_bag(name, player.inventories, pile)
+
+    def _bag_is_room(self, ref: Any) -> bool:
+        if not isinstance(ref, dict):
+            return False
+        name = str(ref.get("bag") or ref.get("inv") or "").strip()
+        return name in ROOM_BAGS
+
+    def _consume_hand_mag(
+        self, player: LiminalPlayer, hand_index: Any
+    ) -> Optional[str]:
+        """扣减手持武器一发弹匣；成功返回 weapon itemId。"""
+        indices: List[int]
+        if hand_index is None:
+            indices = [1, 0]
+        else:
+            try:
+                indices = [int(hand_index)]
+            except (TypeError, ValueError):
+                indices = [1, 0]
+        for index in indices:
+            stack = player.inventories.hands.get_slot(index)
+            if not stack:
+                continue
+            item = Inv.ITEMS.get(stack["itemId"]) or {}
+            if item.get("type") != "weapon":
+                continue
+            mag_size = item.get("magazineSize")
+            if mag_size is None:
+                return stack["itemId"]
+            mag = int(stack.get("mag") or 0)
+            if mag <= 0:
+                return None
+            player.inventories.hands.update_slot(index, {"mag": mag - 1})
+            return stack["itemId"]
+        return None
+
+    def _inv_transfer(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """整格/部分数量从 from 移到 to。"""
+        src_ref = payload.get("from")
+        dst_ref = payload.get("to")
+        src = self._resolve_bag(room, player, src_ref)
+        dst = self._resolve_bag(room, player, dst_ref)
+        if src is None or dst is None or not isinstance(src_ref, dict) or not isinstance(dst_ref, dict):
+            return False
+        try:
+            src_index = int(src_ref.get("index"))
+            dst_index = int(dst_ref.get("index"))
+        except (TypeError, ValueError):
+            return False
+        origin = src.origin_index(src_index)
+        stack = src.get_slot(origin)
+        if not stack:
+            return False
+        qty = payload.get("qty")
+        moving = dict(stack)
+        if qty is not None:
+            try:
+                take = max(1, min(int(qty), int(stack["qty"])))
+            except (TypeError, ValueError):
+                take = int(stack["qty"])
+            if take < int(stack["qty"]):
+                src.slots[origin]["qty"] = int(stack["qty"]) - take
+                moving = {"itemId": stack["itemId"], "qty": take}
+            else:
+                taken = src.take_slot(origin)
+                if not taken:
+                    return False
+                moving = taken
+        else:
+            taken = src.take_slot(origin)
+            if not taken:
+                return False
+            moving = taken
+        leftover = Inv.place_on_slot(dst, dst_index, moving)
+        if leftover:
+            if not src.place_stack(origin, leftover) and leftover.get("qty"):
+                room.inventories.drop_stacks(player.x, FLOOR_Y, [leftover])
+                return True
+        return self._bag_is_room(src_ref) or self._bag_is_room(dst_ref)
+
+    def _inv_quick_transfer(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """Shift 快速转移到目标背包。"""
+        src_ref = payload.get("from")
+        src = self._resolve_bag(room, player, src_ref)
+        to_bag = str(payload.get("toBag") or "").strip()
+        pile_id = payload.get("pileId") or (src_ref.get("pileId") if isinstance(src_ref, dict) else None)
+        dst = room.inventories.get_bag(
+            to_bag, player.inventories, str(pile_id) if pile_id else None
+        )
+        if src is None or dst is None or not isinstance(src_ref, dict):
+            return False
+        try:
+            src_index = int(src_ref.get("index"))
+        except (TypeError, ValueError):
+            return False
+        ok = Inv.quick_transfer(src, src_index, dst)
+        if not ok:
+            return False
+        return to_bag in ROOM_BAGS or self._bag_is_room(src_ref)
+
+    def _inv_consume(self, player: LiminalPlayer, payload: Dict[str, Any]) -> None:
+        """从个人库存扣除物品。"""
+        item_id = str(payload.get("itemId") or "").strip()
+        if not item_id:
+            return
+        try:
+            qty = max(1, int(payload.get("qty") or 1))
+        except (TypeError, ValueError):
+            qty = 1
+        Inv.consume_from_personal(player.inventories, item_id, qty)
+
+    def _inv_reload(self, player: LiminalPlayer, payload: Dict[str, Any]) -> None:
+        """用手中/背包备弹装填手持武器。"""
+        hand_index = payload.get("handIndex")
+        indices: List[int]
+        if hand_index is None:
+            indices = [1, 0]
+        else:
+            try:
+                indices = [int(hand_index)]
+            except (TypeError, ValueError):
+                indices = [1, 0]
+        for index in indices:
+            stack = player.inventories.hands.get_slot(index)
+            if not stack:
+                continue
+            item = Inv.ITEMS.get(stack["itemId"]) or {}
+            mag_size = item.get("magazineSize")
+            ammo_id = item.get("ammoId")
+            if not mag_size or not ammo_id:
+                continue
+            need = int(mag_size) - int(stack.get("mag") or 0)
+            if need <= 0:
+                return
+            removed = Inv.consume_from_personal(player.inventories, str(ammo_id), need)
+            if removed <= 0:
+                return
+            player.inventories.hands.update_slot(
+                index, {"mag": int(stack.get("mag") or 0) + removed}
+            )
+            return
+
+    def _inv_crate(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """弹药箱/回收箱存取。"""
+        crate = str(payload.get("crate") or "ammo").strip()
+        direction = str(payload.get("dir") or payload.get("direction") or "").strip()
+        try:
+            qty = max(1, int(payload.get("qty") or 1))
+        except (TypeError, ValueError):
+            qty = 1
+        if crate not in ("ammo", "recycle"):
+            return False
+        item_id = "turret_ammo" if crate == "ammo" else "shell_casing"
+        bag = room.inventories.crates[crate]
+        if direction == "deposit":
+            taken = Inv.consume_from_personal(player.inventories, item_id, qty)
+            if taken <= 0:
+                return False
+            leftover = bag.add_item(item_id, taken)
+            if leftover > 0:
+                player.inventories.player.add_item(item_id, leftover)
+            return True
+        if direction == "withdraw":
+            removed = bag.remove_item(item_id, qty)
+            if removed <= 0:
+                return False
+            leftover = player.inventories.player.add_item(item_id, removed)
+            if leftover > 0:
+                bag.add_item(item_id, leftover)
+            return True
+        return False
+
+    def _inv_drop(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """从个人/其它背包丢到地面。"""
+        src_ref = payload.get("from")
+        src = self._resolve_bag(room, player, src_ref)
+        if src is None or not isinstance(src_ref, dict):
+            return False
+        try:
+            src_index = int(src_ref.get("index"))
+        except (TypeError, ValueError):
+            return False
+        origin = src.origin_index(src_index)
+        stack = src.get_slot(origin)
+        if not stack:
+            return False
+        qty = payload.get("qty")
+        if qty is not None:
+            try:
+                take = max(1, min(int(qty), int(stack["qty"])))
+            except (TypeError, ValueError):
+                take = int(stack["qty"])
+            if take < int(stack["qty"]):
+                src.slots[origin]["qty"] = int(stack["qty"]) - take
+                dropped = {"itemId": stack["itemId"], "qty": take}
+            else:
+                taken = src.take_slot(origin)
+                if not taken:
+                    return False
+                dropped = taken
+        else:
+            taken = src.take_slot(origin)
+            if not taken:
+                return False
+            dropped = taken
+        try:
+            x = float(payload.get("x", player.x))
+            y = float(payload.get("y", FLOOR_Y))
+        except (TypeError, ValueError):
+            x, y = player.x, FLOOR_Y
+        room.inventories.drop_stacks(x, y, [dropped])
+        return True
 
     def _room_player(
         self, user_id: str

@@ -64,15 +64,24 @@
 
     const inventory = window.LpInventory;
     const playerInv = inventory?.getPlayerInventory?.();
+    const handsInv = inventory?.getHandsInventory?.();
     if (!playerInv) {
       showToast('无法读取背包');
       return false;
     }
 
-    const have = playerInv.countItem(itemId);
+    const have =
+      (playerInv.countItem(itemId) || 0) + (handsInv?.countItem?.(itemId) || 0);
     if (have <= 0) {
       showToast(`背包没有${item.name}`);
       return false;
+    }
+
+    // 联机：只发 fuel_add，由服务端扣物品并回推快照 / fuel_changed
+    if (window.LpInventoryNet?.isActive?.() || window.LiminalSession?.isConnected?.()) {
+      window.LiminalSession?.notifyFuelAdd?.(energyPer, itemId);
+      showToast(`投递${item.name}…`);
+      return true;
     }
 
     const room = fuel.max - fuel.level;
@@ -99,7 +108,7 @@
         },
       })
     );
-    window.LiminalSession?.notifyFuelAdd?.(gained);
+    window.LiminalSession?.notifyFuelAdd?.(gained, itemId);
     const label = document.getElementById('lpBoilerFuelReadout');
     if (label) label.textContent = `${Math.round(fuel.level)}/100`;
     const fill = document.getElementById('lpFuelGaugeFill');

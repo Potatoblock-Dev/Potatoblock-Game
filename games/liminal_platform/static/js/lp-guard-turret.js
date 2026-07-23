@@ -21,17 +21,25 @@
   const RECOIL_RECOVER = 7.5;
   /** 炮塔最大转速（弧度/秒，约 150°/s）。 */
   const TURN_RATE = (150 * Math.PI) / 180;
-  const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=8';
+  const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=9';
   const SHOT_SFX = '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1';
   /** 开完一发后的装弹机装填（CC0）。 */
   const FEED_SFX = '/static/games/liminal-platform/audio/weapons/guard-turret-feed.wav?v=1';
   /** 装填音相对枪声的延迟（秒），贴近「打完再进弹」。 */
   const FEED_SFX_DELAY = 0.05;
-  /** 闲置：左塔朝左、右塔朝右，炮管伸出车厢外侧便于辨认。 */
-  const IDLE_ANGLE = { left: Math.PI, right: 0 };
+  /** 闲置朝向：与成品预览一致，双塔炮管均朝左。 */
+  const IDLE_ANGLE = { left: Math.PI, right: Math.PI };
   /** 相对水平的最大下俯角 / 仰角。 */
   const MAX_DEPRESS = (10 * Math.PI) / 180;
   const MAX_ELEVATE = (82 * Math.PI) / 180;
+  /**
+   * 白球半径（贴图像素）：炮管从球缘外缘起画。
+   * 由 guard-car 白球 bbox 半宽 ≈125，接榫约在 96–110。
+   */
+  const ART_DOME_RADIUS = 108;
+  /** 贴图未就绪时的炮管设计尺寸（与单根炮管裁剪接近，避免巨大占位条）。 */
+  const ART_BARREL_FALLBACK_W = 300;
+  const ART_BARREL_FALLBACK_H = 41;
 
   /** 贴图像素枢轴：白球质心（由 cars/guard-car.png 采样）。 */
   const ART_PIVOTS = [
@@ -76,6 +84,7 @@
 
   /** 持久化弹药箱与回收箱。 */
   function saveCrates() {
+    if (window.LpInventoryNet?.isActive?.()) return;
     ensureInventories();
     localStorage.setItem(
       'lp-guard-crates-v1',
@@ -84,6 +93,18 @@
         recycle: state.recycleInv.toJSON(),
       })
     );
+  }
+
+  /** 用服务端快照覆盖弹药箱/回收箱。 */
+  function applyCratesFromSnapshot(crates) {
+    ensureInventories();
+    if (crates?.ammo) {
+      state.ammoInv = Core.Inventory.fromJSON(crates.ammo);
+    }
+    if (crates?.recycle) {
+      state.recycleInv = Core.Inventory.fromJSON(crates.recycle);
+    }
+    window.LpGuardCrateUi?.refresh?.();
   }
 
   /** 预加载炮管贴图。 */
@@ -122,42 +143,48 @@
     };
   }
 
-  /** 炮管世界尺寸（贴图未就绪时用设计尺寸，保证剪影可见）。 */
+  /** 炮管世界尺寸（贴图像素× WORLD_SCALE；未就绪用与成品接近的设计尺寸）。 */
   function barrelSizeWorld() {
     const img = state.barrelImg;
-    const artW = (img && state.barrelReady && img.naturalWidth) ? img.naturalWidth : 320;
-    const artH = (img && state.barrelReady && img.naturalHeight) ? img.naturalHeight : 56;
+    const artW =
+      img && state.barrelReady && img.naturalWidth
+        ? img.naturalWidth
+        : ART_BARREL_FALLBACK_W;
+    const artH =
+      img && state.barrelReady && img.naturalHeight
+        ? img.naturalHeight
+        : ART_BARREL_FALLBACK_H;
     const scale = Spec?.scaleArt || ((v) => v);
     return { w: scale(artW), h: scale(artH) };
   }
 
-  /** 无贴图或贴图过暗时的双管剪影（高对比，保证可见）。 */
-  function drawBarrelFallback(ctx, bw, bh) {
-    const r = Math.max(3, bh * 0.22);
-    /* 上管 */
-    ctx.fillStyle = '#d4d4d8';
-    ctx.beginPath();
-    ctx.roundRect(0, -bh * 0.48, bw, bh * 0.4, r);
-    ctx.fill();
-    ctx.fillStyle = '#a1a1aa';
-    ctx.beginPath();
-    ctx.roundRect(bw * 0.04, -bh * 0.4, bw * 0.9, bh * 0.24, r * 0.6);
-    ctx.fill();
-    /* 下管略短 */
-    ctx.fillStyle = '#c4c4cc';
-    ctx.beginPath();
-    ctx.roundRect(0, bh * 0.05, bw * 0.9, bh * 0.4, r);
-    ctx.fill();
-    ctx.fillStyle = '#909098';
-    ctx.beginPath();
-    ctx.roundRect(bw * 0.04, bh * 0.13, bw * 0.8, bh * 0.24, r * 0.6);
-    ctx.fill();
-    /* 根部炮闩 */
-    ctx.fillStyle = '#71717a';
-    ctx.fillRect(0, -bh * 0.5, Math.max(10, bw * 0.08), bh);
+  /** 白球世界半径。 */
+  function domeRadiusWorld() {
+    const scale = Spec?.scaleArt || ((v) => v);
+    return scale(ART_DOME_RADIUS);
   }
 
-  /** 炮管世界长度。 */
+  /**
+   * 无贴图时的单管剪影（贴合成品扁管，不再画巨型双联占位）。
+   * 仅在 barrel 贴图未就绪时使用。
+   */
+  function drawBarrelFallback(ctx, bw, bh) {
+    const r = Math.max(2, bh * 0.35);
+    ctx.fillStyle = '#6b6b70';
+    ctx.beginPath();
+    ctx.roundRect(0, -bh * 0.5, bw, bh, r);
+    ctx.fill();
+    ctx.fillStyle = '#9a9aa0';
+    ctx.beginPath();
+    ctx.roundRect(bw * 0.02, -bh * 0.28, bw * 0.96, bh * 0.34, r * 0.5);
+    ctx.fill();
+    ctx.fillStyle = '#55555a';
+    ctx.fillRect(0, -bh * 0.5, Math.max(6, bw * 0.06), bh);
+  }
+
+  /**
+   * 枪口距枢轴距离：贴图按「球心→枪口」全长计，球缘外只画露出段。
+   */
   function barrelLengthWorld() {
     return barrelSizeWorld().w;
   }
@@ -288,9 +315,18 @@
   /** 玩家 → 箱子。返回实际存入数量。 */
   function depositItem(mode, qty) {
     const itemId = itemIdForMode(mode);
-    const inv = invForMode(mode);
     const take = Math.max(0, Math.floor(qty));
     if (take <= 0) return 0;
+    if (window.LpInventoryNet?.isActive?.()) {
+      window.LpInventoryNet.sendOp({
+        action: 'crate',
+        crate: mode === 'recycle' ? 'recycle' : 'ammo',
+        dir: 'deposit',
+        qty: take,
+      });
+      return take;
+    }
+    const inv = invForMode(mode);
     const taken = window.LpInventory?.consumeItem?.(itemId, take) ?? 0;
     if (taken <= 0) return 0;
     const leftover = inv.addItem(itemId, taken);
@@ -304,9 +340,18 @@
   /** 箱子 → 玩家背包。返回实际取出数量。 */
   function withdrawItem(mode, qty) {
     const itemId = itemIdForMode(mode);
-    const inv = invForMode(mode);
     const want = Math.max(0, Math.floor(qty));
     if (want <= 0) return 0;
+    if (window.LpInventoryNet?.isActive?.()) {
+      window.LpInventoryNet.sendOp({
+        action: 'crate',
+        crate: mode === 'recycle' ? 'recycle' : 'ammo',
+        dir: 'withdraw',
+        qty: want,
+      });
+      return want;
+    }
+    const inv = invForMode(mode);
     const removed = inv.removeItem(itemId, want);
     if (removed <= 0) return 0;
     const leftover =
@@ -431,9 +476,12 @@
       state.fireCooldown = 0.35;
       return null;
     }
-    const spent = consumeCrateAmmo(1);
-    if (spent <= 0) return null;
-    saveCrates();
+    const online = window.LpInventoryNet?.isActive?.();
+    if (!online) {
+      const spent = consumeCrateAmmo(1);
+      if (spent <= 0) return null;
+      saveCrates();
+    }
     aimBoth(aimX, aimY);
     state.fireCooldown = FIRE_COOLDOWN;
 
@@ -470,6 +518,7 @@
           dirX: mannedMuzzle?.dirX,
           dirY: mannedMuzzle?.dirY,
           turret: true,
+          source: 'turret',
         },
       })
     );
@@ -494,14 +543,17 @@
     }
   }
 
-  /** 绘制单管炮管（从球壳外缘伸出；后坐；过中垂线纵向镜像）。 */
+  /**
+   * 绘制单管炮管：枢轴在白球心；从球缘起画露出段（全长≈贴图宽）。
+   * 有贴图时不叠占位条，避免悬空巨型双联灰条。
+   */
   function drawBarrels(ctx) {
     const { w: bw, h: bh } = barrelSizeWorld();
     const img = state.barrelImg;
     const useImg = Boolean(img && state.barrelReady && img.naturalWidth > 0);
-    /* 白球半径约 110 贴图像素，炮管从球缘外开始画，避免埋在球体里看不见 */
-    const protrude = Math.min(bw * 0.38, (Spec?.scaleArt?.(105) ?? 105));
-    const drawLen = Math.max(bw * 0.45, bw - protrude);
+    const domeR = domeRadiusWorld();
+    /* 贴图按球心→枪口全长；球内段不画，只画球缘以外 */
+    const drawLen = Math.max(bw * 0.4, bw - domeR);
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     for (const pivot of ART_PIVOTS) {
@@ -511,17 +563,16 @@
       const s = Math.sin(angle);
       const kick = recoilPx(pivot.id);
       const flipY = c < 0;
-      const ox = world.x + c * (protrude - kick);
-      const oy = world.y + s * (protrude - kick);
+      const ox = world.x + c * (domeR - kick);
+      const oy = world.y + s * (domeR - kick);
       ctx.save();
       ctx.translate(ox, oy);
       ctx.rotate(angle);
       if (flipY) ctx.scale(1, -1);
-      drawBarrelFallback(ctx, drawLen, bh);
       if (useImg) {
-        ctx.globalAlpha = 0.95;
         ctx.drawImage(img, 0, -bh / 2, drawLen, bh);
-        ctx.globalAlpha = 1;
+      } else {
+        drawBarrelFallback(ctx, drawLen, bh);
       }
       ctx.restore();
     }
@@ -611,6 +662,7 @@
     getAimLeadScale,
     ammoCount,
     casingCount,
+    applyCratesFromSnapshot,
     getAngles: () => ({ ...state.angles }),
     getTargetAngles: () => ({ ...state.targetAngles }),
     getPivotsWorld: () =>

@@ -1,13 +1,9 @@
-# Liminal Platform（阈限月台）
+# Liminal Platform（阈限月台）挂载包
 
-本地开发目录。**线上部署以** `app/games/liminal_platform/` **为准**（CD 只同步该包）。
+本目录是 **Liminal-Platform** 源码中的 FastAPI 挂载包（`app/games/liminal_platform/`）。
 
-改完本目录后，发布前请同步到部署包：
+- 日常编辑：本目录（或同步镜像 `game/Liminal_Platform/`）
+- 独立仓推送：`push-liminal-platform.py` + `LIMINAL_PLATFORM_GH_TOKEN`
+- 主站上线：`push-github.py --package …/potatoblock-avatar-lobby`（vendor 进 Potatoblock-Game，**勿**在 Game 仓改逻辑）
 
-```bash
-rsync -a --delete --exclude '__pycache__' --exclude 'README.md' \
-  game/Liminal_Platform/ app/games/liminal_platform/
-# 再写入包 __init__.py（见仓库约定）
-```
-
-或直接在 `app/games/liminal_platform/` 开发，再回拷到本目录。
+见包根 `README.md` 与 skill **`liminal-platform-dev`**。见同目录 `SOURCE.md`。

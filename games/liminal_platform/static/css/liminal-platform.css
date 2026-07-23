@@ -332,6 +332,7 @@ body.lp-crate-feed-open {
 .lp-fuel-coal-icon.has-image {
   border-radius: 4px;
   background-color: #0f172a;
+  background-image: var(--lp-item-icon, none);
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
@@ -1538,7 +1539,7 @@ body.lp-turret-mode .lp-crosshair-dot {
 
 .lp-hands-hud-icon.has-image {
   background-color: #0f172a;
-  background-image: none;
+  background-image: var(--lp-item-icon, none);
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
@@ -1653,6 +1654,7 @@ body.lp-inventory-open .lp-hud-top {
   z-index: 1;
   width: min(920px, calc(100vw - 24px));
   max-width: 100%;
+  height: fit-content;
   max-height: min(90dvh, 860px);
   display: flex;
   flex-direction: column;
@@ -1887,8 +1889,8 @@ body.lp-inventory-open .lp-hud-top {
   padding: 14px;
   overflow-x: hidden;
   overflow-y: auto;
-  align-items: stretch;
-  flex: 1 1 auto;
+  align-items: start;
+  flex: 0 1 auto;
   min-height: 0;
 }
 
@@ -1949,6 +1951,8 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-gear-panel {
   min-width: 0;
+  align-self: start;
+  height: fit-content;
   padding: 10px;
   border-radius: var(--lp-radius);
   border: 1px solid var(--lp-line);
@@ -1964,19 +1968,23 @@ body.lp-inventory-open .lp-hud-top {
   gap: 10px 8px;
   justify-content: center;
   align-items: center;
+  align-content: start;
   margin: 4px 0 14px;
   padding: 8px 2px 4px;
-  min-height: 240px;
+  min-height: 0;
+  height: fit-content;
 }
 
 .lp-paperdoll-preview {
   grid-column: 2;
   grid-row: 1 / span 3;
   justify-self: stretch;
-  align-self: stretch;
+  align-self: center;
   width: 100%;
-  min-height: 210px;
-  height: 100%;
+  /* 固定 CSS 高度：避免 height:100% 无法解析时 canvas 位图属性反推布局无限增高 */
+  height: 220px;
+  max-height: 220px;
+  min-height: 180px;
   pointer-events: none;
   z-index: 0;
   image-rendering: pixelated;
@@ -2361,7 +2369,7 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-item-icon.has-image {
   background-color: #0f172a;
-  background-image: none;
+  background-image: var(--lp-item-icon, none);
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
@@ -2571,51 +2579,49 @@ body.lp-inventory-open .lp-hud-top {
     gap: 16px;
   }
 
+  /* Kenney Mobile Controls Style A (CC0) — Large 2× sprites */
   .lp-move-joystick,
   .lp-look-joystick {
     position: relative;
     width: clamp(104px, 25vw, 132px);
     aspect-ratio: 1;
-    border: 2px solid rgb(148 163 184 / 0.5);
+    border: none;
     border-radius: 50%;
-    background: rgb(15 23 42 / 0.78);
+    background-color: transparent;
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-outline.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
     touch-action: none;
     user-select: none;
   }
 
   .lp-look-joystick {
     width: clamp(88px, 22vw, 112px);
-    border-color: rgb(56 189 248 / 0.55);
-    background: rgb(8 47 73 / 0.78);
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-look-outline.png");
   }
 
   .lp-move-joystick::before,
   .lp-move-joystick::after,
-  .lp-look-joystick::before,
   .lp-look-joystick::after {
+    content: none;
+  }
+
+  /* Optional look cue: faint Kenney crosshair under the knob */
+  .lp-look-joystick::before {
     content: "";
     position: absolute;
     left: 50%;
     top: 50%;
-    background: rgb(148 163 184 / 0.45);
+    width: 28%;
+    aspect-ratio: 1;
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-look.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
     transform: translate(-50%, -50%);
-  }
-
-  .lp-look-joystick::before,
-  .lp-look-joystick::after {
-    background: rgb(125 211 252 / 0.5);
-  }
-
-  .lp-move-joystick::before,
-  .lp-look-joystick::before {
-    width: 56%;
-    height: 1px;
-  }
-
-  .lp-move-joystick::after,
-  .lp-look-joystick::after {
-    width: 1px;
-    height: 56%;
+    opacity: 0.4;
+    pointer-events: none;
   }
 
   .lp-move-joystick-knob,
@@ -2625,105 +2631,108 @@ body.lp-inventory-open .lp-hud-top {
     top: 50%;
     width: 46%;
     aspect-ratio: 1;
-    border: 2px solid rgb(148 163 184 / 0.5);
+    border: none;
     border-radius: 50%;
-    background: rgb(59 130 246 / 0.55);
+    background-color: transparent;
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-handle.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
     transform: translate(0, 0);
     translate: -50% -50%;
     pointer-events: none;
   }
 
-  .lp-look-joystick-knob {
-    border-color: rgb(125 211 252 / 0.55);
-    background: rgb(14 165 233 / 0.55);
+  .lp-mc-icon {
+    display: block;
+    width: 42%;
+    aspect-ratio: 1;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    pointer-events: none;
   }
 
   .lp-mobile-jump-button,
   .lp-mobile-fire-button,
-  .lp-mobile-inventory-button {
-    width: clamp(68px, 17vw, 88px);
+  .lp-mobile-inventory-button,
+  .lp-mobile-sprint-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     aspect-ratio: 1;
+    border: none;
     border-radius: 50%;
-    color: #f8fafc;
-    font-size: 14px;
-    font-weight: 700;
+    background-color: transparent;
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/btn-circle.png");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    color: transparent;
+    font-size: 0;
+    line-height: 0;
     touch-action: none;
     user-select: none;
     padding: 0;
   }
 
-  .lp-mobile-jump-button {
-    width: clamp(72px, 18vw, 90px);
-    border: 2px solid rgb(245 158 11 / 0.5);
-    background: rgb(245 158 11 / 0.24);
-  }
-
+  .lp-mobile-jump-button,
   .lp-mobile-fire-button {
     width: clamp(72px, 18vw, 90px);
-    border: 2px solid rgb(248 113 113 / 0.6);
-    background: rgb(220 38 38 / 0.32);
-    color: #fef2f2;
   }
 
   .lp-mobile-inventory-button {
     width: clamp(58px, 15vw, 74px);
-    border: 2px solid rgb(167 139 250 / 0.55);
-    background: rgb(124 58 237 / 0.22);
-    color: #ede9fe;
-    font-size: 13px;
-  }
-
-  .lp-mobile-inventory-button.is-interact-mode {
-    border-color: rgb(96 165 250 / 0.6);
-    background: rgb(59 130 246 / 0.28);
-    color: #dbeafe;
   }
 
   .lp-mobile-sprint-button {
-    width: 44px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
     min-width: 44px;
     min-height: 44px;
-    aspect-ratio: auto;
-    border-radius: 0;
-    border: 2px solid rgb(52 211 153 / 0.55);
-    background: rgb(6 95 70 / 0.5);
-    color: #d1fae5;
-    font-size: 13px;
-    font-weight: 700;
-    touch-action: none;
-    user-select: none;
-    padding: 0;
-    line-height: 1;
   }
 
-  .lp-mobile-jump-button.is-active {
-    background: rgb(245 158 11 / 0.65);
-    transform: scale(0.94);
+  .lp-mobile-fire-button .lp-mc-icon {
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-fire.png");
   }
 
-  .lp-mobile-fire-button.is-active {
-    background: rgb(239 68 68 / 0.72);
-    transform: scale(0.94);
+  .lp-mobile-jump-button .lp-mc-icon {
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-jump.png");
   }
 
-  .lp-mobile-inventory-button.is-active {
-    background: rgb(124 58 237 / 0.62);
+  .lp-mobile-inventory-button .lp-mc-icon {
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-menu.png");
+  }
+
+  .lp-mobile-sprint-button .lp-mc-icon {
+    width: 46%;
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-sprint.png");
+    opacity: 0.55;
+  }
+
+  .lp-mobile-sprint-button.is-sprint-on .lp-mc-icon,
+  .lp-mobile-sprint-button[aria-pressed="true"] .lp-mc-icon {
+    opacity: 1;
+  }
+
+  .lp-mobile-inventory-button.is-interact-mode {
+    filter: hue-rotate(200deg) saturate(1.15);
+  }
+
+  .lp-mobile-jump-button.is-active,
+  .lp-mobile-fire-button.is-active,
+  .lp-mobile-inventory-button.is-active,
+  .lp-mobile-sprint-button.is-active {
+    filter: brightness(1.35);
     transform: scale(0.94);
   }
 
   .lp-mobile-inventory-button.is-interact-mode.is-active {
-    background: rgb(59 130 246 / 0.65);
-  }
-
-  .lp-mobile-sprint-button.is-active {
-    background: rgb(16 185 129 / 0.55);
-    transform: scale(0.94);
+    filter: hue-rotate(200deg) saturate(1.15) brightness(1.35);
   }
 
   .lp-mobile-inventory-button.is-storage-hint {
-    border-color: rgb(251 191 36 / 0.85);
-    box-shadow: 0 0 0 2px rgb(251 191 36 / 0.35), 0 6px 16px rgb(0 0 0 / 0.35);
+    box-shadow: 0 0 0 2px rgb(251 191 36 / 0.45), 0 6px 16px rgb(0 0 0 / 0.35);
     animation: lp-storage-hint-pulse 1.4s ease-in-out infinite;
   }
 
@@ -2972,12 +2981,15 @@ body.lp-inventory-open .lp-hud-top {
     grid-template-columns: 52px minmax(72px, 1fr) 52px;
     gap: 8px 6px;
     min-height: 0;
+    height: fit-content;
     margin: 0;
     padding: 4px 0;
   }
 
   .lp-inventory-root.is-mobile-inv .lp-paperdoll-preview {
-    min-height: min(168px, 36vh);
+    height: min(168px, 36vh);
+    max-height: min(168px, 36vh);
+    min-height: min(132px, 28vh);
   }
 
   .lp-inventory-root.is-mobile-inv .lp-equip-slot-host,
@@ -3059,7 +3071,9 @@ body.lp-inventory-open .lp-hud-top {
 
 @media (hover: none) and (pointer: coarse) and (orientation: landscape) {
   .lp-inventory-root.is-mobile-inv .lp-paperdoll-preview {
-    min-height: min(132px, 48vh);
+    height: min(132px, 40vh);
+    max-height: min(132px, 40vh);
+    min-height: min(112px, 32vh);
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-detail {
@@ -3099,7 +3113,6 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-mobile-inventory-button {
     width: clamp(50px, 12vw, 62px);
-    font-size: 12px;
   }
 
   .lp-mobile-action-cluster {
@@ -3148,17 +3161,12 @@ body.lp-inventory-open .lp-hud-top {
     gap: 12px;
   }
 
-  .lp-mobile-inventory-button {
-    font-size: 12px;
-  }
-
-  /* 保持 ≥44px 触控目标；窄屏仅略缩小字号 */
+  /* 保持 ≥44px 触控目标 */
   .lp-mobile-sprint-button {
-    width: 44px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
     min-width: 44px;
     min-height: 44px;
-    font-size: 12px;
   }
 
   .mp-bar .lp-mp-button,

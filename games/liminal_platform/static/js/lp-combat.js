@@ -21,13 +21,13 @@
     bullet: {
       kind: 'bullet',
       speed: PROJECTILE_SPEED_BULLET,
-      bodyLen: 9,
-      bodyH: 2.4,
-      tipLen: 3.2,
+      bodyLen: 2.2,
+      bodyH: 0.55,
+      tipLen: 0.75,
       tip: '#f5d0a0',
       body: '#c4a35a',
       band: '#8a6a2a',
-      flashR: 8,
+      flashR: 2.5,
     },
     shell: {
       kind: 'shell',
@@ -167,6 +167,7 @@
     const held = getHeldWeaponSlot();
     if (!held) return null;
     const { item, stack } = held;
+    const online = window.LpInventoryNet?.isActive?.();
 
     if (item.magazineSize != null) {
       const mag = stack.mag ?? 0;
@@ -175,10 +176,12 @@
         state.cooldown = 0.25;
         return null;
       }
-      const next = held.hands.updateSlot?.(held.index, { mag: mag - 1 });
-      if (next) held.stack = next;
-      else stack.mag = mag - 1;
-      window.LpInventory?.persistAndRender?.();
+      if (!online) {
+        const next = held.hands.updateSlot?.(held.index, { mag: mag - 1 });
+        if (next) held.stack = next;
+        else stack.mag = mag - 1;
+        window.LpInventory?.persistAndRender?.();
+      }
     }
 
     const weaponId = options.weaponId || Catalog.getWeaponId?.(item.id) || item.id;
@@ -223,7 +226,11 @@
         rateJitter: item.fireSoundRateJitter ?? 0.04,
       });
     }
-    window.dispatchEvent(new CustomEvent('lp:weapon-fired', { detail: payload }));
+    window.dispatchEvent(
+      new CustomEvent('lp:weapon-fired', {
+        detail: { ...payload, handIndex: held.index },
+      })
+    );
     return payload;
   }
 
@@ -277,6 +284,16 @@
       (window.LpInventory?.getPlayerInventory?.()?.countItem?.(item.ammoId) ?? 0) +
       (window.LpInventory?.getHandsInventory?.()?.countItem?.(item.ammoId) ?? 0);
     if (have <= 0) return false;
+
+    if (window.LpInventoryNet?.isActive?.()) {
+      window.LpInventoryNet.sendOp({
+        action: 'reload',
+        handIndex: held.index,
+      });
+      window.LiminalInteract?.showToast?.('装填中…');
+      return true;
+    }
+
     const take = Math.min(need, have);
     const removed = window.LpInventory?.consumeItem?.(item.ammoId, take) ?? 0;
     if (removed <= 0) return false;

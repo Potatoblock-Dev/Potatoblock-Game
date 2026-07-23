@@ -82,10 +82,12 @@
     icon.style.setProperty('--item-accent', item.accent);
     if (item.icon) {
       icon.classList.add('has-image');
-      icon.style.backgroundImage = `url("${item.icon}")`;
+      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
+      icon.style.backgroundImage = '';
       icon.textContent = '';
     } else {
       icon.classList.remove('has-image');
+      icon.style.removeProperty('--lp-item-icon');
       icon.style.backgroundImage = '';
       icon.textContent = item.short;
     }
@@ -187,10 +189,12 @@
       icon.style.setProperty('--item-accent', item.accent);
       if (item.icon) {
         icon.classList.add('has-image');
-        icon.style.backgroundImage = `url("${item.icon}")`;
+        icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
+        icon.style.backgroundImage = '';
         icon.textContent = '';
       } else {
         icon.classList.remove('has-image');
+        icon.style.removeProperty('--lp-item-icon');
         icon.style.backgroundImage = '';
         icon.textContent = item.short;
       }
@@ -290,5 +294,6 @@
     close: closePanel,
     isOpen,
     getMode: () => mode,
+    refresh: render,
   };
 })();

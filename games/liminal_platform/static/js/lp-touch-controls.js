@@ -1,5 +1,5 @@
 /**
- * 阈限月台移动端触控：左移摇杆 + 奔跑方键；右瞄准摇杆 + 物品/交互情境键 + 开火/跳跃。
+ * 阈限月台移动端触控：左移摇杆 + 奔跑键；右瞄准摇杆 + 物品/交互情境键 + 开火/跳跃。
  * 瞄准采用双摇杆（类合金弹头）：松手后保持最后瞄准方向。
  */
 (() => {
@@ -15,11 +15,6 @@
   if (!controls || !joystick || !knob || !jumpButton) return;
 
   const LOOK_DEADZONE = 0.18;
-  const INTERACT_SHORT = {
-    添加燃料: '燃料',
-    打开驾驶台: '驾驶台',
-    打开控制台: '驾驶台',
-  };
 
   const state = {
     direction: 0,
@@ -103,11 +98,11 @@
     state.lookReady = true;
   }
 
-  /** 同步奔跑切换按钮（小方键短文案）。 */
+  /** 同步奔跑切换按钮（图标 + aria；文案不写进 DOM 以免冲掉 Kenney 图标）。 */
   function syncSprintButton() {
     if (!sprintButton) return;
     sprintButton.setAttribute('aria-pressed', state.sprintToggle ? 'true' : 'false');
-    sprintButton.textContent = state.sprintToggle ? '跑' : '走';
+    sprintButton.classList.toggle('is-sprint-on', state.sprintToggle);
     sprintButton.title = state.sprintToggle
       ? '当前奔跑 · 点按改为行走'
       : '当前行走 · 点按改为奔跑';
@@ -126,11 +121,9 @@
     actionButton.classList.toggle('is-storage-hint', !interact && storageHint);
     if (interact) {
       const label = actionButton.dataset.interactLabel || '交互';
-      actionButton.textContent = INTERACT_SHORT[label] || label;
       actionButton.title = label;
       actionButton.setAttribute('aria-label', label);
     } else {
-      actionButton.textContent = '物品';
       actionButton.title = storageHint ? '打开物品栏（仓库）' : '打开物品栏';
       actionButton.setAttribute('aria-label', '物品栏');
     }
