@@ -505,6 +505,15 @@ input::placeholder {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.skin-delete svg {
+  width: 11px;
+  height: 11px;
+  display: block;
 }
 
 .skin-delete.is-confirming {
@@ -801,6 +810,16 @@ input::placeholder {
   background: var(--chip-bg-strong);
   color: var(--text-soft);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.editor-pan-controls button:not(.secondary-button) svg {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 .editor-pan-controls .secondary-button { margin-left: auto; }

@@ -2,9 +2,8 @@
  * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑；支持自动奔跑。
  */
 (() => {
-  const STORAGE_KEY = 'liminal-platform-input-bindings-v5';
+  const STORAGE_KEY = 'liminal-platform-input-bindings-v4';
   const LEGACY_STORAGE_KEYS = [
-    'liminal-platform-input-bindings-v4',
     'liminal-platform-input-bindings-v3',
     'liminal-platform-input-bindings-v2',
     'liminal-platform-input-bindings-v1',
@@ -16,7 +15,7 @@
     fire: [['KeyJ'], []],
     reload: [['KeyR'], []],
     sprint: [['ShiftLeft'], ['ShiftRight']],
-    handsHud: [['KeyX'], []],
+    handsHud: [['KeyE'], []],
   };
   const ACTION_NAMES = {
     inventory: '物品栏',
@@ -75,15 +74,6 @@
           ) {
             merged[action] = parsed[action].map((codes) => [...codes]);
           }
-        }
-        /* 旧默认 KeyE → 新默认 KeyX（仍为旧默认时才迁移） */
-        const hh = merged.handsHud;
-        if (
-          hh?.[0]?.length === 1 &&
-          hh[0][0] === 'KeyE' &&
-          (!hh[1] || hh[1].length === 0)
-        ) {
-          hh[0] = ['KeyX'];
         }
         return merged;
       } catch {
@@ -239,7 +229,7 @@
         ? `A/D 移动（自动奔跑，按住 ${formatAction('sprint') || 'Shift'} 行走）`
         : `A/D 移动（按住 ${formatAction('sprint') || 'Shift'} 奔跑）`;
       desktopHint.textContent =
-        `${moveHint} · 空格跳跃 · 鼠标瞄准 · 左键开火 · ${formatAction('interact') || 'F'} 交互 · ${formatAction('handsHud') || 'X'} 切换手部 · ${formatAction('inventory') || 'Tab'} 物品栏`;
+        `${moveHint} · 空格跳跃 · 鼠标瞄准 · 左键开火 · ${formatAction('interact') || 'F'} 交互 · ${formatAction('handsHud') || 'E'} 手部栏 · ${formatAction('inventory') || 'Tab'} 物品栏`;
     }
   }
 

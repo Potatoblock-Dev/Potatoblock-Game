@@ -139,26 +139,12 @@
       return index;
     }
 
-    /** 读取逻辑堆叠（占位格返回原点物品；返回拷贝，勿直接改字段）。 */
+    /** 读取逻辑堆叠（占位格返回原点物品）。 */
     getSlot(index) {
       const origin = this.originIndex(index);
       const raw = this.slots[origin];
       if (!raw || isOccupancyMarker(raw)) return null;
       return { ...raw };
-    }
-
-    /**
-     * 就地更新原点堆叠字段（如 mag），并经 normalizeStack 约束。
-     * @returns {object|null} 更新后的堆叠副本
-     */
-    updateSlot(index, patch) {
-      const origin = this.originIndex(index);
-      const raw = this.slots[origin];
-      if (!raw || isOccupancyMarker(raw)) return null;
-      const normalized = normalizeStack({ ...raw, ...patch });
-      if (!normalized) return null;
-      this.slots[origin] = normalized;
-      return { ...normalized };
     }
 
     /** 该格是否为多格物品的非原点占位。 */
@@ -330,9 +316,7 @@
         slotKeys: this.slotKeys,
         slots: this.slots.map((slot) => {
           if (!slot || isOccupancyMarker(slot)) return null;
-          const out = { itemId: slot.itemId, qty: slot.qty };
-          if (slot.mag != null) out.mag = slot.mag;
-          return out;
+          return { itemId: slot.itemId, qty: slot.qty };
         }),
       };
     }
@@ -384,7 +368,7 @@
     { index: 3, stack: { itemId: 'scrap', qty: 20 } },
     { index: 4, stack: { itemId: 'turret_ammo', qty: 80 } },
     { index: 5, stack: { itemId: 'small_caliber_ammo', qty: 90 } },
-    { index: 16, stack: { itemId: 'gur65', qty: 1, mag: 27 } },
+    { index: 16, stack: { itemId: 'gur77', qty: 1, mag: 27 } },
   ];
 
   /** 装备栏背包槽物品。 */
@@ -475,13 +459,13 @@
     return new Inventory('storage', 8, 8, STORAGE_SEED);
   }
 
-  /** 新建手部三槽（左/右主手 + 快捷）；默认右手持 GUR-65。 */
+  /** 新建手部三槽（左/右主手 + 快捷）；默认右手持 GUR-77。 */
   function createDefaultHands() {
     return new Inventory(
       'hands',
       HANDS_COLS,
       HANDS_ROWS,
-      [{ index: 1, stack: { itemId: 'gur65', qty: 1, mag: 27 } }],
+      [{ index: 1, stack: { itemId: 'gur77', qty: 1, mag: 27 } }],
       { ignoreItemSize: true }
     );
   }

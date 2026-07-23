@@ -123,7 +123,7 @@
       name: '小口径子弹',
       short: '9mm',
       type: 'ammo',
-      use: '手枪与冲锋枪通用的小口径弹药，用于装填 GUR-65 等武器。',
+      use: '手枪与冲锋枪通用的小口径弹药，用于装填 GUR-77 等武器。',
       color: '#713f12',
       accent: '#fbbf24',
       maxStack: 90,
@@ -132,12 +132,12 @@
       canHoldInHand: true,
       icon: '/static/games/liminal-platform/img/items/small-caliber-ammo-icon.png?v=1',
     },
-    gur65: {
-      id: 'gur65',
-      name: 'GUR-65 冲锋枪',
-      short: 'G65',
+    gur77: {
+      id: 'gur77',
+      name: 'GUR-77 冲锋枪',
+      short: 'G77',
       type: 'weapon',
-      weaponId: 'gur65',
+      weaponId: 'gur77',
       use: '顶部供弹冲锋枪。弹匣 27 发，后坐中等；移动时后坐加剧。按 R 装填小口径子弹。',
       color: '#1f2937',
       accent: '#9ca3af',
@@ -145,22 +145,18 @@
       w: 3,
       h: 2,
       canHoldInHand: true,
-      icon: '/static/games/liminal-platform/img/weapons/gur-65-icon.png?v=1',
-      holdSprite: '/static/games/liminal-platform/img/weapons/gur-65.png?v=1',
-      gripOffset: { x: 22, y: -22 },
+      icon: '/static/games/liminal-platform/img/weapons/gur-77-icon.png?v=1',
+      holdSprite: '/static/games/liminal-platform/img/weapons/gur-77.png?v=1',
+      gripOffset: { x: 16, y: -50 },
       muzzleLength: 38,
       muzzleOffsetY: -3,
       ejectLocal: { x: 12, y: -8 },
       holdDrawW: 48,
       holdDrawH: 20,
-      /* 握把略偏贴图左下（枪柄），配合前臂 0.88 掌心锚 */
-      holdPivotX: 7,
-      holdPivotY: 13,
+      holdPivotX: 11,
+      holdPivotY: 11,
       magazineSize: 27,
       ammoId: 'small_caliber_ammo',
-      /** 顶部供弹换弹动作。 */
-      reloadStyle: 'top_mag',
-      reloadDuration: 0.92,
       fireCooldown: 0.085,
       /** 单发后坐抬升（0–1 散布标度）。 */
       recoilKick: 0.22,
@@ -171,13 +167,6 @@
       spreadBloomDeg: 7.5,
       /** 抛壳初速（沿枪口法向，世界单位/秒近似）。 */
       shellEjectSpeed: { forward: -35, up: 145 },
-      /** 弹壳绘制缩放（小口径）。 */
-      shellCasingScale: 0.42,
-      /** 飞行弹种：离散子弹实体（非激光）。 */
-      projectileStyle: 'bullet',
-      /** 单发音效（CC0：ak47 shooting.wav）。 */
-      fireSound: '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1',
-      fireSoundVolume: 0.62,
     },
     work_cap: {
       id: 'work_cap',
@@ -252,9 +241,6 @@
       bagRows: 4,
     },
   };
-
-  /* 旧存档 id 兼容 */
-  ITEMS.gur77 = ITEMS.gur65;
 
   /** 按 id 取物品定义。 */
   function getItem(itemId) {

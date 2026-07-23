@@ -350,7 +350,21 @@
     .guess-panel-submit:active:not(:disabled) { transform: scale(.99); }
     .guess-panel-submit:disabled { cursor: not-allowed; opacity: .45; }
     .mobile-section-toggle { min-width: 0; color: inherit; text-align: left; }
-    .mobile-collapse-icon { display: none; color: var(--text-muted); font-size: 12px; }
+    .mobile-collapse-icon {
+      display: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      line-height: 0;
+      align-items: center;
+      justify-content: center;
+    }
+    .mobile-collapse-icon svg { width: 12px; height: 12px; display: block; }
+    #wordBankToggleIcon {
+      display: inline-flex;
+      line-height: 0;
+      color: var(--text-muted);
+    }
+    #wordBankToggleIcon svg { width: 12px; height: 12px; display: block; }
     .word-bank-body { border-top: 1px solid var(--line); padding-top: 12px; }
     #hostWordBankPanel.is-readonly .word-bank-host-only { display: none !important; }
     #hostWordBankPanel.is-readonly .word-bank-guest-only { display: block !important; }
@@ -446,7 +460,7 @@
     }
     @media (max-width: 767px) {
       .desktop-only { display: none !important; }
-      .mobile-collapse-icon { display: inline; }
+      .mobile-collapse-icon { display: inline-flex; }
       .mobile-collapse-body.is-mobile-collapsed { display: none !important; }
       .drawer-toolbar .mobile-collapse-body.is-mobile-collapsed { display: block !important; }
       #playerPanel.is-mobile-collapsed .player-panel-header { margin-bottom: 0; }
@@ -535,7 +549,7 @@
                     class="flex min-h-10 items-center gap-2 rounded-lg px-2 text-amber-200 hover:bg-white/5">
               <span id="wordBankPanelTitle" class="word-bank-title font-bold"><span class="ui-icon ui-icon-inline" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span><span id="wordBankPanelTitleText">本局词库</span></span>
               <span id="wordBankToggleText" class="text-xs">展开</span>
-              <span id="wordBankToggleIcon">▼</span>
+              <span id="wordBankToggleIcon" class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 10 6 6 6-6"/></svg></span>
             </button>
             <label id="disableHintsLabel" class="flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-purple-400/25 bg-purple-500/10 px-3 text-sm text-purple-100" title="猜词者只会看到答案长度">
               <input id="disableHints" type="checkbox" class="h-4 w-4 shrink-0 accent-purple-400">
@@ -609,7 +623,7 @@
             <div class="toolbar-head">
               <button id="drawingToolsToggle" type="button" class="mobile-section-toggle flex items-center gap-2" aria-controls="drawingToolsBody" aria-expanded="true">
                 <span id="toolbarTitle" class="text-sm font-semibold text-white/80">画板工具</span>
-                <span id="drawingToolsToggleIcon" class="mobile-collapse-icon" aria-hidden="true">▲</span>
+                <span id="drawingToolsToggleIcon" class="mobile-collapse-icon ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 6-6 6 6"/></svg></span>
               </button>
               <div class="flex items-center gap-2">
                 <button id="shortcutButton" type="button" class="mode-button desktop-only" aria-expanded="false" aria-controls="shortcutPanel">快捷键</button>
@@ -761,7 +775,7 @@
           <section id="playerPanel" class="rounded-xl border border-white/10 bg-[#1a1a2e] p-3">
             <button id="playerPanelToggle" type="button" class="player-panel-header mobile-section-toggle mb-2 flex w-full items-center justify-between gap-2" aria-controls="playerPanelBody" aria-expanded="true">
               <strong>房间玩家</strong>
-              <span class="flex items-center gap-2"><span id="playerCount" class="rounded-full bg-white/10 px-2 py-0.5 text-xs">0 人</span><span id="playerPanelToggleIcon" class="mobile-collapse-icon" aria-hidden="true">▲</span></span>
+              <span class="flex items-center gap-2"><span id="playerCount" class="rounded-full bg-white/10 px-2 py-0.5 text-xs">0 人</span><span id="playerPanelToggleIcon" class="mobile-collapse-icon ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 6-6 6 6"/></svg></span></span>
             </button>
             <div id="playerPanelBody" class="mobile-collapse-body"><div id="playerList" class="space-y-2"></div></div>
           </section>
@@ -1701,7 +1715,7 @@
       container.classList.toggle('is-mobile-collapsed', collapsed);
       body.classList.toggle('is-mobile-collapsed', collapsed);
       toggle.setAttribute('aria-expanded', String(!collapsed));
-      icon.textContent = collapsed ? '▼' : '▲';
+      setChevronIcon(icon, !collapsed);
     }
 
     function syncMobileSections() {
@@ -2214,7 +2228,7 @@
       wordBankBody.classList.toggle('hidden', !expanded);
       wordBankToggle.setAttribute('aria-expanded', String(expanded));
       wordBankToggleText.textContent = expanded ? '收起' : '展开';
-      wordBankToggleIcon.textContent = expanded ? '▲' : '▼';
+      setChevronIcon(wordBankToggleIcon, expanded);
     }
 
     function captureWordBankDraft() {
@@ -2525,7 +2539,10 @@
       crown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4 3 5-6 5 6 4-3v11H3z"/></svg>',
       film: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16"/><path d="M17 4v16"/><path d="M3 8h4"/><path d="M3 16h4"/><path d="M17 8h4"/><path d="M17 16h4"/></svg>',
       warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 16H3z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
-      info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v4h1"/></svg>'
+      info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v4h1"/></svg>',
+      chevronUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 6-6 6 6"/></svg>',
+      chevronDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 10 6 6 6-6"/></svg>',
+      timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5"/><path d="M9 2h6"/></svg>'
     };
 
     function createUiIcon(name, className) {
@@ -2534,6 +2551,11 @@
       wrap.setAttribute('aria-hidden', 'true');
       wrap.innerHTML = UI_ICON_SVGS[name] || UI_ICON_SVGS.info;
       return wrap;
+    }
+
+    function setChevronIcon(el, expanded) {
+      if (!el) return;
+      el.innerHTML = UI_ICON_SVGS[expanded ? 'chevronUp' : 'chevronDown'];
     }
 
     function resolveSystemSenderIcon(sender, senderIcon) {
@@ -2548,6 +2570,7 @@
       if (raw.includes('👑')) return 'crown';
       if (raw.includes('🎬')) return 'film';
       if (raw.includes('⚠')) return 'warning';
+      if (raw.includes('⏱')) return 'timer';
       return 'info';
     }
 

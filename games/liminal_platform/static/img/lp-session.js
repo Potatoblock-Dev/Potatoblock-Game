@@ -61,14 +61,12 @@
     session.addEventListener('weaponfired', (event) => {
       const detail = event.detail || {};
       if (String(detail.playerId) === localUserId) return;
-      window.LpCombat?.spawnProjectile?.({
+      window.LpCombat?.spawnTracer?.({
         originX: detail.x,
         originY: detail.y,
         dirX: detail.dirX,
         dirY: detail.dirY,
         facing: detail.facing,
-        weaponId: detail.weaponId,
-        style: detail.style,
       });
     });
 

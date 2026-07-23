@@ -2,7 +2,8 @@
  * 键位设置：每个动作最多两个绑定，每个绑定可以是单键或修饰键组合。
  */
 (() => {
-  const STORAGE_KEY = 'avatar-lobby-input-bindings-v5';
+  const STORAGE_KEY = 'avatar-lobby-input-bindings-v6';
+  const LEGACY_V5_STORAGE_KEY = 'avatar-lobby-input-bindings-v5';
   const LEGACY_V4_STORAGE_KEY = 'avatar-lobby-input-bindings-v4';
   const LEGACY_V3_STORAGE_KEY = 'avatar-lobby-input-bindings-v3';
   const LEGACY_V2_STORAGE_KEY = 'avatar-lobby-input-bindings-v2';
@@ -13,6 +14,7 @@
     jump: [['Space'], []],
     kneel: [['KeyS'], ['ArrowDown']],
     interact: [['KeyF'], []],
+    sprint: [['ShiftLeft'], ['ShiftRight']],
   };
   const ACTION_NAMES = {
     left: '向左移动',
@@ -20,6 +22,7 @@
     jump: '跳跃',
     kneel: '单膝跪地',
     interact: '交互',
+    sprint: '奔跑',
   };
   const MODIFIER_CODES = new Set([
     'ShiftLeft', 'ShiftRight',
@@ -48,6 +51,23 @@
         Array.isArray(codes) && codes.every((code) => typeof code === 'string')
       )
     );
+  }
+
+  function migrateV5Bindings() {
+    const saved = localStorage.getItem(LEGACY_V5_STORAGE_KEY);
+    if (!saved) return null;
+    try {
+      const legacy = JSON.parse(saved);
+      const migrated = cloneBindings(DEFAULT_BINDINGS);
+      for (const action of Object.keys(DEFAULT_BINDINGS)) {
+        if (action === 'sprint') continue;
+        if (!Array.isArray(legacy[action]) || legacy[action].length !== 2) return null;
+        migrated[action] = legacy[action].map((codes) => [...codes]);
+      }
+      return migrated;
+    } catch {
+      return null;
+    }
   }
 
   function migrateV4Bindings() {
@@ -126,7 +146,7 @@
         // 损坏的本地配置回退到迁移或默认值。
       }
     }
-    return migrateV4Bindings() || migrateV3Bindings() || migrateV2Bindings() || migrateV1Bindings()
+    return migrateV5Bindings() || migrateV4Bindings() || migrateV3Bindings() || migrateV2Bindings() || migrateV1Bindings()
       || cloneBindings(DEFAULT_BINDINGS);
   }
 

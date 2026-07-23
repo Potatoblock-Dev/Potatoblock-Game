@@ -35,10 +35,12 @@ MAX_PLAYERS_PER_ROOM = 10
 DISCONNECT_GRACE_SECONDS = 30
 SNAPSHOT_HZ = 15
 HALF_W = (40.0 * 1.35) / 2.0
-FLOOR_Y = 979.0
-WALK_LEFT = 456.0
-WALK_RIGHT = 1793.0
-COUPLER_JOIN = 1516.0
+# 与客户端 carriage-spec.js WORLD_SCALE 保持一致
+WORLD_SCALE = 0.88
+FLOOR_Y = 972.0 * WORLD_SCALE
+WALK_LEFT = 456.0 * WORLD_SCALE
+WALK_RIGHT = 1793.0 * WORLD_SCALE
+COUPLER_JOIN = 1526.0 * WORLD_SCALE
 MAX_MESSAGE_BYTES = 4096
 MAX_POSE_HZ = 30
 ROOM_CODE_ALPHABET = string.ascii_uppercase + string.digits
@@ -71,19 +73,23 @@ def _default_appearance(user_id: str) -> Dict[str, Any]:
 
 
 def _build_platforms() -> List[Dict[str, float]]:
-    cars = [0.0, COUPLER_JOIN]
-    platforms = [
+    cars = [0.0, COUPLER_JOIN, COUPLER_JOIN * 2]
+    floors = [
         {"left": wx + WALK_LEFT, "right": wx + WALK_RIGHT, "y": FLOOR_Y} for wx in cars
     ]
-    if platforms[1]["left"] > platforms[0]["right"]:
-        platforms.insert(
-            1,
-            {
-                "left": platforms[0]["right"],
-                "right": platforms[1]["left"],
-                "y": FLOOR_Y,
-            },
-        )
+    platforms: List[Dict[str, float]] = []
+    for i, floor in enumerate(floors):
+        if i > 0:
+            prev = floors[i - 1]
+            if floor["left"] > prev["right"]:
+                platforms.append(
+                    {
+                        "left": prev["right"],
+                        "right": floor["left"],
+                        "y": FLOOR_Y,
+                    }
+                )
+        platforms.append(floor)
     return platforms
 
 
@@ -203,7 +209,7 @@ class LiminalRoom:
         self.server_tick = 0
         self.tick_task: Optional[asyncio.Task] = None
         self.running = False
-        self.train = {"throttle": 0.0, "brake": 0.0, "speed": 0.0}
+        self.train = {"throttle": 0.0, "brake": 0.0, "speed": 0.0, "emergency": False}
         self.fuel_level = DEFAULT_FUEL
         self._fuel_add_times: Dict[str, float] = {}
         self._train_set_times: Dict[str, float] = {}
@@ -254,6 +260,7 @@ class LiminalRoom:
                     "throttle": round(self.train["throttle"], 3),
                     "brake": round(self.train["brake"], 3),
                     "speed": round(self.train["speed"], 3),
+                    "emergencyActive": bool(self.train.get("emergency")),
                 },
                 "fuel": {"level": round(self.fuel_level, 2)},
             },
@@ -267,8 +274,21 @@ class LiminalRoom:
         throttle = self.train["throttle"]
         brake = self.train["brake"]
         speed = self.train["speed"]
+        emergency_decel = 16.0
         if brake >= 0.95:
-            self.train["speed"] = 0.0
+            self.train["emergency"] = True
+            self.train["throttle"] = 0.0
+            throttle = 0.0
+        if self.train.get("emergency"):
+            self.train["throttle"] = 0.0
+            if speed > 0:
+                speed = max(0.0, speed - emergency_decel * dt)
+            elif speed < 0:
+                speed = min(0.0, speed + emergency_decel * dt)
+            if abs(speed) < 0.02:
+                speed = 0.0
+                self.train["emergency"] = False
+            self.train["speed"] = speed
             return
         desired = throttle * (1.0 - brake * 0.92)
         rate = 2.4
@@ -447,7 +467,10 @@ class LiminalLobbyManager:
             except (TypeError, ValueError):
                 pass
         if float(room.train["brake"]) >= 0.95:
-            room.train["speed"] = 0.0
+            room.train["emergency"] = True
+            room.train["throttle"] = 0.0
+        if room.train.get("emergency"):
+            room.train["throttle"] = 0.0
 
     async def handle_fuel_add(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)

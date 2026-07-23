@@ -66,11 +66,16 @@ body.lp-boiler-panel-open .lp-hud-top,
 body.lp-fuel-feed-open .lp-crosshair,
 body.lp-fuel-feed-open .lp-hint,
 body.lp-fuel-feed-open .lp-mobile-controls,
-body.lp-fuel-feed-open .lp-hud-top {
+body.lp-fuel-feed-open .lp-hud-top,
+body.lp-crate-feed-open .lp-crosshair,
+body.lp-crate-feed-open .lp-hint,
+body.lp-crate-feed-open .lp-mobile-controls,
+body.lp-crate-feed-open .lp-hud-top {
   display: none !important;
 }
 
-body.lp-fuel-feed-open {
+body.lp-fuel-feed-open,
+body.lp-crate-feed-open {
   cursor: auto;
 }
 
@@ -137,18 +142,32 @@ body.lp-fuel-feed-open {
   pointer-events: none;
 }
 
-.lp-fuel-drop-zone {
+.lp-fuel-feed-dock {
   position: absolute;
-  left: calc(10px + env(safe-area-inset-left));
+  left: 50%;
   top: 50%;
-  transform: translateY(-50%);
-  width: min(168px, 28vw);
-  height: min(280px, 52vh);
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.lp-fuel-drop-zone {
+  position: relative;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: min(148px, 24vw);
+  height: min(248px, 46vh);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  flex: 0 0 auto;
   border: 3px solid #8a3a12;
   background:
     radial-gradient(circle at 50% 70%, rgb(245 158 11 / 0.32), transparent 62%),
@@ -156,7 +175,23 @@ body.lp-fuel-feed-open {
   color: #fdba74;
   pointer-events: none;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.45), 0 8px 20px rgb(0 0 0 / 0.35);
-  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease, box-shadow 180ms ease;
+  overflow: hidden;
+}
+
+.lp-fuel-flame-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.lp-fuel-drop-label,
+.lp-fuel-drop-sub {
+  position: relative;
+  z-index: 1;
 }
 
 .lp-fuel-drop-zone.is-hot {
@@ -165,7 +200,19 @@ body.lp-fuel-feed-open {
   background:
     radial-gradient(circle at 50% 70%, rgb(245 158 11 / 0.48), transparent 68%),
     rgb(30 41 59 / 0.72);
-  transform: translateY(-50%) scale(1.03);
+  transform: scale(1.03);
+}
+
+.lp-fuel-drop-zone.is-burning {
+  border-color: #fb923c;
+  background:
+    radial-gradient(circle at 50% 78%, rgb(251 146 60 / 0.55), transparent 58%),
+    radial-gradient(circle at 50% 92%, rgb(220 38 38 / 0.35), transparent 45%),
+    linear-gradient(180deg, #3a1c0c, #120805);
+  box-shadow:
+    inset 0 0 28px rgb(249 115 22 / 0.4),
+    0 0 32px rgb(234 88 12 / 0.45),
+    0 8px 20px rgb(0 0 0 / 0.35);
 }
 
 .lp-fuel-drop-label {
@@ -179,29 +226,59 @@ body.lp-fuel-feed-open {
   color: #fdba74;
 }
 
+.lp-fuel-rack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 88px;
+  padding: 10px 10px 12px;
+  border: 1px solid rgb(148 163 184 / 0.35);
+  background: rgb(2 6 23 / 0.72);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35), 0 8px 20px rgb(0 0 0 / 0.3);
+  pointer-events: auto;
+}
+
+.lp-fuel-rack-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.lp-fuel-source-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(320px, 52vh);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .lp-fuel-source-wrap {
-  position: absolute;
-  right: calc(14px + env(safe-area-inset-right));
-  top: 50%;
-  transform: translateY(-50%);
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   pointer-events: auto;
 }
 
 .lp-fuel-source-caption {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #94a3b8;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
 }
 
+.lp-fuel-item-slot,
 .lp-fuel-coal-slot {
   position: relative;
-  width: 76px;
-  height: 76px;
+  width: 72px;
+  height: 72px;
   border: 2px solid rgb(148 163 184 / 0.55);
   background: linear-gradient(180deg, rgb(30 41 59 / 0.98), rgb(15 23 42 / 0.98));
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35), 0 8px 20px rgb(0 0 0 / 0.35);
@@ -211,34 +288,63 @@ body.lp-fuel-feed-open {
   cursor: grab;
   user-select: none;
   color: #e2e8f0;
+  padding: 0;
 }
 
+.lp-fuel-item-slot:active,
+.lp-fuel-item-slot.is-dragging,
 .lp-fuel-coal-slot:active,
 .lp-fuel-coal-slot.is-dragging {
   cursor: grabbing;
   opacity: 0.35;
 }
 
+.lp-fuel-item-slot.is-empty,
 .lp-fuel-coal-slot.is-empty {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.lp-fuel-coal-slot.is-empty .lp-fuel-coal-icon {
+.lp-fuel-item-slot.is-empty .lp-fuel-item-icon,
+.lp-fuel-coal-slot.is-empty .lp-fuel-coal-icon,
+.lp-fuel-coal-slot.is-empty .lp-fuel-item-icon {
   filter: grayscale(1);
   opacity: 0.5;
 }
 
+.lp-fuel-item-icon,
 .lp-fuel-coal-icon {
+  display: grid;
+  place-items: center;
   width: 42px;
   height: 34px;
   border-radius: 40% 45% 38% 42%;
-  background:
-    radial-gradient(circle at 30% 30%, #64748b, transparent 45%),
-    linear-gradient(145deg, #1e293b, #0f172a 55%, #334155);
+  border: 1px solid rgb(0 0 0 / 0.35);
+  background: linear-gradient(145deg, var(--item-accent, #475569), var(--item-color, #1f2937) 58%, #0f172a);
   box-shadow: inset 0 -4px 0 rgb(0 0 0 / 0.35), 0 2px 0 rgb(71 85 105 / 0.5);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 800;
 }
 
+.lp-fuel-item-icon.has-image,
+.lp-fuel-coal-icon.has-image {
+  border-radius: 4px;
+  background-color: #0f172a;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  color: transparent;
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 0.65);
+}
+
+.lp-fuel-drag-ghost .lp-fuel-item-icon {
+  width: 48px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.lp-fuel-item-qty,
 .lp-fuel-coal-qty {
   position: absolute;
   right: 6px;
@@ -265,6 +371,60 @@ body.lp-fuel-feed-open {
 
 .lp-fuel-drag-ghost[hidden] {
   display: none;
+}
+
+/* ---- 卫兵弹药箱 / 回收箱：复用燃料架布局 ---- */
+
+.lp-guard-crate-zone {
+  gap: 10px;
+  border-color: #6b7280;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(148 163 184 / 0.22), transparent 62%),
+    linear-gradient(180deg, #1c2433, #0c1018);
+  color: #cbd5e1;
+}
+
+.lp-guard-crate-zone.is-ammo {
+  border-color: #a16207;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(234 179 8 / 0.28), transparent 62%),
+    linear-gradient(180deg, #2a2412, #120e08);
+  color: #fde68a;
+}
+
+.lp-guard-crate-zone.is-recycle {
+  border-color: #4d7c0f;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(132 204 22 / 0.22), transparent 62%),
+    linear-gradient(180deg, #1a2412, #0c1208);
+  color: #d9f99d;
+}
+
+.lp-guard-crate-zone .lp-fuel-item-slot {
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.lp-guard-crate-zone.is-hot.is-ammo {
+  border-color: #facc15;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(250 204 21 / 0.42), transparent 68%),
+    rgb(30 41 59 / 0.72);
+}
+
+.lp-guard-crate-zone.is-hot.is-recycle {
+  border-color: #a3e635;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(163 230 53 / 0.38), transparent 68%),
+    rgb(30 41 59 / 0.72);
+}
+
+.lp-fuel-item-slot.is-hot {
+  border-color: #fbbf24;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.35),
+    0 0 0 2px rgb(251 191 36 / 0.55),
+    0 8px 20px rgb(0 0 0 / 0.35);
 }
 
 /* ---- 动力车驾驶台（嵌入式机柜，非弹窗） ---- */
@@ -839,12 +999,13 @@ body.lp-fuel-feed-open {
 }
 
 .lp-crosshair {
+  --lp-aim-gap: 4px;
   position: fixed;
   left: 0;
   top: 0;
-  width: 22px;
-  height: 22px;
-  margin: -11px 0 0 -11px;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
   pointer-events: none;
   z-index: 12;
 }
@@ -853,28 +1014,42 @@ body.lp-fuel-feed-open {
   display: none;
 }
 
-.lp-crosshair::before,
-.lp-crosshair::after {
-  content: "";
+.lp-crosshair-arm {
   position: absolute;
   background: rgb(248 250 252 / 0.92);
   box-shadow: 0 0 0 1px rgb(15 23 42 / 0.55);
 }
 
-.lp-crosshair::before {
+.lp-crosshair-arm-n,
+.lp-crosshair-arm-s {
   left: 50%;
-  top: 2px;
-  bottom: 2px;
   width: 2px;
+  height: 10px;
   transform: translateX(-50%);
 }
 
-.lp-crosshair::after {
+.lp-crosshair-arm-n {
+  bottom: calc(50% + var(--lp-aim-gap));
+}
+
+.lp-crosshair-arm-s {
+  top: calc(50% + var(--lp-aim-gap));
+}
+
+.lp-crosshair-arm-w,
+.lp-crosshair-arm-e {
   top: 50%;
-  left: 2px;
-  right: 2px;
   height: 2px;
+  width: 10px;
   transform: translateY(-50%);
+}
+
+.lp-crosshair-arm-w {
+  right: calc(50% + var(--lp-aim-gap));
+}
+
+.lp-crosshair-arm-e {
+  left: calc(50% + var(--lp-aim-gap));
 }
 
 .lp-crosshair-dot {
@@ -886,6 +1061,26 @@ body.lp-fuel-feed-open {
   border-radius: 50%;
   background: #fbbf24;
   transform: translate(-50%, -50%);
+}
+
+body.lp-turret-mode .lp-crosshair {
+  --lp-aim-gap: 14px;
+}
+
+body.lp-turret-mode .lp-crosshair-arm-n,
+body.lp-turret-mode .lp-crosshair-arm-s {
+  height: 14px;
+}
+
+body.lp-turret-mode .lp-crosshair-arm-w,
+body.lp-turret-mode .lp-crosshair-arm-e {
+  width: 14px;
+}
+
+body.lp-turret-mode .lp-crosshair-dot {
+  width: 5px;
+  height: 5px;
+  background: #fde047;
 }
 
 /* 浮层 UI：对齐 avatar 大厅 stage-ui，仅控件接收指针 */
@@ -910,6 +1105,7 @@ body.lp-fuel-feed-open {
 .lp-stage-ui > .lp-mobile-controls > *,
 .lp-stage-ui > .lp-mobile-controls .lp-move-joystick,
 .lp-stage-ui > .lp-mobile-controls .lp-look-joystick,
+.lp-stage-ui > .lp-mobile-controls .lp-mobile-move-cluster > *,
 .lp-stage-ui > .lp-mobile-controls .lp-mobile-action-secondary > *,
 .lp-stage-ui > .lp-mobile-controls .lp-mobile-action-buttons > * {
   pointer-events: auto;
@@ -1063,6 +1259,10 @@ body.lp-fuel-feed-open {
   display: none;
 }
 
+.lp-mobile-only {
+  display: none !important;
+}
+
 .lp-skin-link,
 .lp-back {
   display: inline-flex;
@@ -1107,6 +1307,107 @@ body.lp-fuel-feed-open {
   pointer-events: none;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.3);
   z-index: 2;
+}
+
+/* ---- 左下角手部三槽预览 ---- */
+
+.lp-hands-hud {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 4;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgb(148 163 184 / 0.45);
+  border-radius: var(--lp-radius);
+  background: rgb(2 6 23 / 0.72);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35), 0 8px 18px rgb(0 0 0 / 0.35);
+  pointer-events: auto;
+}
+
+.lp-hands-hud[hidden] {
+  display: none;
+}
+
+.lp-hands-hud-slot {
+  position: relative;
+  width: var(--lp-hud-hand, 64px);
+  height: var(--lp-hud-hand, 64px);
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgb(100 116 139 / 0.75);
+  border-radius: 0;
+  background: rgb(15 23 42 / 0.95);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+  color: #e2e8f0;
+}
+
+.lp-hands-hud-slot.is-primary {
+  --lp-hud-hand: 64px;
+}
+
+.lp-hands-hud-slot.is-utility {
+  --lp-hud-hand: 44px;
+}
+
+.lp-hands-hud-slot.is-active {
+  border-color: rgb(251 191 36 / 0.95);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.4),
+    0 0 0 2px rgb(251 191 36 / 0.45);
+}
+
+.lp-hands-hud-slot.is-empty {
+  opacity: 0.55;
+}
+
+.lp-hands-hud-icon {
+  display: grid;
+  place-items: center;
+  width: calc(100% - 6px);
+  height: calc(100% - 18px);
+  margin: 3px 3px 0;
+  border: 1px solid rgb(0 0 0 / 0.35);
+  background: linear-gradient(180deg, var(--item-accent, #64748b), var(--item-color, #1e293b));
+  font-size: 11px;
+  font-weight: 800;
+  color: #f8fafc;
+}
+
+.lp-hands-hud-icon.has-image {
+  background-color: #0f172a;
+  background-image: none;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  color: transparent;
+}
+
+.lp-hands-hud-qty {
+  position: absolute;
+  right: 3px;
+  bottom: 14px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #f8fafc;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
+  pointer-events: none;
+}
+
+.lp-hands-hud-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 1px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  text-align: center;
+  pointer-events: none;
 }
 
 .lp-load-error {
@@ -1159,15 +1460,17 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-shell {
   position: relative;
-  width: min(1120px, 96vw);
-  max-height: min(88dvh, 800px);
+  width: min(920px, calc(100vw - 24px));
+  max-width: 100%;
+  max-height: min(90dvh, 860px);
   display: flex;
   flex-direction: column;
   border: 2px solid rgb(148 163 184 / 0.58);
   border-radius: var(--lp-radius);
   background: var(--lp-panel);
   box-shadow: var(--lp-frame), 0 18px 48px rgb(0 0 0 / 0.55);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .lp-inventory-header,
@@ -1202,6 +1505,38 @@ body.lp-inventory-open .lp-hud-top {
 .lp-inventory-header-actions {
   display: flex;
   gap: 8px;
+}
+
+.lp-inventory-tabs {
+  display: none;
+  flex-shrink: 0;
+  gap: 0;
+  padding: 0 8px;
+  border-bottom: 1px solid rgb(148 163 184 / 0.16);
+  background: rgb(2 6 23 / 0.55);
+}
+
+.lp-inventory-tab {
+  flex: 1;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lp-inventory-tab.is-active {
+  color: #e2e8f0;
+  border-bottom-color: rgb(96 165 250 / 0.95);
+}
+
+.lp-inventory-tab[hidden] {
+  display: none;
 }
 
 .lp-inventory-ghost-button,
@@ -1284,19 +1619,69 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-body {
   display: grid;
-  grid-template-columns: minmax(168px, 200px) minmax(0, 1fr) minmax(180px, 220px);
-  gap: 14px;
-  padding: 16px;
-  overflow: auto;
-  align-items: start;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+  gap: 12px;
+  padding: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.lp-inventory-root.is-dual .lp-inventory-body {
+/* 附近（地面 / 仓库）侧栏 + 旅人 + 背包 */
+.lp-inventory-root.is-side-loot .lp-inventory-body {
   grid-template-columns:
-    minmax(168px, 200px)
-    minmax(0, 1fr)
-    minmax(0, 1.05fr)
-    minmax(180px, 220px);
+    minmax(0, 0.85fr)
+    minmax(0, 0.9fr)
+    minmax(0, 1.1fr);
+}
+
+.lp-side-loot-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border-color: rgb(148 163 184 / 0.35);
+}
+
+.lp-side-loot-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.lp-side-loot-section {
+  min-width: 0;
+}
+
+.lp-side-loot-section.is-ground .lp-inventory-panel-title {
+  color: #fbbf24;
+}
+
+.lp-side-loot-divider {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 12px 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(148 163 184 / 0.55) 12%,
+    rgb(148 163 184 / 0.55) 88%,
+    transparent
+  );
+}
+
+.lp-side-loot-divider[hidden] {
+  display: none;
 }
 
 .lp-gear-panel {
@@ -1311,56 +1696,27 @@ body.lp-inventory-open .lp-hud-top {
 .lp-paperdoll {
   position: relative;
   display: grid;
-  grid-template-columns: 52px 64px 52px;
+  grid-template-columns: 56px minmax(96px, 1fr) 56px;
   grid-template-rows: auto auto auto;
-  gap: 8px 6px;
+  gap: 10px 8px;
   justify-content: center;
+  align-items: center;
   margin: 4px 0 14px;
-  padding: 10px 4px 6px;
-  min-height: 228px;
+  padding: 8px 2px 4px;
+  min-height: 240px;
 }
 
-.lp-paperdoll-silhouette {
-  position: absolute;
-  left: 50%;
-  top: 28px;
-  width: 44px;
-  height: 138px;
-  transform: translateX(-50%);
+.lp-paperdoll-preview {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  justify-self: stretch;
+  align-self: stretch;
+  width: 100%;
+  min-height: 210px;
+  height: 100%;
   pointer-events: none;
-  opacity: 0.22;
   z-index: 0;
-}
-
-.lp-sil-head,
-.lp-sil-torso,
-.lp-sil-leg {
-  display: block;
-  margin: 0 auto;
-  background: #94a3b8;
-  border-radius: var(--lp-radius);
-}
-
-.lp-sil-head {
-  width: 20px;
-  height: 20px;
-}
-
-.lp-sil-torso {
-  width: 32px;
-  height: 48px;
-  margin-top: 4px;
-}
-
-.lp-sil-leg {
-  display: inline-block;
-  width: 12px;
-  height: 40px;
-  margin-top: 4px;
-}
-
-.lp-sil-leg-l {
-  margin-right: 4px;
+  image-rendering: pixelated;
 }
 
 .lp-equip-cell {
@@ -1390,46 +1746,47 @@ body.lp-inventory-open .lp-hud-top {
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.45);
 }
 
+/* 左列：头 / 胸 / 腿；右列：配件 / 背包 —— 中间留给皮套 */
 .lp-equip-head {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1;
 }
 
-.lp-equip-acc1 {
+.lp-equip-chest {
   grid-column: 1;
   grid-row: 2;
-  align-self: center;
 }
 
-.lp-equip-chest {
-  grid-column: 2;
-  grid-row: 2;
+.lp-equip-legs {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.lp-equip-acc1 {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .lp-equip-acc2 {
   grid-column: 3;
   grid-row: 2;
-  align-self: center;
-}
-
-.lp-equip-legs {
-  grid-column: 2;
-  grid-row: 3;
 }
 
 .lp-equip-bag {
-  grid-column: 1;
+  grid-column: 3;
   grid-row: 3;
-  align-self: end;
 }
 
 .lp-inventory-panel {
   min-width: 0;
+  min-height: 0;
   padding: 10px;
   border-radius: var(--lp-radius);
   border: 1px solid var(--lp-line);
   background: var(--lp-panel-inset);
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .lp-inventory-panel.is-compact {
@@ -1439,20 +1796,29 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-inventory-detail {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 28;
+  width: min(260px, 72vw);
   min-width: 0;
-  min-height: 180px;
+  min-height: 0;
   padding: 12px;
   border-radius: var(--lp-radius);
-  border: 1px solid var(--lp-line);
-  background: var(--lp-panel-inset);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  border: 1px solid rgb(148 163 184 / 0.55);
+  background: rgb(15 23 42 / 0.96);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.35),
+    0 12px 32px rgb(0 0 0 / 0.55);
+  pointer-events: none;
+}
+
+.lp-inventory-detail[hidden] {
+  display: none !important;
 }
 
 .lp-inventory-detail-empty {
-  margin: 0;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.5;
+  display: none;
 }
 
 .lp-inventory-detail-body[hidden] {
@@ -1526,20 +1892,51 @@ body.lp-inventory-open .lp-hud-top {
     0 0 0 1px rgb(251 191 36 / 0.45);
 }
 
+/* 占位格保留在网格中，便于点击解析原点与占地预览 */
 .lp-inventory-slot.is-covered {
-  display: none;
+  background: rgb(15 23 42 / 0.55);
 }
 
 .lp-inventory-slot.is-span {
-  z-index: 1;
-  aspect-ratio: auto;
-  align-self: stretch;
-  min-height: 0;
+  z-index: 2;
+  overflow: visible;
 }
 
 .lp-inventory-slot.is-span .lp-inventory-item-icon {
-  width: calc(100% - 8px);
-  height: calc(100% - 8px);
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: calc(var(--span-w, 1) * 100% - 4px);
+  height: calc(var(--span-h, 1) * 100% - 4px);
+  margin: 0;
+  pointer-events: none;
+  box-shadow:
+    inset 0 -2px 0 rgb(0 0 0 / 0.22),
+    0 0 0 1px rgb(0 0 0 / 0.35);
+}
+
+.lp-inventory-slot.is-span .lp-inventory-item-qty {
+  right: calc(4px - (var(--span-w, 1) - 1) * 100%);
+  bottom: calc(2px - (var(--span-h, 1) - 1) * 100%);
+  z-index: 3;
+}
+
+.lp-inventory-slot.place-ok {
+  z-index: 4;
+  background: rgb(34 197 94 / 0.28);
+  box-shadow: inset 0 0 0 2px rgb(74 222 128 / 0.9);
+}
+
+.lp-inventory-slot.place-bad {
+  z-index: 4;
+  background: rgb(239 68 68 / 0.28);
+  box-shadow: inset 0 0 0 2px rgb(248 113 113 / 0.9);
+}
+
+.lp-inventory-slot.place-merge {
+  z-index: 4;
+  background: rgb(56 189 248 / 0.28);
+  box-shadow: inset 0 0 0 2px rgb(125 211 252 / 0.95);
 }
 
 .lp-inventory-panel-title {
@@ -1555,7 +1952,7 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-hands-bar {
   margin: 0;
-  padding: 8px;
+  padding: 10px;
   border-radius: var(--lp-radius);
   border: 1px solid var(--lp-line);
   background: rgb(2 6 23 / 0.55);
@@ -1570,28 +1967,82 @@ body.lp-inventory-open .lp-hud-top {
   letter-spacing: 0.04em;
 }
 
-.lp-hands-grid {
-  max-width: 120px;
-  gap: 8px;
+.lp-hands-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 10px;
 }
 
-.lp-hands-labels {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  max-width: 120px;
-  gap: 8px;
-  margin-top: 6px;
+.lp-hands-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.lp-hands-label {
   font-size: 11px;
   color: #64748b;
+  letter-spacing: 0.04em;
   text-align: center;
 }
 
+.lp-hands-slot-host {
+  width: var(--lp-hand-cell, 72px);
+}
+
+.lp-hands-slot-host .lp-inventory-slot {
+  width: var(--lp-hand-cell, 72px);
+  height: var(--lp-hand-cell, 72px);
+  min-height: var(--lp-hand-cell, 72px);
+  aspect-ratio: auto;
+  border: 1px solid rgb(100 116 139 / 0.75);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.45);
+  background: rgb(15 23 42 / 0.96);
+}
+
+.lp-hands-cell.is-primary {
+  --lp-hand-cell: 76px;
+}
+
+.lp-hands-cell.is-utility {
+  --lp-hand-cell: 52px;
+}
+
+.lp-hands-cell.is-utility .lp-hands-slot-host .lp-inventory-slot {
+  border-color: rgb(100 116 139 / 0.55);
+  background: rgb(15 23 42 / 0.88);
+}
+
+.lp-hands-slot-host .lp-inventory-item-icon {
+  font-size: clamp(12px, 1.6vw, 16px);
+}
+
+.lp-hands-cell.is-primary .lp-inventory-item-icon.has-image {
+  background-size: contain;
+}
+
 .lp-inventory-grid {
+  --cols: 4;
   display: grid;
-  grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr));
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  grid-auto-rows: auto;
+  width: 100%;
+  max-width: 100%;
   gap: 0;
   border-top: 1px solid rgb(100 116 139 / 0.65);
   border-left: 1px solid rgb(100 116 139 / 0.65);
+  box-sizing: border-box;
+}
+
+.lp-inventory-grid .lp-inventory-slot {
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 1;
 }
 
 .lp-inventory-slot {
@@ -1617,6 +2068,15 @@ body.lp-inventory-open .lp-hud-top {
   z-index: 1;
 }
 
+.lp-inventory-slot.is-dragging {
+  opacity: 0.32;
+}
+
+.lp-inventory-slot.is-dragging .lp-inventory-item-icon,
+.lp-inventory-slot.is-dragging .lp-inventory-item-qty {
+  visibility: hidden;
+}
+
 .lp-inventory-item-icon {
   display: grid;
   place-items: center;
@@ -1630,6 +2090,17 @@ body.lp-inventory-open .lp-hud-top {
   font-size: clamp(11px, 2.4vw, 14px);
   font-weight: 800;
   box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.22);
+}
+
+.lp-inventory-item-icon.has-image {
+  background-color: #0f172a;
+  background-image: none;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  color: transparent;
+  text-shadow: none;
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 0.65);
 }
 
 .lp-inventory-item-qty {
@@ -1652,9 +2123,9 @@ body.lp-inventory-open .lp-hud-top {
   position: fixed;
   left: 0;
   top: 0;
-  width: 52px;
-  height: 52px;
-  margin: -26px 0 0 -26px;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
   border: 1px solid rgb(245 158 11 / 0.85);
   border-radius: var(--lp-radius);
   background: rgb(15 23 42 / 0.95);
@@ -1665,10 +2136,15 @@ body.lp-inventory-open .lp-hud-top {
     0 6px 16px rgb(0 0 0 / 0.4);
 }
 
+.lp-inventory-cursor-slot.is-span {
+  border-color: rgb(251 191 36 / 0.95);
+}
+
 .lp-inventory-cursor-slot .lp-inventory-item-icon {
   width: calc(100% - 6px);
   height: calc(100% - 6px);
   margin: 3px;
+  font-size: clamp(12px, 2.2vw, 16px);
 }
 
 /* ---- 移动端触控（复用 avatar 大厅左右分区 + 圆形动作键布局） ---- */
@@ -1684,6 +2160,24 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-subtitle {
     display: none;
+  }
+
+  .lp-desktop-only {
+    display: none !important;
+  }
+
+  .lp-mobile-only {
+    display: inline !important;
+  }
+
+  .lp-inventory-ghost-button .lp-label-long,
+  .lp-inventory-close-button .lp-label-long {
+    display: none;
+  }
+
+  .lp-inventory-ghost-button .lp-label-short,
+  .lp-inventory-close-button .lp-label-short {
+    display: inline;
   }
 
   .lp-skin-link .lp-label-long,
@@ -1715,16 +2209,31 @@ body.lp-inventory-open .lp-hud-top {
     position: absolute;
     inset:
       auto
-      calc(18px + env(safe-area-inset-right))
-      calc(18px + env(safe-area-inset-bottom))
-      calc(18px + env(safe-area-inset-left));
+      calc(22px + env(safe-area-inset-right))
+      calc(22px + env(safe-area-inset-bottom))
+      calc(22px + env(safe-area-inset-left));
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
-    gap: 12px;
+    gap: 20px;
     pointer-events: none;
     z-index: 4;
     transition: opacity 0.15s ease;
+  }
+
+  .lp-hands-hud {
+    left: calc(12px + env(safe-area-inset-left));
+    bottom: calc(118px + env(safe-area-inset-bottom));
+    padding: 6px;
+    gap: 6px;
+  }
+
+  .lp-hands-hud-slot.is-primary {
+    --lp-hud-hand: 56px;
+  }
+
+  .lp-hands-hud-slot.is-utility {
+    --lp-hud-hand: 40px;
   }
 
   .lp-mobile-controls.is-disabled {
@@ -1736,22 +2245,25 @@ body.lp-inventory-open .lp-hud-top {
     pointer-events: auto;
   }
 
+  .lp-mobile-move-cluster {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
   .lp-mobile-action-cluster {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 10px;
+    gap: 16px;
   }
 
   .lp-mobile-action-secondary,
   .lp-mobile-action-buttons {
     display: flex;
     align-items: flex-end;
-    gap: 12px;
-  }
-
-  .lp-mobile-action-secondary {
-    gap: 10px;
+    gap: 16px;
   }
 
   .lp-move-joystick,
@@ -1823,10 +2335,8 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-mobile-jump-button,
   .lp-mobile-fire-button,
-  .lp-mobile-interact-button,
-  .lp-mobile-inventory-button,
-  .lp-mobile-sprint-button {
-    width: clamp(72px, 18vw, 92px);
+  .lp-mobile-inventory-button {
+    width: clamp(68px, 17vw, 88px);
     aspect-ratio: 1;
     border-radius: 50%;
     color: #f8fafc;
@@ -1838,40 +2348,48 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-mobile-jump-button {
-    width: clamp(76px, 19vw, 96px);
+    width: clamp(72px, 18vw, 90px);
     border: 2px solid rgb(245 158 11 / 0.5);
     background: rgb(245 158 11 / 0.24);
   }
 
   .lp-mobile-fire-button {
-    width: clamp(76px, 19vw, 96px);
+    width: clamp(72px, 18vw, 90px);
     border: 2px solid rgb(248 113 113 / 0.6);
     background: rgb(220 38 38 / 0.32);
     color: #fef2f2;
   }
 
-  .lp-mobile-interact-button {
-    width: clamp(64px, 16vw, 82px);
-    border: 2px solid rgb(96 165 250 / 0.55);
-    background: rgb(59 130 246 / 0.22);
-    color: #dbeafe;
-    font-size: 13px;
-  }
-
   .lp-mobile-inventory-button {
-    width: clamp(58px, 15vw, 76px);
+    width: clamp(58px, 15vw, 74px);
     border: 2px solid rgb(167 139 250 / 0.55);
     background: rgb(124 58 237 / 0.22);
     color: #ede9fe;
     font-size: 13px;
   }
 
+  .lp-mobile-inventory-button.is-interact-mode {
+    border-color: rgb(96 165 250 / 0.6);
+    background: rgb(59 130 246 / 0.28);
+    color: #dbeafe;
+  }
+
   .lp-mobile-sprint-button {
-    width: clamp(58px, 15vw, 76px);
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    aspect-ratio: auto;
+    border-radius: 0;
     border: 2px solid rgb(52 211 153 / 0.55);
-    background: rgb(6 95 70 / 0.45);
+    background: rgb(6 95 70 / 0.5);
     color: #d1fae5;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 700;
+    touch-action: none;
+    user-select: none;
+    padding: 0;
+    line-height: 1;
   }
 
   .lp-mobile-jump-button.is-active {
@@ -1884,13 +2402,17 @@ body.lp-inventory-open .lp-hud-top {
     transform: scale(0.94);
   }
 
-  .lp-mobile-interact-button.is-active {
-    background: rgb(59 130 246 / 0.6);
+  .lp-mobile-inventory-button.is-active {
+    background: rgb(124 58 237 / 0.62);
     transform: scale(0.94);
   }
 
-  .lp-mobile-inventory-button.is-active {
-    background: rgb(124 58 237 / 0.62);
+  .lp-mobile-inventory-button.is-interact-mode.is-active {
+    background: rgb(59 130 246 / 0.65);
+  }
+
+  .lp-mobile-sprint-button.is-active {
+    background: rgb(16 185 129 / 0.55);
     transform: scale(0.94);
   }
 
@@ -1909,10 +2431,6 @@ body.lp-inventory-open .lp-hud-top {
       transform: scale(1.06);
     }
   }
-
-  .lp-mobile-interact-button[hidden] {
-    display: none;
-  }
 }
 
 @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
@@ -1930,27 +2448,297 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 @media (max-width: 720px) {
-  .lp-inventory-body,
-  .lp-inventory-root.is-dual .lp-inventory-body {
-    grid-template-columns: 1fr;
-  }
-
-  .lp-gear-panel {
-    order: -2;
-  }
-
-  .lp-inventory-detail {
-    order: -1;
-    min-height: 0;
-  }
-
-  .lp-paperdoll {
-    min-height: 0;
-  }
-
   .lp-inventory-shell {
     width: 100%;
     max-height: 92dvh;
+  }
+}
+
+/* ---- 移动端物品栏：顶部分区 + 单栏 + 底部详情 ---- */
+@media (hover: none), (pointer: coarse) {
+  .lp-inventory-root.is-mobile-inv {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-shell {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-width: 0;
+    border-radius: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-tabs:not([hidden]) {
+    display: flex;
+    padding-left: calc(8px + env(safe-area-inset-left));
+    padding-right: calc(8px + env(safe-area-inset-right));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-header {
+    padding:
+      calc(10px + env(safe-area-inset-top))
+      calc(12px + env(safe-area-inset-right))
+      10px
+      calc(12px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-eyebrow {
+    display: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-title {
+    font-size: 16px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-settings {
+    padding:
+      10px
+      calc(12px + env(safe-area-inset-right))
+      8px
+      calc(12px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-body,
+  .lp-inventory-root.is-mobile-inv.is-side-loot .lp-inventory-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    gap: 10px;
+    padding:
+      10px
+      calc(12px + env(safe-area-inset-right))
+      10px
+      calc(12px + env(safe-area-inset-left));
+    overflow: hidden;
+    grid-template-columns: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="bag"],
+  .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="gear"],
+  .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="nearby"] {
+    display: none;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="bag"] .lp-inventory-body > [data-lp-inv-pane="bag"],
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-inventory-body > [data-lp-inv-pane="nearby"] {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-side-loot-scroll {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="gear"] .lp-inventory-body > [data-lp-inv-pane="gear"] {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* 与顶栏 Tab 重复的面板标题在移动端隐藏（附近侧栏保留分区标题） */
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="bag"] .lp-inventory-panel-title,
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="gear"] .lp-inventory-panel-title {
+    display: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-side-loot-section .lp-inventory-panel-title {
+    display: block;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail {
+    position: relative;
+    left: auto;
+    top: auto;
+    z-index: 1;
+    width: auto;
+    max-height: 28%;
+    min-height: 0;
+    margin:
+      0
+      calc(12px + env(safe-area-inset-right))
+      0
+      calc(12px + env(safe-area-inset-left));
+    overflow: auto;
+    pointer-events: auto;
+    transform: none !important;
+    flex: 0 1 auto;
+    padding: 10px 12px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail[hidden] {
+    display: none !important;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-body:not([hidden]) {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    grid-template-areas:
+      "icon name"
+      "icon meta"
+      "use use";
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: start;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-icon-wrap {
+    grid-area: icon;
+    width: 48px;
+    height: 48px;
+    margin: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-name {
+    grid-area: name;
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-meta {
+    grid-area: meta;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-meta div {
+    padding: 6px 8px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-use-label {
+    display: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail-use {
+    grid-area: use;
+    margin: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-gear-panel,
+  .lp-inventory-root.is-mobile-inv .lp-inventory-panel {
+    min-width: 0;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  /* 手部优先：拇指区更易够到 */
+  .lp-inventory-root.is-mobile-inv .lp-hands-bar {
+    order: -1;
+    max-width: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-hands-row {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-hands-cell.is-primary {
+    --lp-hand-cell: 72px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-hands-cell.is-utility {
+    --lp-hand-cell: 52px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-paperdoll {
+    grid-template-columns: 52px minmax(72px, 1fr) 52px;
+    gap: 8px 6px;
+    min-height: 0;
+    margin: 0;
+    padding: 4px 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-paperdoll-preview {
+    min-height: min(168px, 36vh);
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-equip-slot-host,
+  .lp-inventory-root.is-mobile-inv .lp-equip-slot-host .lp-inventory-slot {
+    width: 48px;
+    min-height: 48px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-slot {
+    min-height: 44px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-grid {
+    width: 100%;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-footer {
+    padding:
+      8px
+      calc(12px + env(safe-area-inset-right))
+      calc(8px + env(safe-area-inset-bottom))
+      calc(12px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-footer p {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-close-button,
+  .lp-inventory-root.is-mobile-inv .lp-inventory-ghost-button {
+    min-height: 40px;
+    padding: 8px 14px;
+  }
+
+  /* 加燃料：窄屏保持炉口与燃料架并排贴近 */
+  .lp-fuel-feed-hint {
+    max-width: min(78vw, 320px);
+    white-space: normal;
+    text-align: center;
+    line-height: 1.35;
+  }
+
+  .lp-fuel-feed-dock {
+    left: 50%;
+    transform: translate(-50%, -50%);
+    gap: 10px;
+  }
+
+  .lp-fuel-drop-zone {
+    width: min(132px, 34vw);
+    height: min(220px, 42vh);
+  }
+
+  .lp-fuel-item-slot,
+  .lp-fuel-coal-slot {
+    width: 68px;
+    height: 68px;
+  }
+
+  .lp-boiler-shell {
+    width: 100vw;
+  }
+
+  .lp-cab-desk {
+    max-height: 100dvh;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+  .lp-inventory-root.is-mobile-inv .lp-paperdoll-preview {
+    min-height: min(132px, 48vh);
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-detail {
+    max-height: 32%;
   }
 }
 
@@ -1964,12 +2752,18 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-mobile-action-buttons {
-    gap: 10px;
+    gap: 14px;
   }
 
-  .lp-mobile-inventory-button,
-  .lp-mobile-interact-button,
+  .lp-mobile-inventory-button {
+    font-size: 12px;
+  }
+
   .lp-mobile-sprint-button {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
     font-size: 12px;
   }
 

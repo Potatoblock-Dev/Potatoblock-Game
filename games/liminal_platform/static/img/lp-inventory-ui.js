@@ -11,12 +11,10 @@
   const root = document.getElementById('lpInventoryRoot');
   const playerGrid = document.getElementById('lpPlayerGrid');
   const groundGrid = document.getElementById('lpGroundGrid');
-  const storageGrid = document.getElementById('lpStorageGrid');
-  const sideLootPanel = document.getElementById('lpSideLootPanel');
-  const groundSection = document.getElementById('lpGroundSection');
-  const storageSection = document.getElementById('lpStorageSection');
-  const sideLootDivider = document.getElementById('lpSideLootDivider');
+  const groundPanel = document.getElementById('lpGroundInventoryPanel');
   const handsHosts = [0, 1, 2].map((i) => document.getElementById(`lpHandsSlot${i}`));
+  const storageGrid = document.getElementById('lpStorageGrid');
+  const storagePanel = document.getElementById('lpStorageInventoryPanel');
   const playerPanel = document.getElementById('lpPlayerInventoryPanel');
   const cursorEl = document.getElementById('lpInventoryCursor');
   const settingsPanel = document.getElementById('lpInventorySettings');
@@ -50,10 +48,7 @@
     !playerGrid ||
     !storageGrid ||
     !groundGrid ||
-    !sideLootPanel ||
-    !groundSection ||
-    !storageSection ||
-    !sideLootDivider ||
+    !groundPanel ||
     handsHosts.some((el) => !el) ||
     EQUIP_HOSTS.some((el) => !el)
   ) {
@@ -75,7 +70,7 @@
     suppressClick: false,
     pointerId: null,
     inspectPinned: false,
-    /** 移动端分区：bag | gear | nearby */
+    /** 移动端分区：bag | gear | ground | storage */
     mobileTab: 'bag',
     /** 持物悬停格，供 render 后重绘占地预览 */
     hoverSlot: null,
@@ -213,34 +208,17 @@
     return null;
   }
 
-  /** 是否显示附近侧栏（地面或仓库）。 */
-  function hasSideLoot() {
-    return Boolean(state.groundInv) || state.inStorageCar;
-  }
-
-  /** 同步附近侧栏（地面 / 仓库共用，可同时显示并以分割线隔开）。 */
-  function syncSideLootPanel(worldX = state.openWorldX) {
+  /** 绑定附近地面堆并刷新面板显隐。 */
+  function syncGroundPanel(worldX = state.openWorldX) {
     const pile = window.LpGroundLoot?.getNearbyPile?.(worldX) || null;
     state.groundPile = pile;
     state.groundInv = pile?.inv || null;
-    const showGround = Boolean(state.groundInv);
-    const showStorage = state.inStorageCar;
-    const showSide = showGround || showStorage;
-
-    groundSection.hidden = !showGround;
-    storageSection.hidden = !showStorage;
-    sideLootDivider.hidden = !(showGround && showStorage);
-    sideLootPanel.hidden = !showSide;
-    root.classList.toggle('is-side-loot', showSide);
-
-    const nearbyTab = tabsNav?.querySelector('[data-lp-inv-tab="nearby"]');
-    if (nearbyTab) nearbyTab.hidden = !showSide;
-    if (!showSide && state.mobileTab === 'nearby') state.mobileTab = 'bag';
-  }
-
-  /** 绑定附近地面堆并刷新面板显隐。 */
-  function syncGroundPanel(worldX = state.openWorldX) {
-    syncSideLootPanel(worldX);
+    const show = Boolean(state.groundInv);
+    groundPanel.hidden = !show;
+    root.classList.toggle('is-ground', show);
+    const groundTab = tabsNav?.querySelector('[data-lp-inv-tab="ground"]');
+    if (groundTab) groundTab.hidden = !show;
+    if (!show && state.mobileTab === 'ground') state.mobileTab = 'bag';
   }
 
   /** 装备变更后同步背包容量，溢出丢地面。 */
@@ -648,8 +626,11 @@
     } else {
       groundGrid.replaceChildren();
     }
-    syncSideLootPanel();
-    playerPanel.classList.toggle('is-compact', !hasSideLoot());
+    root.classList.toggle('is-dual', state.inStorageCar);
+    root.classList.toggle('is-ground', Boolean(state.groundInv));
+    storagePanel.hidden = !state.inStorageCar;
+    groundPanel.hidden = !state.groundInv;
+    playerPanel.classList.toggle('is-compact', !state.inStorageCar);
     syncMobileChrome();
   }
 
@@ -661,8 +642,8 @@
       return;
     }
     if (state.cursor) {
-      hintEl.textContent = hasSideLoot()
-        ? '持物中：点空位放置，或切换「背包 / 附近」转移'
+      hintEl.textContent = state.inStorageCar
+        ? '持物中：点空位放置，或切换「背包 / 仓库」转移'
         : '持物中：点空位放置，切到「人物」可装装备/手部';
       return;
     }
@@ -670,8 +651,12 @@
       hintEl.textContent = '点选查看 · 再点拾起 · 点格子穿戴或到手部';
       return;
     }
-    if (state.mobileTab === 'nearby') {
-      hintEl.textContent = '点选拾起 · 切到「背包」放入随身或仓库';
+    if (state.mobileTab === 'storage') {
+      hintEl.textContent = '点选拾起 · 切到「背包」放置以取出或存入';
+      return;
+    }
+    if (state.mobileTab === 'ground') {
+      hintEl.textContent = '点选拾起 · 切到「背包」放入随身';
       return;
     }
     hintEl.textContent = '点选查看 · 再点拾起 · 拖到其他格移动';
@@ -683,8 +668,10 @@
     root.classList.toggle('is-mobile-inv', mobile);
     if (tabsNav) tabsNav.hidden = !mobile;
 
-    const nearbyTab = tabsNav?.querySelector('[data-lp-inv-tab="nearby"]');
-    if (nearbyTab) nearbyTab.hidden = !hasSideLoot();
+    const storageTab = tabsNav?.querySelector('[data-lp-inv-tab="storage"]');
+    if (storageTab) storageTab.hidden = !state.inStorageCar;
+    const groundTab = tabsNav?.querySelector('[data-lp-inv-tab="ground"]');
+    if (groundTab) groundTab.hidden = !state.groundInv;
 
     if (!mobile) {
       root.dataset.lpInvTab = '';
@@ -692,7 +679,10 @@
       return;
     }
 
-    if (!hasSideLoot() && state.mobileTab === 'nearby') {
+    if (!state.inStorageCar && state.mobileTab === 'storage') {
+      state.mobileTab = 'bag';
+    }
+    if (!state.groundInv && state.mobileTab === 'ground') {
       state.mobileTab = 'bag';
     }
     root.dataset.lpInvTab = state.mobileTab;
@@ -704,20 +694,13 @@
 
   /** 切换移动端分区。 */
   function setMobileTab(tab) {
-    if (tab === 'nearby' && !hasSideLoot()) return;
-    if (tab === 'storage' || tab === 'ground') {
-      tab = 'nearby';
-    }
+    if (tab === 'storage' && !state.inStorageCar) return;
     state.mobileTab = tab;
     syncMobileChrome();
   }
 
-  /** 持物光标单格边长（跟随当前背包格实测宽度）。 */
-  function cursorCellPx() {
-    const slot = playerGrid.querySelector('.lp-inventory-slot');
-    const w = slot?.getBoundingClientRect?.().width;
-    return w > 8 ? w : 44;
-  }
+  /** 持物光标单格边长（与背包格一致）。 */
+  const CURSOR_CELL = 48;
 
   /** 光标幽灵用的堆叠：点击持物或拖拽中。 */
   function heldGhostStack() {
@@ -757,9 +740,8 @@
       return;
     }
     const size = Catalog.getItemSize(item.id);
-    const cell = cursorCellPx();
-    const width = cell * size.w;
-    const height = cell * size.h;
+    const width = CURSOR_CELL * size.w;
+    const height = CURSOR_CELL * size.h;
     cursorEl.hidden = false;
     cursorEl.classList.toggle('is-span', size.w > 1 || size.h > 1);
     cursorEl.style.width = `${width}px`;
@@ -1002,9 +984,14 @@
     state.inStorageCar = isInStorageCar(worldX);
     state.open = true;
     syncGroundPanel(worldX);
-    state.mobileTab = hasSideLoot() ? 'nearby' : 'bag';
+    state.mobileTab = state.groundInv
+      ? 'ground'
+      : state.inStorageCar
+        ? 'storage'
+        : 'bag';
     root.hidden = false;
-    root.classList.toggle('is-side-loot', hasSideLoot());
+    root.classList.toggle('is-dual', state.inStorageCar);
+    root.classList.toggle('is-ground', Boolean(state.groundInv));
     root.setAttribute('aria-hidden', 'false');
     document.body.classList.add('lp-inventory-open');
     window.LpTouchControls?.setEnabled(false);
@@ -1031,15 +1018,13 @@
     stopEquipPreviewLoop();
     clearPlacePreview();
     root.hidden = true;
-    root.classList.remove('is-dual', 'is-ground', 'is-side-loot', 'is-mobile-inv');
+    root.classList.remove('is-dual', 'is-ground', 'is-mobile-inv');
     root.dataset.lpInvTab = '';
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-inventory-open');
     settingsPanel.hidden = true;
-    sideLootPanel.hidden = true;
-    groundSection.hidden = true;
-    storageSection.hidden = true;
-    sideLootDivider.hidden = true;
+    storagePanel.hidden = true;
+    groundPanel.hidden = true;
     clearDetail();
     renderCursor();
     window.LpHandsHud?.render?.();

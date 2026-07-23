@@ -14,6 +14,7 @@
 
   const Entity = window.AvatarEntity;
   const MOVE_SPEED = Entity.MOVE_SPEED;
+  const RUN_SPEED = Entity.RUN_SPEED;
   const JUMP_SPEED = 520;
   const GRAVITY = 1400;
   const AVATAR_SIZE = Entity.AVATAR_SIZE;
@@ -207,6 +208,7 @@
       jump: touch.jump || isActionPressed('jump'),
       kneel: touch.kneel || isActionPressed('kneel'),
       interact: touch.interact,
+      sprint: isActionPressed('sprint'),
     };
   }
 
@@ -225,8 +227,11 @@
     const kneelTarget = kneel && local.onGround ? 1 : 0;
     local.kneel += (kneelTarget - local.kneel) * Math.min(1, dt * 10);
 
-    const targetVelocity = kneel ? 0 : direction * MOVE_SPEED;
-    const acceleration = kneel ? 2600 : direction === 0 ? 1100 : 1500;
+    const wantRun = Boolean(input.sprint) && !kneel && direction !== 0;
+    avatar.gait = wantRun ? 'run' : 'walk';
+    const moveSpeed = wantRun ? RUN_SPEED : MOVE_SPEED;
+    const targetVelocity = kneel ? 0 : direction * moveSpeed;
+    const acceleration = kneel ? 2600 : direction === 0 ? 1100 : wantRun ? 1900 : 1500;
     local.vx = approach(local.vx, targetVelocity, acceleration * dt);
     local.x = clampX(local.x + local.vx * dt);
 
@@ -294,6 +299,11 @@
     remote.onGround = Boolean(sample.onGround);
     remote.moveDirection = Math.sign(sample.vx) || 0;
     remote.kneel = sample.kneel ?? remote.kneel;
+    if (sample.gait === 'run' || sample.gait === 'walk') {
+      remote.gait = sample.gait;
+    } else {
+      remote.gait = Math.abs(sample.vx || 0) > MOVE_SPEED * 1.15 ? 'run' : 'walk';
+    }
   }
 
   function handleWorldSnapshot(payload) {
@@ -571,7 +581,11 @@
         const confirming = pendingDeleteId === skin.id;
         remove.classList.toggle('is-confirming', confirming);
         remove.title = confirming ? '再次点击确认删除' : '删除皮套';
-        remove.textContent = confirming ? '确认？' : '✕';
+        if (confirming) {
+          remove.textContent = '确认？';
+        } else {
+          remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+        }
         remove.addEventListener('click', (event) => {
           event.stopPropagation();
           if (pendingDeleteId === skin.id) {

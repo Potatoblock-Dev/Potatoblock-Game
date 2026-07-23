@@ -9,12 +9,16 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=27">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=47">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
     <canvas id="lpCanvas" aria-label="阈限月台场景"></canvas>
     <div id="lpCrosshair" class="lp-crosshair" hidden aria-hidden="true">
+      <span class="lp-crosshair-arm lp-crosshair-arm-n" aria-hidden="true"></span>
+      <span class="lp-crosshair-arm lp-crosshair-arm-s" aria-hidden="true"></span>
+      <span class="lp-crosshair-arm lp-crosshair-arm-w" aria-hidden="true"></span>
+      <span class="lp-crosshair-arm lp-crosshair-arm-e" aria-hidden="true"></span>
       <span class="lp-crosshair-dot"></span>
     </div>
     <div class="lp-stage-ui">
@@ -49,18 +53,26 @@
           </a>
         </nav>
       </header>
-      <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · F 交互 · Tab 物品栏</p>
+      <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · R 装填 · X 切换手部 · F 交互 · Tab 物品栏</p>
+      <div id="lpHandsHud" class="lp-hands-hud" aria-label="手部物品预览">
+        <button type="button" class="lp-hands-hud-slot is-primary" data-lp-hand-hud="0" aria-label="1"></button>
+        <button type="button" class="lp-hands-hud-slot is-primary" data-lp-hand-hud="1" aria-label="2"></button>
+        <button type="button" class="lp-hands-hud-slot is-utility" data-lp-hand-hud="2" aria-label="工具"></button>
+      </div>
       <div id="lpMobileControls" class="lp-mobile-controls" aria-label="触控操作">
-        <div
-          id="lpMoveJoystick"
-          class="lp-move-joystick"
-          role="slider"
-          aria-label="水平移动"
-          aria-valuemin="-1"
-          aria-valuemax="1"
-          aria-valuenow="0"
-        >
-          <span id="lpMoveJoystickKnob" class="lp-move-joystick-knob"></span>
+        <div class="lp-mobile-move-cluster">
+          <button type="button" id="lpMobileSprintButton" class="lp-mobile-sprint-button" aria-pressed="false">跑</button>
+          <div
+            id="lpMoveJoystick"
+            class="lp-move-joystick"
+            role="slider"
+            aria-label="水平移动"
+            aria-valuemin="-1"
+            aria-valuemax="1"
+            aria-valuenow="0"
+          >
+            <span id="lpMoveJoystickKnob" class="lp-move-joystick-knob"></span>
+          </div>
         </div>
         <div class="lp-mobile-action-cluster">
           <div
@@ -72,9 +84,7 @@
             <span id="lpLookJoystickKnob" class="lp-look-joystick-knob"></span>
           </div>
           <div class="lp-mobile-action-secondary">
-            <button type="button" id="lpMobileSprintButton" class="lp-mobile-sprint-button" aria-pressed="false">奔跑</button>
-            <button type="button" id="lpMobileInventoryButton" class="lp-mobile-inventory-button">物品</button>
-            <button type="button" id="lpMobileInteractButton" class="lp-mobile-interact-button" hidden>交互</button>
+            <button type="button" id="lpMobileInventoryButton" class="lp-mobile-inventory-button" data-mode="inventory">物品</button>
           </div>
           <div class="lp-mobile-action-buttons">
             <button type="button" id="lpMobileFireButton" class="lp-mobile-fire-button">开火</button>
@@ -83,7 +93,7 @@
         </div>
       </div>
       <div id="lpLoadError" class="lp-load-error" hidden>
-        <p>车厢素材加载失败，请确认 static/img 下已有 power-car.png 与 storage-car.png。</p>
+        <p>车厢素材加载失败，请确认 static/img 下已有 power-car.png、storage-car.png 与 guard-car.png。</p>
       </div>
     </div>
     <div id="lpInventoryRoot" class="lp-inventory-root" hidden aria-hidden="true">
@@ -95,68 +105,98 @@
             <h2 class="lp-inventory-title">物品栏</h2>
           </div>
           <div class="lp-inventory-header-actions">
-            <button type="button" id="lpInventorySettingsToggle" class="lp-inventory-ghost-button">键位</button>
+            <button type="button" id="lpInventorySettingsToggle" class="lp-inventory-ghost-button">
+              <span class="lp-label-long">键位</span>
+              <span class="lp-label-short">设置</span>
+            </button>
             <button type="button" id="lpInventoryClose" class="lp-inventory-close-button">关闭</button>
           </div>
         </header>
+        <nav id="lpInventoryTabs" class="lp-inventory-tabs" aria-label="物品栏分区" hidden>
+          <button type="button" class="lp-inventory-tab is-active" data-lp-inv-tab="bag">背包</button>
+          <button type="button" class="lp-inventory-tab" data-lp-inv-tab="gear">人物</button>
+          <button type="button" class="lp-inventory-tab" data-lp-inv-tab="nearby" hidden>附近</button>
+        </nav>
         <div id="lpInventorySettings" class="lp-inventory-settings" hidden>
-          <p class="lp-inventory-settings-title">键位与移动</p>
-          <div class="lp-binding-row">
+          <p class="lp-inventory-settings-title">
+            <span class="lp-desktop-only">键位与移动</span>
+            <span class="lp-mobile-only">移动设置</span>
+          </p>
+          <div class="lp-binding-row lp-desktop-only">
             <span>物品栏</span>
             <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="0"></button>
             <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="1"></button>
           </div>
-          <div class="lp-binding-row">
+          <div class="lp-binding-row lp-desktop-only">
             <span>交互</span>
             <button type="button" data-lp-binding-action="interact" data-lp-binding-slot="0"></button>
             <button type="button" data-lp-binding-action="interact" data-lp-binding-slot="1"></button>
           </div>
-          <div class="lp-binding-row">
+          <div class="lp-binding-row lp-desktop-only">
             <span>开火</span>
             <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="0"></button>
             <button type="button" data-lp-binding-action="fire" data-lp-binding-slot="1"></button>
           </div>
-          <div class="lp-binding-row">
+          <div class="lp-binding-row lp-desktop-only">
+            <span>装填</span>
+            <button type="button" data-lp-binding-action="reload" data-lp-binding-slot="0"></button>
+            <button type="button" data-lp-binding-action="reload" data-lp-binding-slot="1"></button>
+          </div>
+          <div class="lp-binding-row lp-desktop-only">
             <span>奔跑</span>
             <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="0"></button>
             <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="1"></button>
           </div>
+          <div class="lp-binding-row lp-desktop-only">
+            <span>切换手部</span>
+            <button type="button" data-lp-binding-action="handsHud" data-lp-binding-slot="0"></button>
+            <button type="button" data-lp-binding-action="handsHud" data-lp-binding-slot="1"></button>
+          </div>
           <label class="lp-setting-toggle">
             <input type="checkbox" id="lpAutoRunToggle" />
-            <span>自动奔跑（桌面：默认奔跑、按住奔跑键行走；移动端：默认打开奔跑切换）</span>
+            <span class="lp-desktop-only">自动奔跑（桌面：默认奔跑、按住奔跑键行走；移动端：默认打开奔跑切换）</span>
+            <span class="lp-mobile-only">自动奔跑（点左侧「跑」切换走/跑）</span>
           </label>
-          <p id="lpBindingStatus" class="lp-binding-status"></p>
-          <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button">恢复默认</button>
+          <p id="lpBindingStatus" class="lp-binding-status lp-desktop-only"></p>
+          <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button lp-desktop-only">恢复默认</button>
         </div>
         <div class="lp-inventory-body">
-          <aside id="lpGearPanel" class="lp-gear-panel" aria-label="手部与装备">
+          <section id="lpSideLootPanel" class="lp-inventory-panel lp-side-loot-panel" data-lp-inv-pane="nearby" hidden>
+            <div class="lp-side-loot-scroll">
+              <div id="lpGroundSection" class="lp-side-loot-section is-ground" hidden>
+                <h3 class="lp-inventory-panel-title">地面</h3>
+                <div id="lpGroundGrid" class="lp-inventory-grid lp-inventory-grid-ground"></div>
+              </div>
+              <div id="lpSideLootDivider" class="lp-side-loot-divider" hidden aria-hidden="true"></div>
+              <div id="lpStorageSection" class="lp-side-loot-section is-storage" hidden>
+                <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
+                <div id="lpStorageGrid" class="lp-inventory-grid lp-inventory-grid-storage"></div>
+              </div>
+            </div>
+          </section>
+          <aside id="lpGearPanel" class="lp-gear-panel" data-lp-inv-pane="gear" aria-label="手部与装备">
             <h3 class="lp-inventory-panel-title">旅人</h3>
             <div class="lp-paperdoll" aria-label="装备栏">
-              <div class="lp-paperdoll-silhouette" aria-hidden="true">
-                <span class="lp-sil-head"></span>
-                <span class="lp-sil-torso"></span>
-                <span class="lp-sil-leg lp-sil-leg-l"></span>
-                <span class="lp-sil-leg lp-sil-leg-r"></span>
-              </div>
+              <canvas id="lpEquipPreview" class="lp-paperdoll-preview" width="120" height="220" aria-hidden="true"></canvas>
               <div class="lp-equip-cell lp-equip-head">
                 <span class="lp-equip-label">头部</span>
                 <div id="lpEquipSlot0" class="lp-equip-slot-host"></div>
-              </div>
-              <div class="lp-equip-cell lp-equip-acc1">
-                <span class="lp-equip-label">配件1</span>
-                <div id="lpEquipSlot3" class="lp-equip-slot-host"></div>
               </div>
               <div class="lp-equip-cell lp-equip-chest">
                 <span class="lp-equip-label">胸部</span>
                 <div id="lpEquipSlot1" class="lp-equip-slot-host"></div>
               </div>
-              <div class="lp-equip-cell lp-equip-acc2">
-                <span class="lp-equip-label">配件2</span>
-                <div id="lpEquipSlot4" class="lp-equip-slot-host"></div>
-              </div>
               <div class="lp-equip-cell lp-equip-legs">
                 <span class="lp-equip-label">腿部</span>
                 <div id="lpEquipSlot2" class="lp-equip-slot-host"></div>
+              </div>
+              <div class="lp-equip-cell lp-equip-acc1">
+                <span class="lp-equip-label">配件1</span>
+                <div id="lpEquipSlot3" class="lp-equip-slot-host"></div>
+              </div>
+              <div class="lp-equip-cell lp-equip-acc2">
+                <span class="lp-equip-label">配件2</span>
+                <div id="lpEquipSlot4" class="lp-equip-slot-host"></div>
               </div>
               <div class="lp-equip-cell lp-equip-bag">
                 <span class="lp-equip-label">背包</span>
@@ -165,51 +205,54 @@
             </div>
             <div class="lp-hands-bar" aria-label="手部物品栏">
               <p class="lp-hands-title">手部</p>
-              <div id="lpHandsGrid" class="lp-inventory-grid lp-hands-grid"></div>
-              <div class="lp-hands-labels">
-                <span>左手</span>
-                <span>右手</span>
+              <div class="lp-hands-row">
+                <div class="lp-hands-cell is-primary">
+                  <div id="lpHandsSlot0" class="lp-hands-slot-host"></div>
+                </div>
+                <div class="lp-hands-cell is-primary">
+                  <div id="lpHandsSlot1" class="lp-hands-slot-host"></div>
+                </div>
+                <div class="lp-hands-cell is-utility">
+                  <div id="lpHandsSlot2" class="lp-hands-slot-host"></div>
+                  <span class="lp-hands-label">工具</span>
+                </div>
               </div>
             </div>
           </aside>
-          <section id="lpPlayerInventoryPanel" class="lp-inventory-panel">
+          <section id="lpPlayerInventoryPanel" class="lp-inventory-panel" data-lp-inv-pane="bag">
             <h3 class="lp-inventory-panel-title">背包</h3>
             <div id="lpPlayerGrid" class="lp-inventory-grid"></div>
           </section>
-          <section id="lpStorageInventoryPanel" class="lp-inventory-panel" hidden>
-            <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
-            <div id="lpStorageGrid" class="lp-inventory-grid lp-inventory-grid-storage"></div>
-          </section>
-          <aside id="lpInventoryDetail" class="lp-inventory-detail" aria-live="polite">
-            <p class="lp-inventory-detail-empty" id="lpInventoryDetailEmpty">将鼠标移到物品上查看信息</p>
-            <div class="lp-inventory-detail-body" id="lpInventoryDetailBody" hidden>
-              <div class="lp-inventory-detail-icon-wrap">
-                <span id="lpInventoryDetailIcon" class="lp-inventory-item-icon"></span>
-              </div>
-              <h3 id="lpInventoryDetailName" class="lp-inventory-detail-name"></h3>
-              <dl class="lp-inventory-detail-meta">
-                <div>
-                  <dt>数量</dt>
-                  <dd id="lpInventoryDetailQty"></dd>
-                </div>
-                <div>
-                  <dt>类型</dt>
-                  <dd id="lpInventoryDetailType"></dd>
-                </div>
-                <div>
-                  <dt>占格</dt>
-                  <dd id="lpInventoryDetailSize"></dd>
-                </div>
-                <div>
-                  <dt>装备</dt>
-                  <dd id="lpInventoryDetailEquip"></dd>
-                </div>
-              </dl>
-              <p class="lp-inventory-detail-use-label">作用</p>
-              <p id="lpInventoryDetailUse" class="lp-inventory-detail-use"></p>
-            </div>
-          </aside>
         </div>
+        <aside id="lpInventoryDetail" class="lp-inventory-detail" hidden aria-live="polite">
+          <p class="lp-inventory-detail-empty" id="lpInventoryDetailEmpty" hidden>点击物品查看信息</p>
+          <div class="lp-inventory-detail-body" id="lpInventoryDetailBody" hidden>
+            <div class="lp-inventory-detail-icon-wrap">
+              <span id="lpInventoryDetailIcon" class="lp-inventory-item-icon"></span>
+            </div>
+            <h3 id="lpInventoryDetailName" class="lp-inventory-detail-name"></h3>
+            <dl class="lp-inventory-detail-meta">
+              <div>
+                <dt>数量</dt>
+                <dd id="lpInventoryDetailQty"></dd>
+              </div>
+              <div>
+                <dt>类型</dt>
+                <dd id="lpInventoryDetailType"></dd>
+              </div>
+              <div>
+                <dt>占格</dt>
+                <dd id="lpInventoryDetailSize"></dd>
+              </div>
+              <div>
+                <dt>装备</dt>
+                <dd id="lpInventoryDetailEquip"></dd>
+              </div>
+            </dl>
+            <p class="lp-inventory-detail-use-label">作用</p>
+            <p id="lpInventoryDetailUse" class="lp-inventory-detail-use"></p>
+          </div>
+        </aside>
         <footer class="lp-inventory-footer">
           <p id="lpInventoryHint">拖拽移动 · Shift+点击快速转移 · Tab 关闭</p>
         </footer>
@@ -220,21 +263,50 @@
       <div class="lp-fuel-feed-veil" aria-hidden="true"></div>
       <div class="lp-fuel-feed-stage" role="dialog" aria-modal="true" aria-label="添加燃料">
         <button type="button" id="lpFuelFeedClose" class="lp-fuel-feed-close">离席</button>
-        <p class="lp-fuel-feed-hint">将煤炭投入左侧炉口</p>
-        <div id="lpFuelDropZone" class="lp-fuel-drop-zone">
-          <span class="lp-fuel-drop-label">炉口</span>
-          <span class="lp-fuel-drop-sub">拖入添加</span>
-        </div>
-        <div class="lp-fuel-source-wrap">
-          <span class="lp-fuel-source-caption">煤炭</span>
-          <button type="button" id="lpFuelCoalSlot" class="lp-fuel-coal-slot" aria-label="拖动煤炭">
-            <span class="lp-fuel-coal-icon" aria-hidden="true"></span>
-            <span id="lpFuelCoalQty" class="lp-fuel-coal-qty">0</span>
-          </button>
+        <p class="lp-fuel-feed-hint">
+          <span id="lpFuelFeedHintDesktop" class="lp-desktop-only">将燃料拖入炉口 · F 离席</span>
+          <span class="lp-mobile-only">拖燃料到炉口</span>
+        </p>
+        <div class="lp-fuel-feed-dock">
+          <div id="lpFuelDropZone" class="lp-fuel-drop-zone">
+            <canvas id="lpFuelFlameCanvas" class="lp-fuel-flame-canvas" aria-hidden="true"></canvas>
+            <span class="lp-fuel-drop-label">炉口</span>
+            <span class="lp-fuel-drop-sub">拖入添加</span>
+          </div>
+          <div class="lp-fuel-rack" aria-label="可用燃料">
+            <p class="lp-fuel-rack-title">燃料</p>
+            <div id="lpFuelSourceGrid" class="lp-fuel-source-grid"></div>
+          </div>
         </div>
       </div>
       <div id="lpFuelDragGhost" class="lp-fuel-drag-ghost" hidden aria-hidden="true">
-        <span class="lp-fuel-coal-icon" aria-hidden="true"></span>
+        <span class="lp-fuel-item-icon" aria-hidden="true"></span>
+      </div>
+    </div>
+    <div id="lpGuardCrateRoot" class="lp-fuel-feed-root lp-guard-crate-root" hidden aria-hidden="true">
+      <div class="lp-fuel-feed-veil" aria-hidden="true"></div>
+      <div class="lp-fuel-feed-stage" role="dialog" aria-modal="true" aria-label="箱子存取">
+        <button type="button" id="lpGuardCrateClose" class="lp-fuel-feed-close">离席</button>
+        <p class="lp-fuel-feed-hint">
+          <span id="lpGuardCrateHintDesktop" class="lp-desktop-only">拖拽存取 · F 离席</span>
+          <span class="lp-mobile-only">拖拽存取</span>
+        </p>
+        <div id="lpGuardCrateDock" class="lp-fuel-feed-dock">
+          <div id="lpGuardCrateZone" class="lp-fuel-drop-zone lp-guard-crate-zone">
+            <span id="lpGuardCrateLabel" class="lp-fuel-drop-label">弹药箱</span>
+            <span id="lpGuardCrateSub" class="lp-fuel-drop-sub">拖入存放 · 拖出取出</span>
+            <button type="button" id="lpGuardCrateSlot" class="lp-fuel-item-slot" aria-label="箱内物品"></button>
+          </div>
+          <div class="lp-fuel-rack" aria-label="背包物品">
+            <p id="lpGuardCrateBagTitle" class="lp-fuel-rack-title">背包</p>
+            <div class="lp-fuel-source-grid">
+              <button type="button" id="lpGuardCrateBagSlot" class="lp-fuel-item-slot" aria-label="背包物品"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="lpGuardCrateDragGhost" class="lp-fuel-drag-ghost" hidden aria-hidden="true">
+        <span class="lp-fuel-item-icon" aria-hidden="true"></span>
       </div>
     </div>
     <div id="lpBoilerPanelRoot" class="lp-boiler-panel-root" hidden aria-hidden="true">
@@ -343,8 +415,6 @@
               <div class="lp-lever-stage">
                 <div class="lp-lever-notches">
                   <button type="button" data-brake-preset="0">松开</button>
-                  <button type="button" data-brake-preset="0.35">轻刹</button>
-                  <button type="button" data-brake-preset="0.7">制动</button>
                   <button type="button" data-brake-preset="1">急刹</button>
                 </div>
                 <div
@@ -362,30 +432,40 @@
             </section>
           </div>
 
-          <p class="lp-cab-stencil">拖动拉杆或点刻度 · Esc 离席</p>
+          <p class="lp-cab-stencil">
+            <span id="lpCabStencilDesktop" class="lp-desktop-only">拖动拉杆或点刻度 · F / Esc 离席</span>
+            <span class="lp-mobile-only">拖动拉杆或点刻度 · 点「离席」退出</span>
+          </p>
         </div>
       </div>
     </div>
   </div>
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
-  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=3"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=13"></script>
-  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=5"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=6"></script>
-  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=5"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=8"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=7"></script>
-  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=12"></script>
-  <script src="/static/games/liminal-platform/js/lp-combat.js?v=2"></script>
+  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=7"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=19"></script>
+  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=9"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=21"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=10"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=9"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=13"></script>
+  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=19"></script>
+  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=7"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=14"></script>
+  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=7"></script>
+  <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-combat.js?v=13"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/lp-sfx.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=8"></script>
+  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=8"></script>
   <script src="/static/games/liminal-platform/js/lp-network.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-session.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=18"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=37"></script>
 </body>
 </html>

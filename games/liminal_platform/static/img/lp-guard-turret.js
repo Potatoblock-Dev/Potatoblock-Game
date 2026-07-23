@@ -1,0 +1,545 @@
+/**
+ * 卫兵防御车厢：双炮塔操控、弹药箱存取、回收箱。
+ * 每座单管；轴心在圆球中心；过中垂线纵向镜像；限制下俯角；开火后坐、无抛壳。
+ */
+(() => {
+  const Spec = window.LiminalCarriageSpec;
+  const Core = window.LpInventoryCore;
+  const Catalog = window.LpItemCatalog;
+
+  const AMMO_ID = 'turret_ammo';
+  const CASING_ID = 'shell_casing';
+  /** 机炮连射间隔（秒）。 */
+  const FIRE_COOLDOWN = 0.11;
+  const TRACE_RANGE = 980;
+  const FLASH_LIFE = 0.13;
+  /** 火光相对枪口再向前伸出（世界像素）。 */
+  const FLASH_FORWARD = 10;
+  /** 开火后坐最大后移（世界像素）。 */
+  const RECOIL_MAX_PX = 14;
+  /** 后坐回位速度（归一化 0–1 / 秒）。 */
+  const RECOIL_RECOVER = 7.5;
+  const BARREL_URL = '/static/games/liminal-platform/img/guard-barrel.png?v=5';
+  /** 闲置朝向：炮管朝左。 */
+  const IDLE_ANGLE = Math.PI;
+  /** 相对水平的最大下俯角 / 仰角。 */
+  const MAX_DEPRESS = (10 * Math.PI) / 180;
+  const MAX_ELEVATE = (82 * Math.PI) / 180;
+
+  /** 贴图像素枢轴：炮塔圆球中心。 */
+  const ART_PIVOTS = [
+    { id: 'left', x: 612, y: 555 },
+    { id: 'right', x: 1624, y: 555 },
+  ];
+
+  const state = {
+    manned: null,
+    barrelImg: null,
+    barrelReady: false,
+    angles: { left: IDLE_ANGLE, right: IDLE_ANGLE },
+    /** 各塔后坐量 0–1（1 = 最大后移）。 */
+    recoil: { left: 0, right: 0 },
+    fireCooldown: 0,
+    flashes: [],
+    ammoInv: null,
+    recycleInv: null,
+  };
+
+  /** 读取或新建弹药箱 / 回收箱库存。 */
+  function ensureInventories() {
+    if (state.ammoInv && state.recycleInv) return;
+    const raw = localStorage.getItem('lp-guard-crates-v1');
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        state.ammoInv = Core.Inventory.fromJSON(parsed.ammo);
+        state.recycleInv = Core.Inventory.fromJSON(parsed.recycle);
+        return;
+      } catch (_) {
+        /* fall through */
+      }
+    }
+    state.ammoInv = new Core.Inventory('guard-ammo', 4, 2, [
+      { index: 0, stack: { itemId: AMMO_ID, qty: 60 } },
+    ]);
+    state.recycleInv = new Core.Inventory('guard-recycle', 3, 2, []);
+  }
+
+  /** 持久化弹药箱与回收箱。 */
+  function saveCrates() {
+    ensureInventories();
+    localStorage.setItem(
+      'lp-guard-crates-v1',
+      JSON.stringify({
+        ammo: state.ammoInv.toJSON(),
+        recycle: state.recycleInv.toJSON(),
+      })
+    );
+  }
+
+  /** 预加载炮管贴图。 */
+  function loadBarrelImage() {
+    if (state.barrelReady && state.barrelImg?.naturalWidth > 0) {
+      return Promise.resolve(state.barrelImg);
+    }
+    state.barrelReady = false;
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        state.barrelImg = img;
+        state.barrelReady = img.naturalWidth > 0;
+        resolve(img);
+      };
+      img.onerror = () => {
+        state.barrelReady = false;
+        reject(new Error('guard barrel load failed'));
+      };
+      img.src = BARREL_URL;
+    });
+  }
+
+  /** 卫兵车厢世界原点。 */
+  function guardCar() {
+    return Spec?.CARRIAGES?.find((car) => car.id === 'guard') || null;
+  }
+
+  /** 贴图像素 → 世界坐标（含车厢偏移）。 */
+  function artToWorld(artX, artY) {
+    const car = guardCar();
+    const scale = Spec?.scaleArt || ((v) => v);
+    return {
+      x: (car?.worldX ?? 0) + scale(artX),
+      y: scale(artY),
+    };
+  }
+
+  /** 炮管世界尺寸（按贴图比例）。 */
+  function barrelSizeWorld() {
+    const img = state.barrelImg;
+    const artW = img?.naturalWidth || img?.width || 299;
+    const artH = img?.naturalHeight || img?.height || 39;
+    const scale = Spec?.scaleArt || ((v) => v);
+    return { w: scale(artW), h: scale(artH) };
+  }
+
+  /** 无贴图时的双管剪影（避免加载失败时炮管消失）。 */
+  function drawBarrelFallback(ctx, bw, bh) {
+    const r = Math.max(2, bh * 0.2);
+    ctx.fillStyle = '#9a9a9a';
+    ctx.beginPath();
+    ctx.moveTo(r, -bh * 0.42);
+    ctx.arcTo(bw, -bh * 0.42, bw, -bh * 0.05, r);
+    ctx.arcTo(bw, -bh * 0.05, 0, -bh * 0.05, r);
+    ctx.lineTo(0, -bh * 0.42 + r);
+    ctx.arcTo(0, -bh * 0.42, r, -bh * 0.42, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#b4b4b4';
+    ctx.beginPath();
+    ctx.moveTo(r, bh * 0.02);
+    ctx.arcTo(bw * 0.92, bh * 0.02, bw * 0.92, bh * 0.38, r);
+    ctx.arcTo(bw * 0.92, bh * 0.38, 0, bh * 0.38, r);
+    ctx.lineTo(0, bh * 0.02 + r);
+    ctx.arcTo(0, bh * 0.02, r, bh * 0.02, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7a7a7a';
+    ctx.fillRect(0, -bh * 0.08, Math.max(6, bw * 0.04), bh * 0.2);
+  }
+
+  /** 炮管世界长度。 */
+  function barrelLengthWorld() {
+    return barrelSizeWorld().w;
+  }
+
+  /** 将瞄准角限制在仰角 / 俯角范围内（画布 y 向下为正俯角）。 */
+  function clampTurretAngle(raw) {
+    let a = Math.atan2(Math.sin(raw), Math.cos(raw));
+    const s = Math.sin(a);
+    const c = Math.cos(a);
+    const maxDown = Math.sin(MAX_DEPRESS);
+    const maxUp = Math.sin(MAX_ELEVATE);
+    let ns = s;
+    if (s > maxDown) ns = maxDown;
+    if (s < -maxUp) ns = -maxUp;
+    if (ns === s) return a;
+    const sign = c >= 0 ? 1 : -1;
+    const nc = sign * Math.sqrt(Math.max(0, 1 - ns * ns));
+    return Math.atan2(ns, nc);
+  }
+
+  /** 弹药箱剩余数量。 */
+  function ammoCount() {
+    ensureInventories();
+    return state.ammoInv.countItem(AMMO_ID);
+  }
+
+  /** 回收箱弹壳数量。 */
+  function casingCount() {
+    ensureInventories();
+    return state.recycleInv.countItem(CASING_ID);
+  }
+
+  /** 是否正在操控炮塔。 */
+  function isManned() {
+    return Boolean(state.manned);
+  }
+
+  /** 当前操控的炮塔 id。 */
+  function getMannedId() {
+    return state.manned;
+  }
+
+  /** 进入炮塔。 */
+  function enterTurret(turretId) {
+    state.manned = turretId === 'right' ? 'right' : 'left';
+    document.body.classList.add('lp-turret-mode');
+    window.LiminalInteract?.showToast?.(
+      state.manned === 'left' ? '进入左侧炮塔' : '进入右侧炮塔'
+    );
+    window.dispatchEvent(
+      new CustomEvent('lp:turret-enter', { detail: { turretId: state.manned } })
+    );
+  }
+
+  /** 离开炮塔，炮管收回闲置朝向。 */
+  function exitTurret() {
+    if (!state.manned) return;
+    state.manned = null;
+    state.angles.left = IDLE_ANGLE;
+    state.angles.right = IDLE_ANGLE;
+    document.body.classList.remove('lp-turret-mode');
+    window.LiminalInteract?.showToast?.('离开炮塔');
+    window.dispatchEvent(new CustomEvent('lp:turret-exit'));
+  }
+
+  /** 炮塔交互入口（F）。已在塔内则离席。 */
+  function interactTurret(turretId) {
+    if (state.manned) {
+      exitTurret();
+      return true;
+    }
+    enterTurret(turretId);
+    return true;
+  }
+
+  /** 物品 id：弹药箱 / 回收箱。 */
+  function itemIdForMode(mode) {
+    return mode === 'recycle' ? CASING_ID : AMMO_ID;
+  }
+
+  /** 对应箱子库存。 */
+  function invForMode(mode) {
+    ensureInventories();
+    return mode === 'recycle' ? state.recycleInv : state.ammoInv;
+  }
+
+  /** 玩家 → 箱子。返回实际存入数量。 */
+  function depositItem(mode, qty) {
+    const itemId = itemIdForMode(mode);
+    const inv = invForMode(mode);
+    const take = Math.max(0, Math.floor(qty));
+    if (take <= 0) return 0;
+    const taken = window.LpInventory?.consumeItem?.(itemId, take) ?? 0;
+    if (taken <= 0) return 0;
+    const leftover = inv.addItem(itemId, taken);
+    if (leftover > 0) {
+      window.LpInventory?.getPlayerInventory?.()?.addItem?.(itemId, leftover);
+    }
+    saveCrates();
+    return taken - leftover;
+  }
+
+  /** 箱子 → 玩家背包。返回实际取出数量。 */
+  function withdrawItem(mode, qty) {
+    const itemId = itemIdForMode(mode);
+    const inv = invForMode(mode);
+    const want = Math.max(0, Math.floor(qty));
+    if (want <= 0) return 0;
+    const removed = inv.removeItem(itemId, want);
+    if (removed <= 0) return 0;
+    const leftover =
+      window.LpInventory?.getPlayerInventory?.()?.addItem?.(itemId, removed) ?? removed;
+    if (leftover > 0) inv.addItem(itemId, leftover);
+    saveCrates();
+    return removed - (leftover || 0);
+  }
+
+  /** 弹药箱 F：打开存取面板。 */
+  function interactAmmoBox() {
+    if (state.manned) {
+      exitTurret();
+      return true;
+    }
+    if (window.LpGuardCrateUi?.isOpen?.()) {
+      window.LpGuardCrateUi.close();
+      return true;
+    }
+    window.LpGuardCrateUi?.openAmmo?.();
+    return true;
+  }
+
+  /** 回收箱 F：打开存取面板。 */
+  function interactRecycleBox() {
+    if (state.manned) {
+      exitTurret();
+      return true;
+    }
+    if (window.LpGuardCrateUi?.isOpen?.()) {
+      window.LpGuardCrateUi.close();
+      return true;
+    }
+    window.LpGuardCrateUi?.openRecycle?.();
+    return true;
+  }
+
+  /** 从弹药箱消耗一发。 */
+  function consumeCrateAmmo(qty = 1) {
+    ensureInventories();
+    return state.ammoInv.removeItem(AMMO_ID, qty);
+  }
+
+  /** 当前后坐后移距离（世界像素）。 */
+  function recoilPx(pivotId) {
+    return (state.recoil[pivotId] || 0) * RECOIL_MAX_PX;
+  }
+
+  /** 开火瞬间拉满后坐。 */
+  function kickRecoil(pivotId) {
+    state.recoil[pivotId] = 1;
+  }
+
+  /** 某塔单管枪口世界坐标（含后坐后移）。 */
+  function muzzlePoint(pivotId) {
+    const pivot = ART_PIVOTS.find((p) => p.id === pivotId);
+    if (!pivot) return null;
+    const world = artToWorld(pivot.x, pivot.y);
+    const angle = state.angles[pivotId];
+    const dirX = Math.cos(angle);
+    const dirY = Math.sin(angle);
+    const kick = recoilPx(pivotId);
+    const len = barrelLengthWorld();
+    return {
+      x: world.x + dirX * (len - kick),
+      y: world.y + dirY * (len - kick),
+      dirX,
+      dirY,
+      angle,
+    };
+  }
+
+  /** 两座炮塔枪口。 */
+  function allMuzzlePoints() {
+    return ART_PIVOTS.map((p) => muzzlePoint(p.id)).filter(Boolean);
+  }
+
+  /** 生成炮口火光（略伸出枪口，便于看见）。 */
+  function spawnMuzzleFlash(muzzle) {
+    state.flashes.push({
+      x: muzzle.x + muzzle.dirX * FLASH_FORWARD,
+      y: muzzle.y + muzzle.dirY * FLASH_FORWARD,
+      angle: muzzle.angle,
+      life: FLASH_LIFE,
+      maxLife: FLASH_LIFE,
+      jitter: Math.random() * Math.PI,
+    });
+  }
+
+  /** 生成炮塔飞行曳光弹（潜渊症电磁炮感：亮核 + 橙尾）。 */
+  function spawnTurretTracer(muzzle) {
+    window.LpCombat?.spawnTracer?.({
+      originX: muzzle.x,
+      originY: muzzle.y,
+      dirX: muzzle.dirX,
+      dirY: muzzle.dirY,
+      range: TRACE_RANGE,
+      weaponId: 'guard_turret',
+      style: 'turret',
+      facing: muzzle.dirX >= 0 ? 1 : -1,
+      flash: false,
+    });
+  }
+
+  /** 按准星更新双塔朝向（含俯仰限制）。 */
+  function aimBoth(aimX, aimY) {
+    for (const pivot of ART_PIVOTS) {
+      const world = artToWorld(pivot.x, pivot.y);
+      state.angles[pivot.id] = clampTurretAngle(
+        Math.atan2(aimY - world.y, aimX - world.x)
+      );
+    }
+  }
+
+  /**
+   * 炮塔开火：耗弹 1，双塔各一管后坐 + 曳光 + 火光（无抛壳）。
+   * 冷却内可被长按连续触发下一发。
+   */
+  function tryFire(aimX, aimY) {
+    if (!state.manned || state.fireCooldown > 0) return null;
+    if (ammoCount() <= 0) {
+      window.LiminalInteract?.showToast?.('弹药箱没有弹药');
+      state.fireCooldown = 0.35;
+      return null;
+    }
+    const spent = consumeCrateAmmo(1);
+    if (spent <= 0) return null;
+    saveCrates();
+    aimBoth(aimX, aimY);
+    state.fireCooldown = FIRE_COOLDOWN;
+
+    for (const pivot of ART_PIVOTS) {
+      kickRecoil(pivot.id);
+    }
+
+    const muzzles = allMuzzlePoints();
+    for (const muzzle of muzzles) {
+      spawnTurretTracer(muzzle);
+      spawnMuzzleFlash(muzzle);
+    }
+
+    const lead = muzzles[0];
+    window.dispatchEvent(
+      new CustomEvent('lp:weapon-fired', {
+        detail: {
+          weaponId: 'guard_turret',
+          originX: lead?.x,
+          originY: lead?.y,
+          dirX: lead?.dirX,
+          dirY: lead?.dirY,
+          turret: true,
+        },
+      })
+    );
+    return lead || null;
+  }
+
+  /** 推进冷却、后坐回位与火光。 */
+  function tick(dt) {
+    if (state.fireCooldown > 0) {
+      state.fireCooldown = Math.max(0, state.fireCooldown - dt);
+    }
+    for (const pivot of ART_PIVOTS) {
+      const id = pivot.id;
+      if (state.recoil[id] > 0) {
+        state.recoil[id] = Math.max(0, state.recoil[id] - RECOIL_RECOVER * dt);
+      }
+    }
+    for (let i = state.flashes.length - 1; i >= 0; i -= 1) {
+      state.flashes[i].life -= dt;
+      if (state.flashes[i].life <= 0) state.flashes.splice(i, 1);
+    }
+  }
+
+  /** 绘制单管炮管（后坐后移；过中垂线时纵向镜像）。 */
+  function drawBarrels(ctx) {
+    const { w: bw, h: bh } = barrelSizeWorld();
+    const img = state.barrelImg;
+    const useImg = Boolean(img && state.barrelReady && img.naturalWidth > 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    for (const pivot of ART_PIVOTS) {
+      const world = artToWorld(pivot.x, pivot.y);
+      const angle = state.angles[pivot.id];
+      const kick = recoilPx(pivot.id);
+      const flipY = Math.cos(angle) < 0;
+      ctx.save();
+      ctx.translate(world.x - Math.cos(angle) * kick, world.y - Math.sin(angle) * kick);
+      ctx.rotate(angle);
+      if (flipY) ctx.scale(1, -1);
+      if (useImg) {
+        ctx.drawImage(img, 0, -bh / 2, bw, bh);
+      } else {
+        drawBarrelFallback(ctx, bw, bh);
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /** 绘制炮口火光（亮核 + 橙晕 + 十字焰舌）。 */
+  function drawFlashes(ctx) {
+    for (const flash of state.flashes) {
+      const t = Math.max(0, flash.life / flash.maxLife);
+      const fade = t * t;
+      const r = 18 + (1 - t) * 22;
+      ctx.save();
+      ctx.translate(flash.x, flash.y);
+      ctx.rotate(flash.angle);
+      ctx.globalCompositeOperation = 'lighter';
+
+      const bloom = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.35);
+      bloom.addColorStop(0, `rgba(255, 252, 230, ${0.95 * fade})`);
+      bloom.addColorStop(0.25, `rgba(255, 200, 80, ${0.85 * fade})`);
+      bloom.addColorStop(0.55, `rgba(251, 120, 30, ${0.55 * fade})`);
+      bloom.addColorStop(1, 'rgba(180, 40, 0, 0)');
+      ctx.fillStyle = bloom;
+      ctx.beginPath();
+      ctx.ellipse(r * 0.2, 0, r * 1.35, r * 0.85, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      /* 焰舌：前伸 + 上下叉 */
+      ctx.rotate(flash.jitter * 0.08);
+      ctx.fillStyle = `rgba(255, 245, 200, ${0.9 * fade})`;
+      ctx.beginPath();
+      ctx.moveTo(-2, 0);
+      ctx.lineTo(r * 1.55, -r * 0.22);
+      ctx.lineTo(r * 1.15, 0);
+      ctx.lineTo(r * 1.55, r * 0.22);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = `rgba(255, 180, 60, ${0.75 * fade})`;
+      ctx.beginPath();
+      ctx.moveTo(0, -2);
+      ctx.lineTo(r * 0.55, -r * 0.95);
+      ctx.lineTo(r * 0.35, 0);
+      ctx.lineTo(r * 0.55, r * 0.95);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = `rgba(255, 255, 245, ${0.95 * fade})`;
+      ctx.beginPath();
+      ctx.ellipse(2, 0, 7 + 4 * t, 4.5 + 2 * t, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+  }
+
+  /** 在世界层绘制炮管与火光（曳光弹由 LpCombat 绘制）。 */
+  function draw(ctx) {
+    if (!guardCar()) return;
+    drawBarrels(ctx);
+    drawFlashes(ctx);
+  }
+
+  /** 准星镜头领先系数（进塔后更大，尤其配合纵向仰射）。 */
+  function getAimLeadScale() {
+    return state.manned ? 1.85 : 1;
+  }
+
+  ensureInventories();
+  loadBarrelImage().catch((err) => console.warn('[lp-guard]', err));
+
+  window.LpGuardTurret = {
+    loadBarrelImage,
+    isManned,
+    getMannedId,
+    enterTurret,
+    exitTurret,
+    interactTurret,
+    interactAmmoBox,
+    interactRecycleBox,
+    depositItem,
+    withdrawItem,
+    aimBoth,
+    tryFire,
+    tick,
+    draw,
+    getAimLeadScale,
+    ammoCount,
+    casingCount,
+    AMMO_ID,
+    CASING_ID,
+  };
+})();

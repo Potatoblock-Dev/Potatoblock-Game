@@ -243,7 +243,7 @@
     if (showJoints) drawJoint(ctx, x, y);
   }
 
-  function drawAvatarBody(ctx, entity, atlas) {
+  function drawAvatarBody(ctx, entity, atlas, options = {}) {
     const parts = window.UVLayout.resolveParts(atlas);
     const rig = window.UVLayout.RIG || { shoulderX: 14, shoulderY: -14, hipX: 7, hipY: 11 };
     const kneelOffset = entity.kneel * 11;
@@ -263,9 +263,17 @@
     const [frontArmUW, frontArmUL] = limbSize('frontArmUpper', 7, 15);
     const [, frontArmLL] = limbSize('frontArmLower', 7, 16);
     const bodyDraw = (parts.body && parts.body.drawRect) || [-11, -17, 22, 26];
+    const skipFrontArm = Boolean(options.skipFrontArm);
+    const frontArmOnly = Boolean(options.frontArmOnly);
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#111827';
     if (atlas) ctx.imageSmoothingEnabled = false;
+
+    if (frontArmOnly) {
+      drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
+        rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
+      return;
+    }
 
     drawSegmentedLimb(ctx, style('backLegUpper', '#3b82f6'), style('backLegLower', '#3b82f6'),
       -rig.hipX, rig.hipY + kneelOffset, backLegUW, backLegUL, backLegLL, joints.backHip.angle, joints.backKnee.angle);
@@ -281,8 +289,10 @@
     );
     drawSegmentedLimb(ctx, style('frontLegUpper', '#8b5cf6'), style('frontLegLower', '#8b5cf6'),
       rig.hipX, rig.hipY + kneelOffset, frontLegUW, frontLegUL, frontLegLL, joints.frontHip.angle, joints.frontKnee.angle);
-    drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
-      rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
+    if (!skipFrontArm) {
+      drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
+        rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
+    }
 
     const headDrawRect = atlas && parts.head.drawRect
       ? parts.head.drawRect
@@ -291,9 +301,10 @@
     const headY = headDrawRect[1] + kneelOffset;
     const headW = headDrawRect[2];
     const headH = headDrawRect[3];
-    // 绕颈窝旋转：看向鼠标时只转头，不带动身体。
-    const neckX = 0;
-    const neckY = headY + headH * 0.88;
+    const pivotRect =
+      atlas && parts.head.safeRect ? parts.head.safeRect : headDrawRect;
+    const neckX = pivotRect[0] + pivotRect[2] / 2;
+    const neckY = pivotRect[1] + kneelOffset + pivotRect[3] * 0.92;
     ctx.save();
     ctx.translate(neckX, neckY);
     ctx.rotate(entity.headLook || 0);
@@ -313,14 +324,62 @@
     ctx.restore();
   }
 
+  /** 套用与 drawAvatar 相同的实体变换。 */
+  function withAvatarTransform(ctx, entity, drawFn) {
+    ctx.save();
+    ctx.translate(entity.x, entity.y);
+    ctx.scale(entity.facing, 1);
+    ctx.translate(0, entity.bodyBob);
+    ctx.translate(0, AVATAR_SIZE / 2);
+    ctx.scale(
+      AVATAR_DRAW_SCALE * (1 + entity.squash * 0.35),
+      AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash)
+    );
+    ctx.translate(0, -AVATAR_SIZE / 2);
+    ctx.rotate(entity.lean);
+    drawFn();
+    ctx.restore();
+  }
+
   /**
-   * 头部颈窝的世界坐标（与 drawAvatar 变换一致，忽略微小 lean）。
+   * @param {object} [options]
+   * @param {boolean} [options.skipFrontArm] 持枪时先跳过前臂，稍后叠在枪上
    */
+  function drawAvatar(ctx, entity, view, dpr, options = {}) {
+    withAvatarTransform(ctx, entity, () => {
+      if (entity.uvAtlas) {
+        drawAvatarBody(ctx, entity, entity.uvAtlas, options);
+      } else if (entity.texture) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(
+          entity.texture,
+          -AVATAR_SIZE / 2, -AVATAR_SIZE / 2,
+          AVATAR_SIZE, AVATAR_SIZE
+        );
+      } else {
+        drawAvatarBody(ctx, entity, null, options);
+      }
+    });
+    if (!options.skipNickname) drawNickname(ctx, entity, view, dpr);
+  }
+
+  /** 仅绘制前臂（持枪时叠在枪械之上，保证手在最前层）。 */
+  function drawFrontArm(ctx, entity) {
+    withAvatarTransform(ctx, entity, () => {
+      const atlas = entity.uvAtlas || null;
+      if (entity.texture && !atlas) return;
+      drawAvatarBody(ctx, entity, atlas, { frontArmOnly: true });
+    });
+  }
+
+  /** 头部颈窝的世界坐标（与 drawAvatar 变换一致，忽略微小 lean）。 */
   function neckWorldPosition(entity) {
     const parts = entity.uvAtlas ? window.UVLayout.resolveParts(entity.uvAtlas) : null;
     const headDraw = (parts && parts.head && parts.head.drawRect) || [-9, -33, 18, 15];
+    const pivot =
+      (parts && parts.head && parts.head.safeRect) || headDraw;
     const kneelOffset = entity.kneel * 11;
-    const neckLocalY = headDraw[1] + kneelOffset + headDraw[3] * 0.88;
+    const neckLocalY = pivot[1] + kneelOffset + pivot[3] * 0.92;
     const scaleY = AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash);
     const y =
       entity.y
@@ -356,6 +415,7 @@
   }
 
   function drawNickname(ctx, entity, view, dpr) {
+    if (!entity.nickname) return;
     const avatarScaleY = AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash);
     const avatarTopY = entity.y + entity.bodyBob + AVATAR_SIZE / 2 - AVATAR_SIZE * avatarScaleY;
     const screenX = entity.x * view.zoom + view.offsetX;
@@ -383,34 +443,6 @@
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.fillText(label, screenX, screenY);
-  }
-
-  function drawAvatar(ctx, entity, view, dpr) {
-    ctx.save();
-    ctx.translate(entity.x, entity.y);
-    ctx.scale(entity.facing, 1);
-    ctx.translate(0, entity.bodyBob);
-    ctx.translate(0, AVATAR_SIZE / 2);
-    ctx.scale(
-      AVATAR_DRAW_SCALE * (1 + entity.squash * 0.35),
-      AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash)
-    );
-    ctx.translate(0, -AVATAR_SIZE / 2);
-    ctx.rotate(entity.lean);
-    if (entity.uvAtlas) {
-      drawAvatarBody(ctx, entity, entity.uvAtlas);
-    } else if (entity.texture) {
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(
-        entity.texture,
-        -AVATAR_SIZE / 2, -AVATAR_SIZE / 2,
-        AVATAR_SIZE, AVATAR_SIZE
-      );
-    } else {
-      drawAvatarBody(ctx, entity, null);
-    }
-    ctx.restore();
-    drawNickname(ctx, entity, view, dpr);
   }
 
   // 与服务端一致的归一化可用宽度（参考宽 1600），外推时把 vx 换算回 nx。
@@ -487,6 +519,122 @@
     return snaps[0];
   }
 
+  /**
+   * 角色局部点 → 世界坐标（与 drawAvatar 变换一致，含 lean）。
+   * 局部约定：面向右时 +X 向前，+Y 向下，原点在实体锚点（身中）。
+   */
+  function localPointToWorld(entity, localX, localY) {
+    const facing = entity.facing >= 0 ? 1 : -1;
+    const sx = AVATAR_DRAW_SCALE * (1 + (entity.squash || 0) * 0.35);
+    const sy = AVATAR_DRAW_SCALE * (entity.heightScale || 1) * (1 - (entity.squash || 0));
+    const bob = entity.bodyBob || 0;
+    const lean = entity.lean || 0;
+    const c = Math.cos(lean);
+    const s = Math.sin(lean);
+    const lx = localX * c - localY * s;
+    const ly = localX * s + localY * c;
+    return {
+      x: entity.x + facing * sx * lx,
+      y: entity.y + bob + AVATAR_SIZE / 2 + sy * (ly - AVATAR_SIZE / 2),
+    };
+  }
+
+  /**
+   * 双段肢末端局部坐标（上臂角 + 肘弯；骨骼沿 +Y 绘制）。
+   * 画布正角顺时针：局部 (0,L) → (-L·sinθ, L·cosθ)。
+   */
+  function limbTipLocal(originX, originY, upperLen, lowerLen, shoulderAngle, elbowAngle, alongLower = 1) {
+    const midX = originX - Math.sin(shoulderAngle) * upperLen;
+    const midY = originY + Math.cos(shoulderAngle) * upperLen;
+    const tipAngle = shoulderAngle + elbowAngle;
+    const t = Math.max(0, Math.min(1, alongLower));
+    return {
+      x: midX - Math.sin(tipAngle) * lowerLen * t,
+      y: midY + Math.cos(tipAngle) * lowerLen * t,
+    };
+  }
+
+  /** 前臂握枪掌心世界坐标（靠近指节，避免枪锚在掌心导致指尖穿模）。 */
+  function getFrontHandWorld(entity, alongLower = 0.88) {
+    const rig = window.UVLayout?.RIG || { shoulderX: 11, shoulderY: -16 };
+    const parts = entity.uvAtlas ? window.UVLayout.resolveParts(entity.uvAtlas) : null;
+    const upperLen = parts?.frontArmUpper?.drawSize?.[1] ?? 15;
+    const lowerLen = parts?.frontArmLower?.drawSize?.[1] ?? 16;
+    const kneelOffset = (entity.kneel || 0) * 11;
+    const sh = entity.joints?.frontShoulder?.angle ?? 0;
+    const el = entity.joints?.frontElbow?.angle ?? 0;
+    const palm = limbTipLocal(
+      rig.shoulderX,
+      rig.shoulderY + kneelOffset,
+      upperLen,
+      lowerLen,
+      sh,
+      el,
+      alongLower
+    );
+    return localPointToWorld(entity, palm.x, palm.y);
+  }
+
+  /** 后臂手部世界坐标（护木/扶匣）。 */
+  function getBackHandWorld(entity, alongLower = 0.88) {
+    const rig = window.UVLayout?.RIG || { shoulderX: 11, shoulderY: -16 };
+    const parts = entity.uvAtlas ? window.UVLayout.resolveParts(entity.uvAtlas) : null;
+    const upperLen = parts?.backArmUpper?.drawSize?.[1] ?? 15;
+    const lowerLen = parts?.backArmLower?.drawSize?.[1] ?? 16;
+    const kneelOffset = (entity.kneel || 0) * 11;
+    const sh = entity.joints?.backShoulder?.angle ?? 0;
+    const el = entity.joints?.backElbow?.angle ?? 0;
+    const palm = limbTipLocal(
+      -rig.shoulderX,
+      rig.shoulderY + kneelOffset,
+      upperLen,
+      lowerLen,
+      sh,
+      el,
+      alongLower
+    );
+    return localPointToWorld(entity, palm.x, palm.y);
+  }
+
+  /** 前肩世界坐标。 */
+  function getFrontShoulderWorld(entity) {
+    const rig = window.UVLayout?.RIG || { shoulderX: 11, shoulderY: -16 };
+    const kneelOffset = (entity.kneel || 0) * 11;
+    return localPointToWorld(entity, rig.shoulderX, rig.shoulderY + kneelOffset);
+  }
+
+  /** 后肩世界坐标。 */
+  function getBackShoulderWorld(entity) {
+    const rig = window.UVLayout?.RIG || { shoulderX: 11, shoulderY: -16 };
+    const kneelOffset = (entity.kneel || 0) * 11;
+    return localPointToWorld(entity, -rig.shoulderX, rig.shoulderY + kneelOffset);
+  }
+
+  /**
+   * 将手臂设为指向世界瞄准点（持枪/指向；大厅与月台共用）。
+   * 直接写关节角并清速度，覆盖程序化摆臂。
+   */
+  function applyAimArmPose(entity, aimWorld) {
+    if (!entity?.joints || !aimWorld || !window.ProceduralMotion?.computeAimArmPose) return;
+    const facing = entity.facing >= 0 ? 1 : -1;
+    const shoulder = getFrontShoulderWorld(entity);
+    const localAimX = (aimWorld.x - shoulder.x) * facing;
+    const localAimY = aimWorld.y - shoulder.y;
+    const pose = window.ProceduralMotion.computeAimArmPose(localAimX, localAimY);
+    const map = [
+      ['frontShoulder', pose.frontShoulder],
+      ['frontElbow', pose.frontElbow],
+      ['backShoulder', pose.backShoulder],
+      ['backElbow', pose.backElbow],
+    ];
+    for (const [key, angle] of map) {
+      const joint = entity.joints[key];
+      if (!joint) continue;
+      joint.angle = angle;
+      joint.velocity = 0;
+    }
+  }
+
   window.AvatarEntity = {
     AVATAR_SIZE,
     AVATAR_DRAW_SCALE,
@@ -499,7 +647,14 @@
     updateHeadLook,
     loadAppearance,
     drawAvatar,
+    drawFrontArm,
     footGroundLiftPx,
+    localPointToWorld,
+    getFrontHandWorld,
+    getBackHandWorld,
+    getFrontShoulderWorld,
+    getBackShoulderWorld,
+    applyAimArmPose,
     pushSnapshot,
     sampleRemote,
   };

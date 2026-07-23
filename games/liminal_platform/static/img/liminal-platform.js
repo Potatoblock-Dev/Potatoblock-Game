@@ -183,14 +183,9 @@
     return { x: local.x + facing * 160, y: avatar.y - 56 };
   }
 
-  /** 持枪/换弹用瞄准点（换弹时抬枪露顶匣）。 */
-  function getWeaponAimWorld() {
-    return window.LpReloadAction?.getAimOverride?.(avatar) || getAimWorld();
-  }
-
   /** 枪口世界坐标（持枪时沿瞄准方向；否则胸部占位）。 */
   function getMuzzleWorld() {
-    const aim = getWeaponAimWorld();
+    const aim = getAimWorld();
     const item = window.LpCombat?.getHeldWeaponItem?.();
     if (item && window.LpWeaponHold?.getMuzzleWorld) {
       return window.LpWeaponHold.getMuzzleWorld(avatar, aim, item);
@@ -204,7 +199,7 @@
 
   /** 抛壳口世界坐标。 */
   function getEjectWorld() {
-    const aim = getWeaponAimWorld();
+    const aim = getAimWorld();
     const item = window.LpCombat?.getHeldWeaponItem?.();
     if (item && window.LpWeaponHold?.getEjectWorld) {
       return window.LpWeaponHold.getEjectWorld(avatar, aim, item);
@@ -487,11 +482,7 @@
         !window.LpGuardTurret?.isManned?.() &&
         window.LpCombat?.getHeldWeaponItem?.()
       ) {
-        if (window.LpReloadAction?.isBusy?.()) {
-          window.LpReloadAction.applyArmPose(avatar);
-        } else {
-          window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld());
-        }
+        window.LpWeaponHold?.applyAimArmPose?.(avatar, getAimWorld());
       }
       window.LiminalSession?.maybeSendPose?.({
         x: local.x,
@@ -573,11 +564,7 @@
       !window.LpGuardTurret?.isManned?.() &&
       window.LpCombat?.getHeldWeaponItem?.()
     ) {
-      if (window.LpReloadAction?.isBusy?.()) {
-        window.LpReloadAction.applyArmPose(avatar);
-      } else {
-        window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld());
-      }
+      window.LpWeaponHold?.applyAimArmPose?.(avatar, getAimWorld());
     }
     window.LiminalSession?.maybeSendPose?.({
       x: local.x,
@@ -631,14 +618,10 @@
 
     for (const car of Spec.CARRIAGES) drawCarriage(car);
     window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
+    Entity.drawAvatar(ctx, avatar, view, dpr);
     const heldItem = window.LpCombat?.getHeldWeaponItem?.();
-    const holdingGun = Boolean(heldItem) && !window.LpGuardTurret?.isManned?.();
-    Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipFrontArm: true } : {});
-    if (holdingGun) {
-      const weaponAim = getWeaponAimWorld();
-      window.LpWeaponHold?.drawHeldWeapon?.(ctx, avatar, weaponAim, heldItem);
-      window.LpReloadAction?.draw?.(ctx, avatar, weaponAim);
-      Entity.drawFrontArm?.(ctx, avatar);
+    if (heldItem && !window.LpGuardTurret?.isManned?.()) {
+      window.LpWeaponHold?.drawHeldWeapon?.(ctx, avatar, getAimWorld(), heldItem);
     }
     window.LpGroundLoot?.draw?.(ctx);
     window.LpCombat?.draw(ctx);
@@ -666,7 +649,6 @@
       floorY: Spec.FLOOR_Y,
       moveSpeed: local.vx,
     });
-    window.LpReloadAction?.tick?.(dt);
     window.LpGuardTurret?.tick?.(dt);
     stepCamera(dt);
     syncAimCursor();
@@ -700,18 +682,6 @@
   /** 首次按键/触控时解锁音频，并开启列车行驶环境音。 */
   function bindAudioUnlock() {
     const unlockOnce = () => {
-      const sfxReady = window.LpSfx?.unlock?.() || Promise.resolve();
-      Promise.resolve(sfxReady)
-        .then(() => {
-          const held = window.LpCombat?.getHeldWeaponItem?.();
-          if (held?.fireSound) window.LpSfx?.preload?.([held.fireSound]);
-          else {
-            window.LpSfx?.preload?.([
-              '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1',
-            ]);
-          }
-        })
-        .catch(() => {});
       window.LpTrainAudio?.unlock()
         .then(() => window.LpTrainAudio?.setAmbient(true))
         .catch(() => {});
@@ -772,7 +742,7 @@
     }
     if (window.LpInputBindings?.matchesKeyEvent('handsHud', event)) {
       event.preventDefault();
-      window.LpHandsHud?.cycleActive?.();
+      window.LpHandsHud?.toggleVisible?.();
     }
     if (window.LpInputBindings?.matchesKeyEvent('fire', event)) {
       event.preventDefault();
@@ -824,11 +794,9 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       window.LpTrainAudio?.resume();
-      window.LpSfx?.resume?.();
       loadWornAppearance().then(syncAvatarPose);
     } else {
       window.LpTrainAudio?.suspend();
-      window.LpSfx?.suspend?.();
     }
   });
 
@@ -841,15 +809,6 @@
       const dir = Spec.TRAIN_FORWARD_X >= 0 ? 1 : -1;
       avatar.facing = dir;
       syncAvatarPose();
-    },
-    /** 调试：传送到指定车厢走道内。 */
-    teleportToCar(carId) {
-      const car = Spec.CARRIAGES.find((c) => c.id === carId);
-      if (!car) return false;
-      local.x = car.worldX + Spec.WALK_LEFT + Spec.scaleArt(80);
-      local.vx = 0;
-      syncAvatarPose();
-      return true;
     },
   };
   window.addEventListener('lp:turret-enter', (event) => {

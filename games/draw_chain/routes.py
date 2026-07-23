@@ -1159,7 +1159,8 @@ async def finish_draw_after_timeout(
             room_id,
             {
                 "type": "message",
-                "sender": "⏱️ 系统",
+                "sender": "系统",
+                "sender_icon": "timer",
                 "text": "作画时间到，已自动交画",
             },
         )
