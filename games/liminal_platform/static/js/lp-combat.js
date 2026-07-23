@@ -21,13 +21,14 @@
     bullet: {
       kind: 'bullet',
       speed: PROJECTILE_SPEED_BULLET,
-      bodyLen: 2.2,
-      bodyH: 0.55,
-      tipLen: 0.75,
+      /* ~半原尺寸；勿再腰斩（曾误缩两次） */
+      bodyLen: 4.5,
+      bodyH: 1.2,
+      tipLen: 1.6,
       tip: '#f5d0a0',
       body: '#c4a35a',
       band: '#8a6a2a',
-      flashR: 2.5,
+      flashR: 4,
     },
     shell: {
       kind: 'shell',
