@@ -471,13 +471,21 @@
    */
   function tryFire(aimX, aimY) {
     if (!state.manned || state.fireCooldown > 0) return null;
+    if (window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
+      ensureInventories();
+      if (ammoCount() <= 0) {
+        const max = window.LpItemCatalog?.getItem?.(AMMO_ID)?.maxStack || 100;
+        state.ammoInv.addItem(AMMO_ID, max);
+        saveCrates();
+      }
+    }
     if (ammoCount() <= 0) {
       window.LiminalInteract?.showToast?.('弹药箱没有弹药');
       state.fireCooldown = 0.35;
       return null;
     }
     const online = window.LpInventoryNet?.isActive?.();
-    if (!online) {
+    if (!online && !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
       const spent = consumeCrateAmmo(1);
       if (spent <= 0) return null;
       saveCrates();

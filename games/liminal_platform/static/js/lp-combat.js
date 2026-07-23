@@ -177,7 +177,7 @@
         state.cooldown = 0.25;
         return null;
       }
-      if (!online) {
+      if (!online && !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
         const next = held.hands.updateSlot?.(held.index, { mag: mag - 1 });
         if (next) held.stack = next;
         else stack.mag = mag - 1;

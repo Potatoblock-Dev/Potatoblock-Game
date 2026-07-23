@@ -1211,8 +1211,11 @@
 
   /** 扣除物品并保存（优先手部，再背包；供锅炉等系统调用）。 */
   function consumeItem(itemId, qty) {
+    const infinite = window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES
+      && window.LpItemCatalog?.isConsumableItem?.(itemId);
     if (window.LpInventoryNet?.isActive?.()) {
       netSend({ action: 'consume', itemId, qty });
+      if (infinite) return qty;
       let need = qty;
       let removed = 0;
       if (need > 0) {
@@ -1225,6 +1228,15 @@
       }
       if (removed > 0) persistAndRender();
       return removed;
+    }
+    if (infinite) {
+      const have = (hands.countItem?.(itemId) || 0) + (player.countItem?.(itemId) || 0);
+      if (have <= 0) {
+        const item = window.LpItemCatalog?.getItem?.(itemId);
+        player.addItem?.(itemId, item?.maxStack || qty);
+        persistAndRender();
+      }
+      return qty;
     }
     let need = qty;
     let removed = 0;

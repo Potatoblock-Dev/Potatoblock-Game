@@ -323,6 +323,14 @@
     return Boolean(item && (item.type === 'weapon' || item.weaponId));
   }
 
+  /** 测试阶段：燃料/弹药用后自动补满。正式上线前改为 false。 */
+  const TEST_AUTO_REFILL_CONSUMABLES = true;
+
+  function isConsumableItem(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && (item.type === 'fuel' || item.type === 'ammo'));
+  }
+
   /** 战斗用武器 id；非武器返回 null。 */
   function getWeaponId(itemId) {
     const item = getItem(itemId);
@@ -334,6 +342,8 @@
     ITEMS,
     TYPE_LABELS,
     EQUIP_SLOT_LABELS,
+    TEST_AUTO_REFILL_CONSUMABLES,
+    isConsumableItem,
     getItem,
     getItemSize,
     canHoldInHand,

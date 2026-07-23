@@ -8,6 +8,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
+# 测试阶段：燃料/弹药消耗后自动补满（含弹匣、弹药箱）。正式上线前改为 False。
+TEST_AUTO_REFILL_CONSUMABLES = True
+CONSUMABLE_TYPES = frozenset({"fuel", "ammo"})
+
 # 与 lp-item-catalog.js 关键字段对齐（校验用）
 ITEMS: Dict[str, Dict[str, Any]] = {
     "coal": {"maxStack": 100, "w": 1, "h": 1, "type": "fuel", "boilerFuel": 18, "canHold": True},
@@ -606,9 +610,58 @@ def held_weapon_id(personal: PlayerInventories) -> Optional[str]:
     return None
 
 
+def item_is_consumable(item_id: str) -> bool:
+    """燃料与弹药视为消耗品（测试自动补充范围）。"""
+    item = ITEMS.get(str(item_id)) or {}
+    return item.get("type") in CONSUMABLE_TYPES
+
+
+def refill_consumable_stacks(inv: Inventory) -> None:
+    """把库存中燃料/弹药堆叠补到 maxStack，武器弹匣补满。"""
+    for index in range(inv.size()):
+        if inv.is_covered(index):
+            continue
+        stack = inv.slots[index]
+        if not stack or not stack.get("itemId"):
+            continue
+        item = ITEMS.get(str(stack["itemId"])) or {}
+        if item.get("type") in CONSUMABLE_TYPES:
+            inv.slots[index]["qty"] = int(item["maxStack"])
+        mag_size = item.get("magazineSize")
+        if mag_size is not None:
+            inv.slots[index]["mag"] = int(mag_size)
+
+
+def refill_player_consumables(personal: PlayerInventories) -> None:
+    """补满玩家背包/手部/装备里的消耗品与弹匣。"""
+    refill_consumable_stacks(personal.player)
+    refill_consumable_stacks(personal.hands)
+    refill_consumable_stacks(personal.equip)
+
+
+def refill_room_consumables(room_inv: RoomInventories) -> None:
+    """补满仓库、炮塔箱、地面堆中的消耗品。"""
+    refill_consumable_stacks(room_inv.storage)
+    for crate in room_inv.crates.values():
+        refill_consumable_stacks(crate)
+    for pile in room_inv.ground:
+        refill_consumable_stacks(pile["inv"])
+
+
 def consume_from_personal(personal: PlayerInventories, item_id: str, qty: int) -> int:
-    removed = personal.hands.remove_item(item_id, qty)
-    need = qty - removed
-    if need > 0:
-        removed += personal.player.remove_item(item_id, need)
+    """从手部再背包扣除物品。测试模式下消耗品视为扣成功并立即补满。"""
+    need = max(0, int(qty))
+    if need <= 0:
+        return 0
+    if TEST_AUTO_REFILL_CONSUMABLES and item_is_consumable(item_id):
+        have = personal.hands.count_item(item_id) + personal.player.count_item(item_id)
+        if have <= 0:
+            item = ITEMS.get(item_id) or {}
+            personal.player.add_item(item_id, int(item.get("maxStack") or need))
+        refill_player_consumables(personal)
+        return need
+    removed = personal.hands.remove_item(item_id, need)
+    rest = need - removed
+    if rest > 0:
+        removed += personal.player.remove_item(item_id, rest)
     return removed

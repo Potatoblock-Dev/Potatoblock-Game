@@ -564,6 +564,9 @@ class LiminalLobbyManager:
             await player.connection.enqueue(player.inv_message(room))
             return
         room.fuel_level = min(FUEL_MAX, room.fuel_level + energy * spent)
+        if Inv.TEST_AUTO_REFILL_CONSUMABLES:
+            Inv.refill_player_consumables(player.inventories)
+            Inv.refill_room_consumables(room.inventories)
         await player.connection.enqueue(player.inv_message(room))
         await room.broadcast(
             {
@@ -589,7 +592,16 @@ class LiminalLobbyManager:
         weapon_id: Optional[str] = None
         room_changed = False
         if source == "turret":
-            spent = room.inventories.crates["ammo"].remove_item("turret_ammo", 1)
+            ammo_bag = room.inventories.crates["ammo"]
+            if Inv.TEST_AUTO_REFILL_CONSUMABLES:
+                if ammo_bag.count_item("turret_ammo") <= 0:
+                    ammo_bag.add_item(
+                        "turret_ammo", int(Inv.ITEMS["turret_ammo"]["maxStack"])
+                    )
+                Inv.refill_consumable_stacks(ammo_bag)
+                spent = 1
+            else:
+                spent = ammo_bag.remove_item("turret_ammo", 1)
             if spent <= 0:
                 await player.connection.enqueue(player.inv_message(room))
                 return
@@ -602,6 +614,8 @@ class LiminalLobbyManager:
                 await player.connection.enqueue(player.inv_message(room))
                 return
             weapon_id = fired
+            if Inv.TEST_AUTO_REFILL_CONSUMABLES:
+                Inv.refill_player_consumables(player.inventories)
         await player.connection.enqueue(player.inv_message(room))
         if room_changed:
             await self._broadcast_inv_room(room, exclude_id=user_id)
@@ -652,6 +666,9 @@ class LiminalLobbyManager:
         if overflow:
             room.inventories.drop_stacks(player.x, FLOOR_Y, overflow)
             room_changed = True
+        if Inv.TEST_AUTO_REFILL_CONSUMABLES:
+            Inv.refill_player_consumables(player.inventories)
+            Inv.refill_room_consumables(room.inventories)
         await player.connection.enqueue(player.inv_message(room))
         if room_changed:
             await self._broadcast_inv_room(room, exclude_id=user_id)
@@ -750,6 +767,13 @@ class LiminalLobbyManager:
             if mag_size is None:
                 return stack["itemId"]
             mag = int(stack.get("mag") or 0)
+            if Inv.TEST_AUTO_REFILL_CONSUMABLES:
+                # 测试：空匣先补满，开火不扣弹
+                if mag <= 0:
+                    player.inventories.hands.update_slot(
+                        index, {"mag": int(mag_size)}
+                    )
+                return stack["itemId"]
             if mag <= 0:
                 return None
             player.inventories.hands.update_slot(index, {"mag": mag - 1})
