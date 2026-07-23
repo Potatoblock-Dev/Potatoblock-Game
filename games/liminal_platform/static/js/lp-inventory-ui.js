@@ -419,28 +419,36 @@
     return button;
   }
 
-  /** 绘制槽位内容；多格物品在原点用 CSS 变量拉伸图标，不改 grid 占位。 */
+  /** 绘制槽位内容；多格物品用 grid 真实占格，图标铺满当前格子尺寸。 */
   function paintSlot(button, inventory, index) {
     const covered = inventory.isCovered(index);
+    const { col, row } = inventory.coordsOf(index);
     button.classList.toggle('is-covered', covered);
     button.classList.remove('is-span', 'has-item', 'place-ok', 'place-bad', 'place-merge');
     button.style.removeProperty('--span-w');
     button.style.removeProperty('--span-h');
     button.replaceChildren();
     button.removeAttribute('title');
-    if (covered) return;
 
-    const origin = inventory.originIndex(index);
-    if (origin !== index) return;
+    if (covered) {
+      button.hidden = true;
+      button.style.removeProperty('grid-column');
+      button.style.removeProperty('grid-row');
+      return;
+    }
 
+    button.hidden = false;
     const stack = inventory.getSlot(index);
+    const span = stack ? inventory.spanAt(index) : { w: 1, h: 1 };
+    button.style.gridColumn = `${col + 1} / span ${span.w}`;
+    button.style.gridRow = `${row + 1} / span ${span.h}`;
+
     button.classList.toggle('has-item', Boolean(stack));
     if (!stack) return;
 
     const item = Catalog.getItem(stack.itemId);
     if (!item) return;
 
-    const span = inventory.spanAt(index);
     if (span.w > 1 || span.h > 1) {
       button.classList.add('is-span');
       button.style.setProperty('--span-w', String(span.w));
@@ -508,13 +516,21 @@
     });
   }
 
-  /** 给指定格子加上预览类名。 */
+  /** 给指定格子加上预览类名（占位格已隐藏时改标原点）。 */
   function paintPreviewCells(inventory, cells, className) {
     if (!cells) return;
     const buttons = slotButtonsFor(inventory);
+    const marked = new Set();
     for (const idx of cells) {
       if (idx < 0 || idx >= buttons.length) continue;
-      buttons[idx].classList.add(className);
+      let target = idx;
+      const btn = buttons[idx];
+      if (btn.hidden || btn.classList.contains('is-covered')) {
+        target = inventory.originIndex(idx);
+      }
+      if (target < 0 || target >= buttons.length || marked.has(target)) continue;
+      marked.add(target);
+      buttons[target].classList.add(className);
     }
   }
 
@@ -604,6 +620,7 @@
   /** 渲染网格。 */
   function renderGrid(container, inventory) {
     container.style.setProperty('--cols', String(inventory.cols));
+    container.style.setProperty('--rows', String(inventory.rows));
     if (container.childElementCount !== inventory.size()) {
       container.replaceChildren();
       for (let i = 0; i < inventory.size(); i += 1) {
@@ -712,10 +729,15 @@
     syncMobileChrome();
   }
 
-  /** 持物光标单格边长（跟随当前背包格实测宽度）。 */
+  /** 持物光标单格边长（优先跟随当前悬停网格，否则背包格）。 */
   function cursorCellPx() {
-    const slot = playerGrid.querySelector('.lp-inventory-slot');
-    const w = slot?.getBoundingClientRect?.().width;
+    const hoverInv = state.hoverSlot?.inventory;
+    let probe = null;
+    if (hoverInv === storage) probe = storageGrid?.querySelector('.lp-inventory-slot:not([hidden])');
+    else if (hoverInv === state.groundInv) probe = groundGrid?.querySelector('.lp-inventory-slot:not([hidden])');
+    else if (hoverInv === player) probe = playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
+    if (!probe) probe = playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
+    const w = probe?.getBoundingClientRect?.().width;
     return w > 8 ? w : 44;
   }
 

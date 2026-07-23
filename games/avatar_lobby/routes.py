@@ -142,7 +142,13 @@ async def get_skin_texture(skin_id: str, identity=Depends(get_optional_identity)
     path = skins.get_texture_path(skin_id)
     if path is None:
         raise HTTPException(status_code=404, detail="皮套不存在")
-    return FileResponse(path, headers={"Cache-Control": "no-cache"})
+    return FileResponse(
+        path,
+        headers={
+            # URL 带 contentHash（?v=），内容不变则可长期本地缓存，减轻贴图带宽。
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
+    )
 
 
 @router.websocket("/avatar-lobby/ws")

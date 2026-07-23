@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=47">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=51">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -42,16 +42,26 @@
             <span id="mpFeedback" class="mp-feedback" aria-live="polite"></span>
           </div>
         </div>
-        <nav class="lp-hud-actions">
-          <a class="lp-skin-link" href="/avatar-lobby">
-            <span class="lp-label-long">换皮套</span>
-            <span class="lp-label-short">皮套</span>
-          </a>
-          <a class="lp-back" href="/avatar-lobby">
-            <span class="lp-label-long">返回大厅</span>
-            <span class="lp-label-short">返回</span>
-          </a>
-        </nav>
+        <div class="lp-hud-rail">
+          <nav class="lp-hud-actions">
+            <a class="lp-skin-link" href="/avatar-lobby">
+              <span class="lp-label-long">换皮套</span>
+              <span class="lp-label-short">皮套</span>
+            </a>
+            <a class="lp-back" href="/avatar-lobby">
+              <span class="lp-label-long">返回大厅</span>
+              <span class="lp-label-short">返回</span>
+            </a>
+          </nav>
+          <aside id="lpTrainMinimap" class="lp-train-minimap" aria-label="列车编组小地图">
+            <div class="lp-train-minimap-head">
+              <span class="lp-train-minimap-title">编组</span>
+              <span id="lpTrainMinimapActive" class="lp-train-minimap-active">—</span>
+            </div>
+            <ol id="lpTrainMinimapCars" class="lp-train-minimap-cars"></ol>
+            <p class="lp-train-minimap-legend" aria-hidden="true">右 = 前进</p>
+          </aside>
+        </div>
       </header>
       <p class="lp-hint lp-hint-desktop">A / D 移动，空格跳跃 · 鼠标瞄准 · 左键开火 · R 装填 · X 切换手部 · F 交互 · Tab 物品栏</p>
       <div id="lpHandsHud" class="lp-hands-hud" aria-label="手部物品预览">
@@ -161,19 +171,6 @@
           <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button lp-desktop-only">恢复默认</button>
         </div>
         <div class="lp-inventory-body">
-          <section id="lpSideLootPanel" class="lp-inventory-panel lp-side-loot-panel" data-lp-inv-pane="nearby" hidden>
-            <div class="lp-side-loot-scroll">
-              <div id="lpGroundSection" class="lp-side-loot-section is-ground" hidden>
-                <h3 class="lp-inventory-panel-title">地面</h3>
-                <div id="lpGroundGrid" class="lp-inventory-grid lp-inventory-grid-ground"></div>
-              </div>
-              <div id="lpSideLootDivider" class="lp-side-loot-divider" hidden aria-hidden="true"></div>
-              <div id="lpStorageSection" class="lp-side-loot-section is-storage" hidden>
-                <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
-                <div id="lpStorageGrid" class="lp-inventory-grid lp-inventory-grid-storage"></div>
-              </div>
-            </div>
-          </section>
           <aside id="lpGearPanel" class="lp-gear-panel" data-lp-inv-pane="gear" aria-label="手部与装备">
             <h3 class="lp-inventory-panel-title">旅人</h3>
             <div class="lp-paperdoll" aria-label="装备栏">
@@ -223,6 +220,19 @@
             <h3 class="lp-inventory-panel-title">背包</h3>
             <div id="lpPlayerGrid" class="lp-inventory-grid"></div>
           </section>
+          <section id="lpSideLootPanel" class="lp-inventory-panel lp-side-loot-panel" data-lp-inv-pane="nearby" hidden>
+            <div class="lp-side-loot-scroll">
+              <div id="lpGroundSection" class="lp-side-loot-section is-ground" hidden>
+                <h3 class="lp-inventory-panel-title">地面</h3>
+                <div id="lpGroundGrid" class="lp-inventory-grid lp-inventory-grid-ground"></div>
+              </div>
+              <div id="lpSideLootDivider" class="lp-side-loot-divider" hidden aria-hidden="true"></div>
+              <div id="lpStorageSection" class="lp-side-loot-section is-storage" hidden>
+                <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
+                <div id="lpStorageGrid" class="lp-inventory-grid lp-inventory-grid-storage"></div>
+              </div>
+            </div>
+          </section>
         </div>
         <aside id="lpInventoryDetail" class="lp-inventory-detail" hidden aria-live="polite">
           <p class="lp-inventory-detail-empty" id="lpInventoryDetailEmpty" hidden>点击物品查看信息</p>
@@ -262,9 +272,9 @@
     <div id="lpFuelFeedRoot" class="lp-fuel-feed-root" hidden aria-hidden="true">
       <div class="lp-fuel-feed-veil" aria-hidden="true"></div>
       <div class="lp-fuel-feed-stage" role="dialog" aria-modal="true" aria-label="添加燃料">
-        <button type="button" id="lpFuelFeedClose" class="lp-fuel-feed-close">离席</button>
+        <button type="button" id="lpFuelFeedClose" class="lp-fuel-feed-close">离开</button>
         <p class="lp-fuel-feed-hint">
-          <span id="lpFuelFeedHintDesktop" class="lp-desktop-only">将燃料拖入炉口 · F 离席</span>
+          <span id="lpFuelFeedHintDesktop" class="lp-desktop-only">将燃料拖入炉口 · F 离开</span>
           <span class="lp-mobile-only">拖燃料到炉口</span>
         </p>
         <div class="lp-fuel-feed-dock">
@@ -286,9 +296,9 @@
     <div id="lpGuardCrateRoot" class="lp-fuel-feed-root lp-guard-crate-root" hidden aria-hidden="true">
       <div class="lp-fuel-feed-veil" aria-hidden="true"></div>
       <div class="lp-fuel-feed-stage" role="dialog" aria-modal="true" aria-label="箱子存取">
-        <button type="button" id="lpGuardCrateClose" class="lp-fuel-feed-close">离席</button>
+        <button type="button" id="lpGuardCrateClose" class="lp-fuel-feed-close">离开</button>
         <p class="lp-fuel-feed-hint">
-          <span id="lpGuardCrateHintDesktop" class="lp-desktop-only">拖拽存取 · F 离席</span>
+          <span id="lpGuardCrateHintDesktop" class="lp-desktop-only">拖拽存取 · F 离开</span>
           <span class="lp-mobile-only">拖拽存取</span>
         </p>
         <div id="lpGuardCrateDock" class="lp-fuel-feed-dock">
@@ -321,7 +331,7 @@
             </div>
             <button type="button" id="lpBoilerPanelClose" class="lp-boiler-close" title="离开驾驶台">
               <span class="lp-cab-cutoff-lamp" aria-hidden="true"></span>
-              离席
+              离开
             </button>
           </header>
 
@@ -433,8 +443,8 @@
           </div>
 
           <p class="lp-cab-stencil">
-            <span id="lpCabStencilDesktop" class="lp-desktop-only">拖动拉杆或点刻度 · F / Esc 离席</span>
-            <span class="lp-mobile-only">拖动拉杆或点刻度 · 点「离席」退出</span>
+            <span id="lpCabStencilDesktop" class="lp-desktop-only">拖动拉杆或点刻度 · F / Esc 离开</span>
+            <span class="lp-mobile-only">拖动拉杆或点刻度 · 点「离开」退出</span>
           </p>
         </div>
       </div>
@@ -442,30 +452,32 @@
   </div>
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=7"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=19"></script>
-  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=9"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=21"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-skin-cache.js?v=1"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=21"></script>
+  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=22"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=12"></script>
   <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=10"></script>
   <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=9"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=13"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=15"></script>
   <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=19"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=20"></script>
   <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=7"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=8"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=14"></script>
   <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=7"></script>
-  <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-combat.js?v=13"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=17"></script>
   <script src="/static/games/liminal-platform/js/lp-sfx.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=8"></script>
-  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=8"></script>
-  <script src="/static/games/liminal-platform/js/lp-network.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-minimap.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=10"></script>
+  <script src="/static/games/liminal-platform/js/lp-network.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-session.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=37"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=42"></script>
 </body>
 </html>

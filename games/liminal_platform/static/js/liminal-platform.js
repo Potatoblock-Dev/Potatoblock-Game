@@ -21,7 +21,7 @@
   const worldRight = platforms[platforms.length - 1].right - HALF_W;
 
   const local = {
-    x: (platforms[0].left + platforms[0].right) / 2,
+    x: Spec.defaultSpawnX(),
     y: 0,
     vx: 0,
     vy: 0,
@@ -272,6 +272,8 @@
       // 与大厅一致：只应用已穿戴皮套，不擅自换成 skins[0]
       const skin = wornId ? skins.find((item) => item.id === wornId) || null : null;
       const appearance = appearanceFromSkin(skin);
+      // 先预热本地皮套库（含当前穿戴），远端同 URL 复用 Cache Storage
+      window.AvatarSkinCache?.preloadSkins?.(skins);
       await Entity.loadAppearance(avatar, appearance);
       window.LiminalSession?.setAppearance?.(appearance);
       syncAvatarPose();
@@ -493,16 +495,21 @@
           window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld());
         }
       }
-      window.LiminalSession?.maybeSendPose?.({
-        x: local.x,
-        y: local.y,
-        vx: local.vx,
-        vy: local.vy,
-        facing: avatar.facing,
-        onGround: local.onGround,
-        gait: avatar.gait,
-        headLook: avatar.headLook,
-      });
+      {
+        const aim = getWeaponAimWorld();
+        window.LiminalSession?.maybeSendPose?.({
+          x: local.x,
+          y: local.y,
+          vx: local.vx,
+          vy: local.vy,
+          facing: avatar.facing,
+          onGround: local.onGround,
+          gait: avatar.gait,
+          headLook: avatar.headLook,
+          aimX: aim?.x,
+          aimY: aim?.y,
+        });
+      }
       return;
     }
 
@@ -579,16 +586,21 @@
         window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld());
       }
     }
-    window.LiminalSession?.maybeSendPose?.({
-      x: local.x,
-      y: local.y,
-      vx: local.vx,
-      vy: local.vy,
-      facing: avatar.facing,
-      onGround: local.onGround,
-      gait: avatar.gait,
-      headLook: avatar.headLook,
-    });
+    {
+      const aim = getWeaponAimWorld();
+      window.LiminalSession?.maybeSendPose?.({
+        x: local.x,
+        y: local.y,
+        vx: local.vx,
+        vy: local.vy,
+        facing: avatar.facing,
+        onGround: local.onGround,
+        gait: avatar.gait,
+        headLook: avatar.headLook,
+        aimX: aim?.x,
+        aimY: aim?.y,
+      });
+    }
 
     const wantFire =
       touch.fire ||
@@ -633,9 +645,11 @@
     window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
     const heldItem = window.LpCombat?.getHeldWeaponItem?.();
     const holdingGun = Boolean(heldItem) && !window.LpGuardTurret?.isManned?.();
-    Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipFrontArm: true } : {});
+    /* 持枪层序：身/腿 → 后臂(护木) → 枪 → 换弹匣 → 前臂(扳机手) */
+    Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipFrontArm: true, skipBackArm: true } : {});
     if (holdingGun) {
       const weaponAim = getWeaponAimWorld();
+      Entity.drawBackArm?.(ctx, avatar);
       window.LpWeaponHold?.drawHeldWeapon?.(ctx, avatar, weaponAim, heldItem);
       window.LpReloadAction?.draw?.(ctx, avatar, weaponAim);
       Entity.drawFrontArm?.(ctx, avatar);
@@ -673,6 +687,7 @@
     updateLocalHeadLook(dt);
     window.LpBoilerPanel?.syncFromState?.();
     window.LpTrainAudio?.tick(dt);
+    window.LpTrainMinimap?.syncFromWorldX?.(local.x);
     drawFrame();
     requestAnimationFrame(frame);
   }

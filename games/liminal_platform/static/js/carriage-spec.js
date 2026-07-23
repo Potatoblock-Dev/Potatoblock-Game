@@ -3,7 +3,7 @@
  * 07_gameplay 层走线若调整，同步改 ART_*；WORLD_SCALE 只调人车观感比例。
  *
  * 世界约定：屏幕右侧为列车前进方向（世界 +X）；
- * 编组：动力 → 仓储 → 卫兵防御（均按同一挂钩间距对接）。
+ * 编组（左→右）：卫士 → 仓储 → 动力（均按同一挂钩间距对接）。
  */
 (() => {
   const ART_MODULE_W = 2250;
@@ -26,6 +26,8 @@
   const WORLD_SCALE = 0.88;
   /** 列车前进方向（屏幕右 = 世界 +X）。节流正档、正速度均沿此方向。 */
   const TRAIN_FORWARD_X = 1;
+  /** 本地 / 联机开局默认出生车厢。 */
+  const DEFAULT_SPAWN_CAR_ID = 'power';
 
   /** 贴图像素 → 世界坐标。 */
   function scaleArt(value) {
@@ -41,24 +43,74 @@
 
   const CARRIAGES = [
     {
-      id: 'power',
-      label: '动力车厢',
-      image: '/static/games/liminal-platform/img/power-car.png?v=3',
+      id: 'guard',
+      label: '卫士车厢',
+      image: '/static/games/liminal-platform/img/guard-car.png?v=2',
       worldX: 0,
+      map: {
+        shortLabel: '卫士',
+        kind: 'defense',
+        tone: '#b91c1c',
+      },
     },
     {
       id: 'storage',
       label: '仓储车厢',
       image: '/static/games/liminal-platform/img/storage-car.png?v=3',
       worldX: COUPLER_JOIN_OFFSET,
+      map: {
+        shortLabel: '仓储',
+        kind: 'cargo',
+        tone: '#64748b',
+      },
     },
     {
-      id: 'guard',
-      label: '卫兵防御车厢',
-      image: '/static/games/liminal-platform/img/guard-car.png?v=2',
+      id: 'power',
+      label: '动力车厢',
+      image: '/static/games/liminal-platform/img/power-car.png?v=3',
       worldX: COUPLER_JOIN_OFFSET * 2,
+      map: {
+        shortLabel: '动力',
+        kind: 'engine',
+        tone: '#d97706',
+      },
     },
   ];
+
+  /**
+   * 规范化单节车厢的小地图条目（缺省字段可补）。
+   * 未来自定义车厢只需在 CARRIAGES 填 map，或在此兜底。
+   */
+  function mapEntryFor(car) {
+    const map = car?.map || {};
+    return {
+      id: car.id,
+      label: car.label || car.id,
+      shortLabel: map.shortLabel || car.label || car.id,
+      kind: map.kind || 'default',
+      tone: map.tone || null,
+      worldX: car.worldX,
+    };
+  }
+
+  /** 按编组顺序返回小地图条目（世界 +X = 列车前进 = 列表从左到右）。 */
+  function listMapEntries() {
+    return CARRIAGES.map(mapEntryFor);
+  }
+
+  /** 按 id 查找车厢。 */
+  function carriageById(carId) {
+    return CARRIAGES.find((car) => car.id === carId) || null;
+  }
+
+  /** 开局出生世界 X（默认动力车厢走道中心）。 */
+  function defaultSpawnX(carId = DEFAULT_SPAWN_CAR_ID) {
+    const car =
+      carriageById(carId) ||
+      carriageById(DEFAULT_SPAWN_CAR_ID) ||
+      CARRIAGES[CARRIAGES.length - 1];
+    return car.worldX + (WALK_LEFT + WALK_RIGHT) / 2;
+  }
 
   /** 返回世界坐标下的走道平台段（含节间连廊）。 */
   function buildWalkPlatforms() {
@@ -102,6 +154,7 @@
   window.LiminalCarriageSpec = {
     WORLD_SCALE,
     TRAIN_FORWARD_X,
+    DEFAULT_SPAWN_CAR_ID,
     scaleArt,
     MODULE_W,
     MODULE_H,
@@ -110,6 +163,10 @@
     WALK_RIGHT,
     COUPLER_JOIN_OFFSET,
     CARRIAGES,
+    mapEntryFor,
+    listMapEntries,
+    carriageById,
+    defaultSpawnX,
     buildWalkPlatforms,
     carriageAt,
   };

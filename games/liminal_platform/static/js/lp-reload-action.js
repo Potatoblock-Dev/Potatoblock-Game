@@ -102,12 +102,12 @@
     }
   }
 
-  /** 换弹时抬枪瞄准点。 */
+  /** 换弹时抬枪瞄准点（须远超手臂长度，避免手越过目标导致枪口反向下垂）。 */
   function getAimOverride(avatar) {
     if (!active || !avatar) return null;
     const facing = avatar.facing >= 0 ? 1 : -1;
     const tilt = sampleSeries(active._style.gunTilt, getProgress());
-    const dist = 88;
+    const dist = 200;
     return {
       x: avatar.x + facing * Math.cos(tilt) * dist,
       y: avatar.y - 8 + Math.sin(tilt) * dist,

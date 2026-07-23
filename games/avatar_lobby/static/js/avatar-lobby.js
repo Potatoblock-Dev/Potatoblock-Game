@@ -621,6 +621,7 @@
     const payload = await response.json();
     cachedSkins = Array.isArray(payload.skins) ? payload.skins : [];
     wornSkinId = payload.worn || null;
+    window.AvatarSkinCache?.preloadSkins?.(cachedSkins);
     renderSkinButtons();
     if (activeSkinId === null && wornSkinId
         && cachedSkins.some((skin) => skin.id === wornSkinId)) {

@@ -1,5 +1,6 @@
 /**
  * 动力车驾驶台：节流阀 + 制动阀（嵌入式机柜 UI）。
+ * 拖动时滑块跟手；外部改档 / 松手吸附时滑块缓动就位。
  */
 (() => {
   const root = document.getElementById('lpBoilerPanelRoot');
@@ -20,8 +21,18 @@
 
   const Drive = window.LpTrainDrive;
   const SPEED_DISPLAY_MAX = 120;
+  /** 节流滑块就位速率（越大越快）。 */
+  const THROTTLE_EASE = 14;
+  /** 制动非回弹时的就位速率。 */
+  const BRAKE_EASE = 16;
+
   let open = false;
   let drag = null;
+  /** 界面显示用节流值（可与逻辑档位不同，用于缓动）。 */
+  let uiThrottle = 0;
+  /** 界面显示用制动比例 0…1。 */
+  let uiBrake = 0;
+  let lastSyncTs = performance.now();
 
   /** 面板是否打开。 */
   function isOpen() {
@@ -32,7 +43,7 @@
   function syncLeaveHint() {
     if (!cabStencilDesktop) return;
     const key = window.LpInputBindings?.formatAction('interact') || 'F';
-    cabStencilDesktop.textContent = `拖动拉杆或点刻度 · ${key} / Esc 离席`;
+    cabStencilDesktop.textContent = `拖动拉杆或点刻度 · ${key} / Esc 离开`;
   }
 
   /** 打开驾驶台。 */
@@ -48,6 +59,10 @@
     window.LpTouchControls?.setEnabled(false);
     syncLeaveHint();
     window.LpGame?.faceTrainForward?.();
+    const state = Drive.getState();
+    uiThrottle = state.throttle;
+    uiBrake = state.brake;
+    lastSyncTs = performance.now();
     syncFromState();
     syncFuelGauge();
   }
@@ -79,13 +94,16 @@
     return 5 - ratio * 10;
   }
 
-  /** 更新拉杆与读数 UI。 */
-  function syncFromState() {
-    const state = Drive.getState();
-    const tRatio = throttleToRatio(state.throttle);
-    const bRatio = state.brake;
-    throttleKnob.style.top = `${tRatio * 100}%`;
-    brakeKnob.style.top = `${bRatio * 100}%`;
+  /** 指数逼近目标。 */
+  function easeToward(current, target, rate, dt) {
+    const next = current + (target - current) * (1 - Math.exp(-rate * dt));
+    return Math.abs(target - next) < 0.02 ? target : next;
+  }
+
+  /** 绘制滑块位置与仪表（读数跟逻辑状态）。 */
+  function paint(state) {
+    throttleKnob.style.top = `${throttleToRatio(uiThrottle) * 100}%`;
+    brakeKnob.style.top = `${uiBrake * 100}%`;
     if (throttleReadout) throttleReadout.textContent = state.throttleLabel;
     if (brakeReadout) brakeReadout.textContent = state.brakeLabel;
     const abs = Math.abs(state.speed);
@@ -97,22 +115,51 @@
         abs < 0.08 ? '静止' : state.speed > 0 ? '前进' : '后退';
     }
     if (speedNeedle) {
-      /* 表针：-120°（0）→ +120°（满速），支点在表盘底部中心。 */
       const angle = -120 + ratio * 240;
       speedNeedle.style.transform = `rotate(${angle}deg)`;
     }
   }
 
-  /** 从指针位置写入拉杆。 */
+  /** 更新拉杆与读数 UI（拖动跟手，其余缓动就位）。 */
+  function syncFromState() {
+    const state = Drive.getState();
+    const now = performance.now();
+    const dt = Math.min(0.05, Math.max(0, (now - lastSyncTs) / 1000));
+    lastSyncTs = now;
+
+    if (drag?.kind === 'throttle') {
+      /* 跟手：uiThrottle 已在 applyPointer 写入 */
+    } else {
+      uiThrottle = easeToward(uiThrottle, state.throttle, THROTTLE_EASE, dt);
+    }
+
+    if (drag?.kind === 'brake') {
+      /* 跟手 */
+    } else if (state.brakeSpringing) {
+      uiBrake = state.brake;
+    } else {
+      uiBrake = easeToward(uiBrake, state.brake, BRAKE_EASE, dt);
+    }
+
+    paint(state);
+  }
+
+  /** 从指针位置写入拉杆（拖动中连续、跟手）。 */
   function applyPointer(track, clientY, kind) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
     if (kind === 'throttle') {
-      Drive.setThrottleRaw(ratioToThrottle(ratio));
+      const throttle = ratioToThrottle(ratio);
+      Drive.setThrottleRaw(throttle);
+      const st = Drive.getState();
+      /* 急刹锁档时滑块不能跟手离开空档 */
+      uiThrottle =
+        st.emergencyActive || Drive.isEmergencyBrake?.() ? st.throttle : throttle;
     } else {
-      Drive.setBrake(ratio, { fromUser: true });
+      Drive.setBrakeRaw(ratio);
+      uiBrake = ratio;
     }
-    syncFromState();
+    paint(Drive.getState());
   }
 
   /** 绑定一根拉杆的拖拽。 */
@@ -137,23 +184,41 @@
 
   window.addEventListener('pointerup', (event) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    if (drag.kind === 'throttle') Drive.snapThrottle();
-    if (drag.kind === 'brake') Drive.onBrakeReleased();
+    if (drag.kind === 'throttle') {
+      Drive.snapThrottle();
+    } else if (drag.kind === 'brake') {
+      finishBrakeDrag();
+    }
     drag = null;
     syncFromState();
   });
 
   window.addEventListener('pointercancel', (event) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    if (drag.kind === 'brake') Drive.onBrakeReleased();
+    if (drag.kind === 'brake') {
+      finishBrakeDrag();
+    } else if (drag.kind === 'throttle') {
+      Drive.snapThrottle();
+    }
     drag = null;
     syncFromState();
   });
 
+  /** 松手：半程以上吸附急刹并回弹，否则回松开。 */
+  function finishBrakeDrag() {
+    const raw = Drive.getState().brake;
+    const threshold = Drive.BRAKE_SNAP_THRESHOLD ?? 0.5;
+    if (raw >= threshold) {
+      Drive.setBrake(1, { fromUser: true });
+      Drive.onBrakeReleased();
+    } else {
+      Drive.setBrake(0, { fromUser: true });
+    }
+  }
+
   closeButton?.addEventListener('click', closePanel);
   root.querySelector('.lp-boiler-backdrop')?.addEventListener('click', closePanel);
 
-  // 档位刻度点击
   for (const mark of root.querySelectorAll('[data-throttle-notch]')) {
     mark.addEventListener('click', () => {
       Drive.setThrottle(Number(mark.dataset.throttleNotch));
@@ -194,6 +259,9 @@
     syncFromState,
   };
 
+  const initial = Drive.getState();
+  uiThrottle = initial.throttle;
+  uiBrake = initial.brake;
   syncFromState();
   syncFuelGauge();
 })();

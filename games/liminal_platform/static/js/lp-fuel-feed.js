@@ -118,7 +118,7 @@
   function syncLeaveHint() {
     if (!hintDesktop) return;
     const key = window.LpInputBindings?.formatAction('interact') || 'F';
-    hintDesktop.textContent = `将燃料拖入炉口 · ${key} 离席`;
+    hintDesktop.textContent = `将燃料拖入炉口 · ${key} 离开`;
   }
 
   /** 同步火焰 canvas 像素尺寸。 */

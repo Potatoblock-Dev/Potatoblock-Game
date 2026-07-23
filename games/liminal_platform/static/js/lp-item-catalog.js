@@ -38,7 +38,7 @@
       w: 1,
       h: 1,
       canHoldInHand: true,
-      icon: '/static/games/liminal-platform/img/items/coal-icon.png?v=1',
+      icon: '/static/games/liminal-platform/img/items/coal-icon.png?v=2',
     },
     lumber: {
       id: 'lumber',
@@ -130,7 +130,7 @@
       w: 1,
       h: 1,
       canHoldInHand: true,
-      icon: '/static/games/liminal-platform/img/items/small-caliber-ammo-icon.png?v=1',
+      icon: '/static/games/liminal-platform/img/items/small-caliber-ammo-icon.png?v=2',
     },
     gur65: {
       id: 'gur65',
@@ -145,8 +145,8 @@
       w: 3,
       h: 2,
       canHoldInHand: true,
-      icon: '/static/games/liminal-platform/img/weapons/gur-65-icon.png?v=1',
-      holdSprite: '/static/games/liminal-platform/img/weapons/gur-65.png?v=1',
+      icon: '/static/games/liminal-platform/img/weapons/gur-65-icon.png?v=2',
+      holdSprite: '/static/games/liminal-platform/img/weapons/gur-65.png?v=2',
       gripOffset: { x: 22, y: -22 },
       muzzleLength: 38,
       muzzleOffsetY: -3,

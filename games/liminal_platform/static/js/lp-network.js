@@ -69,7 +69,7 @@
     }
 
     sendPose(frame) {
-      this._send({
+      const payload = {
         type: 'pose',
         protocolVersion: PROTOCOL_VERSION,
         sequence: frame.sequence,
@@ -81,7 +81,13 @@
         onGround: Boolean(frame.onGround),
         gait: frame.gait === 'run' ? 'run' : 'walk',
         headLook: Number(frame.headLook) || 0,
-      });
+        heldId: frame.heldId || null,
+      };
+      if (frame.aimX != null && frame.aimY != null) {
+        payload.aimX = frame.aimX;
+        payload.aimY = frame.aimY;
+      }
+      this._send(payload);
     }
 
     sendTrain(state) {
@@ -179,6 +185,7 @@
       this.ws = socket;
 
       socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.connected = true;
         this.reconnectAttempt = 0;
         this.lastPongAt = performance.now();
@@ -197,6 +204,7 @@
       };
 
       socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         let payload;
         try {
           payload = JSON.parse(event.data);
@@ -207,6 +215,8 @@
       };
 
       socket.onclose = (event) => {
+        // 重连时旧 socket 的 onclose 不得清掉新连接或叠加重连定时器。
+        if (this.ws !== socket) return;
         this.connected = false;
         this.ws = null;
         this._clearPing();
@@ -215,7 +225,8 @@
           this._emit('connectionchange', { status: 'replaced' });
           return;
         }
-        if (event.code === 4005) {
+        // 满房 / 房间不存在 / 被其他游戏踢出：回公共月台，避免死循环重试坏房码。
+        if (event.code === 4004 || event.code === 4005 || event.code === 4006) {
           this.desiredRoomId = PUBLIC_ROOM_ID;
           this.createNext = false;
         }
@@ -243,7 +254,18 @@
         return;
       }
       if (type === 'room_error') {
+        // 进房失败时 desiredRoomId 可能已是坏码；回到当前有效房间以免断线后重连踩坑。
+        this.desiredRoomId = this.roomId || PUBLIC_ROOM_ID;
+        this.createNext = false;
         this._emit('roomerror', payload);
+        return;
+      }
+      if (type === 'room_removed') {
+        this.desiredRoomId = PUBLIC_ROOM_ID;
+        this.createNext = false;
+        this._emit('roomerror', {
+          message: payload.reason === 'joined_other_game' ? '已进入其他游戏' : '已离开房间',
+        });
         return;
       }
       if (type === 'world_snapshot') {

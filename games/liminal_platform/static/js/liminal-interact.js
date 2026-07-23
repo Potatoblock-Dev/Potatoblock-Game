@@ -230,11 +230,28 @@
     drawCarriageWidePrompt(ctx, car, view, dpr, line);
   }
 
+  /** 画布 HUD 锚点：避开 DOM 顶栏与刘海安全区。 */
+  function hudAnchor() {
+    const topEl = document.querySelector('.lp-hud-top');
+    const topBottom = topEl ? topEl.getBoundingClientRect().bottom : 0;
+    const safeLeft = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('env(safe-area-inset-left)')
+    );
+    /* env() 经 getPropertyValue 常为空；用 top 栏左内边距近似 */
+    const padLeft = topEl
+      ? Number.parseFloat(getComputedStyle(topEl).paddingLeft) || 14
+      : 14;
+    const barY = Math.max(56, Math.round(topBottom) + 10);
+    return {
+      barX: Number.isFinite(safeLeft) && safeLeft > 0 ? 14 + safeLeft : padLeft,
+      barY,
+    };
+  }
+
   /** 绘制燃料条与操作反馈。 */
   function drawHud(ctx, view, dpr) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const barX = 14;
-    const barY = 56;
+    const { barX, barY } = hudAnchor();
     const barW = 120;
     const barH = 8;
     const ratio = fuel.level / fuel.max;
@@ -272,7 +289,10 @@
       ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
       const tw = ctx.measureText(toastText).width + 24;
       const cx = (window.innerWidth || 800) / 2;
-      const cy = (window.innerHeight || 600) * 0.38;
+      const cy = Math.min(
+        (window.innerHeight || 600) * 0.38,
+        Math.max(barY + 56, (window.innerHeight || 600) * 0.28)
+      );
       ctx.beginPath();
       ctx.roundRect(cx - tw / 2, cy - 16, tw, 32, 8);
       ctx.fill();
@@ -292,7 +312,7 @@
           dpr,
           viewWCenter(),
           (window.innerHeight || 600) * 0.12,
-          `炮塔中 · 弹药 ${ammo} · 按 ${keyLabel} 离席 · 左键开火`
+          `炮塔中 · 弹药 ${ammo} · 按 ${keyLabel} 离开 · 左键开火`
         );
       }
       drawHud(ctx, view, dpr);

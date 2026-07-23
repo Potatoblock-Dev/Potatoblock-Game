@@ -39,6 +39,7 @@
 
 .lp-page.lp-aim-mode .lp-hud-actions,
 .lp-page.lp-aim-mode .lp-hud-actions a,
+.lp-page.lp-aim-mode .lp-train-minimap,
 .lp-page.lp-aim-mode .mp-bar,
 .lp-page.lp-aim-mode .mp-bar button,
 .lp-page.lp-aim-mode .mp-bar input {
@@ -1255,6 +1256,141 @@ body.lp-turret-mode .lp-crosshair-dot {
   flex-shrink: 0;
 }
 
+.lp-hud-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+  max-width: min(100%, 320px);
+}
+
+.lp-train-minimap {
+  min-width: 168px;
+  max-width: 100%;
+  padding: 8px 10px 7px;
+  border: 1px solid var(--lp-line);
+  background: var(--lp-chip);
+  box-shadow: var(--lp-frame);
+  pointer-events: auto;
+  user-select: none;
+}
+
+.lp-train-minimap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.lp-train-minimap-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lp-text-muted);
+}
+
+.lp-train-minimap-active {
+  font-size: 11px;
+  font-weight: 700;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lp-train-minimap-cars {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.lp-train-minimap-coupler {
+  flex: 0 0 8px;
+  align-self: center;
+  height: 2px;
+  margin: 0 1px;
+  background: rgb(148 163 184 / 0.55);
+}
+
+.lp-train-minimap-car {
+  --lp-map-tone: #94a3b8;
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 44px;
+  max-width: 64px;
+}
+
+.lp-train-minimap-car-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--lp-map-tone) 55%, #64748b);
+  background:
+    linear-gradient(
+      180deg,
+      rgb(30 41 59 / 0.95),
+      color-mix(in srgb, var(--lp-map-tone) 22%, rgb(15 23 42 / 0.96))
+    );
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.lp-map-car--engine .lp-train-minimap-car-body {
+  border-left-width: 3px;
+  border-left-color: var(--lp-map-tone);
+}
+
+.lp-map-car--defense .lp-train-minimap-car-body {
+  border-top: 2px solid color-mix(in srgb, var(--lp-map-tone) 80%, white);
+}
+
+.lp-train-minimap-pip {
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f8fafc;
+  box-shadow: 0 0 0 1px rgb(15 23 42 / 0.9);
+  transform: translate(-50%, 50%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lp-train-minimap-car.is-active .lp-train-minimap-car-body {
+  border-color: #f8fafc;
+  box-shadow: inset 0 0 0 1px rgb(248 250 252 / 0.35);
+  color: #fff;
+}
+
+.lp-train-minimap-car.is-active .lp-train-minimap-pip {
+  opacity: 1;
+}
+
+.lp-train-minimap-legend {
+  margin: 6px 0 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgb(148 163 184 / 0.75);
+  text-align: right;
+}
+
 .lp-label-short {
   display: none;
 }
@@ -1629,12 +1765,12 @@ body.lp-inventory-open .lp-hud-top {
   min-height: 0;
 }
 
-/* 附近（地面 / 仓库）侧栏 + 旅人 + 背包 */
+/* 旅人 + 背包 + 附近（地面 / 仓库）侧栏 */
 .lp-inventory-root.is-side-loot .lp-inventory-body {
   grid-template-columns:
-    minmax(0, 0.85fr)
     minmax(0, 0.9fr)
-    minmax(0, 1.1fr);
+    minmax(0, 1.1fr)
+    minmax(0, 0.85fr);
 }
 
 .lp-side-loot-panel {
@@ -1892,32 +2028,29 @@ body.lp-inventory-open .lp-hud-top {
     0 0 0 1px rgb(251 191 36 / 0.45);
 }
 
-/* 占位格保留在网格中，便于点击解析原点与占地预览 */
 .lp-inventory-slot.is-covered {
-  background: rgb(15 23 42 / 0.55);
+  display: none;
 }
 
 .lp-inventory-slot.is-span {
   z-index: 2;
-  overflow: visible;
+  overflow: hidden;
+  aspect-ratio: auto;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 .lp-inventory-slot.is-span .lp-inventory-item-icon {
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: calc(var(--span-w, 1) * 100% - 4px);
-  height: calc(var(--span-h, 1) * 100% - 4px);
-  margin: 0;
-  pointer-events: none;
-  box-shadow:
-    inset 0 -2px 0 rgb(0 0 0 / 0.22),
-    0 0 0 1px rgb(0 0 0 / 0.35);
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  margin: 2px;
 }
 
 .lp-inventory-slot.is-span .lp-inventory-item-qty {
-  right: calc(4px - (var(--span-w, 1) - 1) * 100%);
-  bottom: calc(2px - (var(--span-h, 1) - 1) * 100%);
+  right: 4px;
+  bottom: 2px;
   z-index: 3;
 }
 
@@ -2018,6 +2151,9 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-hands-slot-host .lp-inventory-item-icon {
   font-size: clamp(12px, 1.6vw, 16px);
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  margin: 3px;
 }
 
 .lp-hands-cell.is-primary .lp-inventory-item-icon.has-image {
@@ -2026,11 +2162,13 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-grid {
   --cols: 4;
+  --rows: 4;
   display: grid;
   grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
-  grid-auto-rows: auto;
+  grid-template-rows: repeat(var(--rows), minmax(0, 1fr));
   width: 100%;
   max-width: 100%;
+  aspect-ratio: var(--cols) / var(--rows);
   gap: 0;
   border-top: 1px solid rgb(100 116 139 / 0.65);
   border-left: 1px solid rgb(100 116 139 / 0.65);
@@ -2042,7 +2180,7 @@ body.lp-inventory-open .lp-hud-top {
   height: auto;
   min-width: 0;
   min-height: 0;
-  aspect-ratio: 1;
+  aspect-ratio: auto;
 }
 
 .lp-inventory-slot {
@@ -2080,6 +2218,7 @@ body.lp-inventory-open .lp-hud-top {
 .lp-inventory-item-icon {
   display: grid;
   place-items: center;
+  box-sizing: border-box;
   width: calc(100% - 4px);
   height: calc(100% - 4px);
   margin: 2px;
@@ -2087,9 +2226,10 @@ body.lp-inventory-open .lp-hud-top {
   border: 1px solid rgb(0 0 0 / 0.35);
   background: linear-gradient(180deg, var(--item-accent), var(--item-color));
   color: #f8fafc;
-  font-size: clamp(11px, 2.4vw, 14px);
+  font-size: clamp(10px, 28%, 14px);
   font-weight: 800;
   box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.22);
+  overflow: hidden;
 }
 
 .lp-inventory-item-icon.has-image {
@@ -2200,40 +2340,77 @@ body.lp-inventory-open .lp-hud-top {
   .lp-hud-top {
     padding:
       calc(10px + env(safe-area-inset-top))
-      calc(16px + env(safe-area-inset-right))
-      10px
-      calc(16px + env(safe-area-inset-left));
+      calc(12px + env(safe-area-inset-right))
+      8px
+      calc(12px + env(safe-area-inset-left));
+    gap: 8px;
+  }
+
+  /* 窄屏尽量与右侧栏并排，避免顶栏堆成两行占高 */
+  .lp-hud-main {
+    flex: 1 1 150px;
+  }
+
+  .lp-hud-rail {
+    max-width: min(46vw, 200px);
+  }
+
+  .lp-train-minimap {
+    min-width: 0;
+    padding: 6px 8px 5px;
+  }
+
+  .lp-train-minimap-car {
+    min-width: 36px;
+  }
+
+  .lp-train-minimap-car-body {
+    min-height: 24px;
+    padding: 3px 5px;
+    font-size: 10px;
+  }
+
+  .lp-train-minimap-legend {
+    display: none;
+  }
+
+  .lp-fuel-feed-close,
+  .lp-boiler-close {
+    min-height: 44px;
+    padding: 8px 14px;
   }
 
   .lp-mobile-controls {
     position: absolute;
     inset:
       auto
-      calc(22px + env(safe-area-inset-right))
-      calc(22px + env(safe-area-inset-bottom))
-      calc(22px + env(safe-area-inset-left));
+      calc(16px + env(safe-area-inset-right))
+      calc(18px + env(safe-area-inset-bottom))
+      calc(16px + env(safe-area-inset-left));
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
-    gap: 20px;
+    gap: 16px;
     pointer-events: none;
     z-index: 4;
     transition: opacity 0.15s ease;
   }
 
+  /* 抬高到手部区：避开左下移动摇杆（奔跑键改并排后高度≈摇杆） */
   .lp-hands-hud {
     left: calc(12px + env(safe-area-inset-left));
-    bottom: calc(118px + env(safe-area-inset-bottom));
+    bottom: calc(148px + env(safe-area-inset-bottom));
     padding: 6px;
     gap: 6px;
+    z-index: 5;
   }
 
   .lp-hands-hud-slot.is-primary {
-    --lp-hud-hand: 56px;
+    --lp-hud-hand: 52px;
   }
 
   .lp-hands-hud-slot.is-utility {
-    --lp-hud-hand: 40px;
+    --lp-hud-hand: 44px;
   }
 
   .lp-mobile-controls.is-disabled {
@@ -2245,18 +2422,19 @@ body.lp-inventory-open .lp-hud-top {
     pointer-events: auto;
   }
 
+  /* 奔跑键与摇杆横排，降低左侧总高度，减少与手部槽重叠 */
   .lp-mobile-move-cluster {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 14px;
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 10px;
   }
 
   .lp-mobile-action-cluster {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 16px;
+    gap: 12px;
   }
 
   .lp-mobile-action-secondary,
@@ -2435,7 +2613,7 @@ body.lp-inventory-open .lp-hud-top {
 
 @media (hover: none) and (pointer: coarse) and (orientation: portrait) {
   .lp-mobile-controls {
-    bottom: calc(24px + env(safe-area-inset-bottom));
+    bottom: calc(20px + env(safe-area-inset-bottom));
   }
 
   .lp-move-joystick {
@@ -2444,6 +2622,10 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-look-joystick {
     width: clamp(84px, 24vw, 104px);
+  }
+
+  .lp-hands-hud {
+    bottom: calc(152px + env(safe-area-inset-bottom));
   }
 }
 
@@ -2673,6 +2855,10 @@ body.lp-inventory-open .lp-hud-top {
     min-height: 44px;
   }
 
+  .lp-inventory-root.is-mobile-inv .lp-inventory-grid .lp-inventory-slot {
+    min-height: 0;
+  }
+
   .lp-inventory-root.is-mobile-inv .lp-inventory-grid {
     width: 100%;
   }
@@ -2730,6 +2916,10 @@ body.lp-inventory-open .lp-hud-top {
     overflow: auto;
     -webkit-overflow-scrolling: touch;
   }
+
+  .lp-lever-notches button {
+    min-height: 40px;
+  }
 }
 
 @media (hover: none) and (pointer: coarse) and (orientation: landscape) {
@@ -2739,6 +2929,74 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-detail {
     max-height: 32%;
+  }
+
+  /* 矮屏横握：藏小地图，压缩右侧动作簇，避免挡顶栏/皮套按钮 */
+  .lp-train-minimap {
+    display: none;
+  }
+
+  .lp-hud-top {
+    padding-bottom: 4px;
+  }
+
+  .lp-mobile-controls {
+    inset:
+      auto
+      calc(10px + env(safe-area-inset-right))
+      calc(8px + env(safe-area-inset-bottom))
+      calc(10px + env(safe-area-inset-left));
+    gap: 12px;
+  }
+
+  .lp-move-joystick {
+    width: clamp(84px, 18vw, 108px);
+  }
+
+  .lp-look-joystick {
+    width: clamp(72px, 16vw, 92px);
+  }
+
+  .lp-mobile-jump-button,
+  .lp-mobile-fire-button {
+    width: clamp(58px, 14vw, 72px);
+  }
+
+  .lp-mobile-inventory-button {
+    width: clamp(50px, 12vw, 62px);
+    font-size: 12px;
+  }
+
+  .lp-mobile-action-cluster {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 10px;
+  }
+
+  .lp-mobile-action-secondary {
+    order: 0;
+  }
+
+  .lp-look-joystick {
+    order: -1;
+  }
+
+  .lp-mobile-action-buttons {
+    gap: 10px;
+  }
+
+  .lp-hands-hud {
+    bottom: calc(132px + env(safe-area-inset-bottom));
+    padding: 4px;
+    gap: 4px;
+  }
+
+  .lp-hands-hud-slot.is-primary {
+    --lp-hud-hand: 44px;
+  }
+
+  .lp-hands-hud-slot.is-utility {
+    --lp-hud-hand: 44px;
   }
 }
 
@@ -2752,18 +3010,19 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-mobile-action-buttons {
-    gap: 14px;
+    gap: 12px;
   }
 
   .lp-mobile-inventory-button {
     font-size: 12px;
   }
 
+  /* 保持 ≥44px 触控目标；窄屏仅略缩小字号 */
   .lp-mobile-sprint-button {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
     font-size: 12px;
   }
 

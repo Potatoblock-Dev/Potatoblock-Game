@@ -33,7 +33,6 @@
   const DEFAULT_HEIGHT_SCALE = 1.0;
   const MOVE_SPEED = 260;
   const RUN_SPEED = 420;
-  const textureCache = new Map();
 
   function createJoints() {
     return {
@@ -127,9 +126,27 @@
   }
 
   function textureUrl(appearance) {
-    if (!appearance?.skinId) return null;
-    const v = appearance.contentHash || '';
-    return `/avatar-lobby/skins/${appearance.skinId}/texture?v=${encodeURIComponent(v)}`;
+    return window.AvatarSkinCache?.textureUrl?.(appearance)
+      ?? (appearance?.skinId
+        ? `/avatar-lobby/skins/${appearance.skinId}/texture?v=${encodeURIComponent(appearance.contentHash || '')}`
+        : null);
+  }
+
+  function applyLoadedTexture(entity, appearance, key, image) {
+    if (entity.appearanceKey !== key) return;
+    if (appearance.kind === 'uv') {
+      entity.uvAtlas = image;
+      entity.texture = null;
+    } else {
+      entity.texture = image;
+      entity.uvAtlas = null;
+    }
+  }
+
+  function clearLoadedTexture(entity, key) {
+    if (entity.appearanceKey !== key) return;
+    entity.texture = null;
+    entity.uvAtlas = null;
   }
 
   function loadAppearance(entity, appearance) {
@@ -152,39 +169,24 @@
       entity.uvAtlas = null;
       return Promise.resolve();
     }
-    const cached = textureCache.get(key);
-    if (cached) {
-      if (appearance.kind === 'uv') {
-        entity.uvAtlas = cached;
-        entity.texture = null;
-      } else {
-        entity.texture = cached;
-        entity.uvAtlas = null;
-      }
-      return Promise.resolve();
+
+    const SkinCache = window.AvatarSkinCache;
+    if (SkinCache?.loadImage) {
+      return SkinCache.loadImage(url).then((image) => {
+        applyLoadedTexture(entity, appearance, key, image);
+      }).catch(() => {
+        clearLoadedTexture(entity, key);
+      });
     }
+
     return new Promise((resolve) => {
       const image = new Image();
       image.onload = () => {
-        textureCache.set(key, image);
-        if (entity.appearanceKey !== key) {
-          resolve();
-          return;
-        }
-        if (appearance.kind === 'uv') {
-          entity.uvAtlas = image;
-          entity.texture = null;
-        } else {
-          entity.texture = image;
-          entity.uvAtlas = null;
-        }
+        applyLoadedTexture(entity, appearance, key, image);
         resolve();
       };
       image.onerror = () => {
-        if (entity.appearanceKey === key) {
-          entity.texture = null;
-          entity.uvAtlas = null;
-        }
+        clearLoadedTexture(entity, key);
         resolve();
       };
       image.src = url;
@@ -264,11 +266,18 @@
     const [, frontArmLL] = limbSize('frontArmLower', 7, 16);
     const bodyDraw = (parts.body && parts.body.drawRect) || [-11, -17, 22, 26];
     const skipFrontArm = Boolean(options.skipFrontArm);
+    const skipBackArm = Boolean(options.skipBackArm);
     const frontArmOnly = Boolean(options.frontArmOnly);
+    const backArmOnly = Boolean(options.backArmOnly);
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#111827';
     if (atlas) ctx.imageSmoothingEnabled = false;
 
+    if (backArmOnly) {
+      drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
+        -rig.shoulderX, rig.shoulderY + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
+      return;
+    }
     if (frontArmOnly) {
       drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
         rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
@@ -277,8 +286,10 @@
 
     drawSegmentedLimb(ctx, style('backLegUpper', '#3b82f6'), style('backLegLower', '#3b82f6'),
       -rig.hipX, rig.hipY + kneelOffset, backLegUW, backLegUL, backLegLL, joints.backHip.angle, joints.backKnee.angle);
-    drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
-      -rig.shoulderX, rig.shoulderY + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
+    if (!skipBackArm) {
+      drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
+        -rig.shoulderX, rig.shoulderY + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
+    }
     drawPartRect(
       ctx,
       style('body', '#22c55e'),
@@ -343,7 +354,8 @@
 
   /**
    * @param {object} [options]
-   * @param {boolean} [options.skipFrontArm] 持枪时先跳过前臂，稍后叠在枪上
+   * @param {boolean} [options.skipFrontArm] 持枪时跳过前臂，稍后叠在枪上
+   * @param {boolean} [options.skipBackArm] 持枪时跳过后臂，稍后叠在枪下（护木手）
    */
   function drawAvatar(ctx, entity, view, dpr, options = {}) {
     withAvatarTransform(ctx, entity, () => {
@@ -361,6 +373,15 @@
       }
     });
     if (!options.skipNickname) drawNickname(ctx, entity, view, dpr);
+  }
+
+  /** 仅绘制后臂（持枪时叠在枪械之下，护木手夹在身体与枪之间）。 */
+  function drawBackArm(ctx, entity) {
+    withAvatarTransform(ctx, entity, () => {
+      const atlas = entity.uvAtlas || null;
+      if (entity.texture && !atlas) return;
+      drawAvatarBody(ctx, entity, atlas, { backArmOnly: true });
+    });
   }
 
   /** 仅绘制前臂（持枪时叠在枪械之上，保证手在最前层）。 */
@@ -647,6 +668,7 @@
     updateHeadLook,
     loadAppearance,
     drawAvatar,
+    drawBackArm,
     drawFrontArm,
     footGroundLiftPx,
     localPointToWorld,

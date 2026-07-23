@@ -19,7 +19,14 @@
   const RECOIL_MAX_PX = 14;
   /** 后坐回位速度（归一化 0–1 / 秒）。 */
   const RECOIL_RECOVER = 7.5;
-  const BARREL_URL = '/static/games/liminal-platform/img/guard-barrel.png?v=6';
+  /** 炮塔最大转速（弧度/秒，约 150°/s）。 */
+  const TURN_RATE = (150 * Math.PI) / 180;
+  const BARREL_URL = '/static/games/liminal-platform/img/guard-barrel.png?v=7';
+  const SHOT_SFX = '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1';
+  /** 开完一发后的装弹机装填（CC0）。 */
+  const FEED_SFX = '/static/games/liminal-platform/audio/weapons/guard-turret-feed.wav?v=1';
+  /** 装填音相对枪声的延迟（秒），贴近「打完再进弹」。 */
+  const FEED_SFX_DELAY = 0.05;
   /** 闲置：左塔朝左、右塔朝右，炮管伸出车厢外侧便于辨认。 */
   const IDLE_ANGLE = { left: Math.PI, right: 0 };
   /** 相对水平的最大下俯角 / 仰角。 */
@@ -37,6 +44,8 @@
     barrelImg: null,
     barrelReady: false,
     angles: { left: IDLE_ANGLE.left, right: IDLE_ANGLE.right },
+    /** 准星目标角；实际朝向在 tick 中按 TURN_RATE 追赶。 */
+    targetAngles: { left: IDLE_ANGLE.left, right: IDLE_ANGLE.right },
     /** 各塔后坐量 0–1（1 = 最大后移）。 */
     recoil: { left: 0, right: 0 },
     fireCooldown: 0,
@@ -169,6 +178,44 @@
     return Math.atan2(ns, nc);
   }
 
+  /** 最短有符号角差（−π…π）。 */
+  function angleDelta(from, to) {
+    return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  }
+
+  /**
+   * 转向角差：优先不穿过下俯极限（左右大角度回转走仰角一侧）。
+   */
+  function turnDelta(from, to) {
+    let d = angleDelta(from, to);
+    const midSin = Math.sin(from + d * 0.5);
+    if (midSin > Math.sin(MAX_DEPRESS) * 0.35) {
+      d = d > 0 ? d - Math.PI * 2 : d + Math.PI * 2;
+    }
+    return d;
+  }
+
+  /** 按转速把当前角推向目标角。 */
+  function slewAngle(current, target, dt) {
+    const tgt = clampTurretAngle(target);
+    const d = turnDelta(current, tgt);
+    const maxStep = TURN_RATE * Math.max(0, dt);
+    if (Math.abs(d) <= maxStep) return tgt;
+
+    const curC = Math.cos(current);
+    const tgtC = Math.cos(tgt);
+    const apexSin = -Math.sin(MAX_ELEVATE);
+    const atApex = Math.sin(current) <= apexSin + 1e-3;
+
+    /* 左右半球切换时，仰到极限后整步翻面，避免卡在天顶。 */
+    if (curC * tgtC < 0 && atApex) {
+      const side = tgtC >= 0 ? 1 : -1;
+      return Math.atan2(apexSin, side * Math.sqrt(Math.max(0, 1 - apexSin * apexSin)));
+    }
+
+    return clampTurretAngle(current + Math.sign(d) * maxStep);
+  }
+
   /** 弹药箱剩余数量。 */
   function ammoCount() {
     ensureInventories();
@@ -195,6 +242,7 @@
   function enterTurret(turretId) {
     state.manned = turretId === 'right' ? 'right' : 'left';
     document.body.classList.add('lp-turret-mode');
+    window.LpSfx?.preload?.([SHOT_SFX, FEED_SFX]);
     window.LiminalInteract?.showToast?.(
       state.manned === 'left' ? '进入左侧炮塔' : '进入右侧炮塔'
     );
@@ -209,6 +257,8 @@
     state.manned = null;
     state.angles.left = IDLE_ANGLE.left;
     state.angles.right = IDLE_ANGLE.right;
+    state.targetAngles.left = IDLE_ANGLE.left;
+    state.targetAngles.right = IDLE_ANGLE.right;
     document.body.classList.remove('lp-turret-mode');
     window.LiminalInteract?.showToast?.('离开炮塔');
     window.dispatchEvent(new CustomEvent('lp:turret-exit'));
@@ -361,11 +411,11 @@
     });
   }
 
-  /** 按准星更新双塔朝向（含俯仰限制）。 */
+  /** 按准星更新双塔目标朝向（实际旋转在 tick 中限速追赶）。 */
   function aimBoth(aimX, aimY) {
     for (const pivot of ART_PIVOTS) {
       const world = artToWorld(pivot.x, pivot.y);
-      state.angles[pivot.id] = clampTurretAngle(
+      state.targetAngles[pivot.id] = clampTurretAngle(
         Math.atan2(aimY - world.y, aimX - world.x)
       );
     }
@@ -397,10 +447,18 @@
       spawnMuzzleFlash(muzzle);
     }
 
-    window.LpSfx?.play?.(
-      '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1',
-      { volume: 0.45, rateJitter: 0.06, playbackRate: 0.82 }
-    );
+    window.LpSfx?.play?.(SHOT_SFX, {
+      volume: 0.45,
+      rateJitter: 0.06,
+      playbackRate: 0.82,
+    });
+    window.setTimeout(() => {
+      window.LpSfx?.play?.(FEED_SFX, {
+        volume: 0.55,
+        rateJitter: 0.03,
+        playbackRate: 1,
+      });
+    }, Math.round(FEED_SFX_DELAY * 1000));
 
     const mannedMuzzle = muzzlePoint(state.manned) || muzzles[0];
     window.dispatchEvent(
@@ -418,16 +476,17 @@
     return mannedMuzzle || null;
   }
 
-  /** 推进冷却、后坐回位与火光。 */
+  /** 推进转向、冷却、后坐回位与火光。 */
   function tick(dt) {
-    if (state.fireCooldown > 0) {
-      state.fireCooldown = Math.max(0, state.fireCooldown - dt);
-    }
     for (const pivot of ART_PIVOTS) {
       const id = pivot.id;
+      state.angles[id] = slewAngle(state.angles[id], state.targetAngles[id], dt);
       if (state.recoil[id] > 0) {
         state.recoil[id] = Math.max(0, state.recoil[id] - RECOIL_RECOVER * dt);
       }
+    }
+    if (state.fireCooldown > 0) {
+      state.fireCooldown = Math.max(0, state.fireCooldown - dt);
     }
     for (let i = state.flashes.length - 1; i >= 0; i -= 1) {
       state.flashes[i].life -= dt;
@@ -435,27 +494,33 @@
     }
   }
 
-  /** 绘制单管炮管（后坐后移；过中垂线时纵向镜像）。 */
+  /** 绘制单管炮管（从球壳外缘伸出；后坐；过中垂线纵向镜像）。 */
   function drawBarrels(ctx) {
     const { w: bw, h: bh } = barrelSizeWorld();
     const img = state.barrelImg;
     const useImg = Boolean(img && state.barrelReady && img.naturalWidth > 0);
+    /* 白球半径约 110 贴图像素，炮管从球缘外开始画，避免埋在球体里看不见 */
+    const protrude = Math.min(bw * 0.38, (Spec?.scaleArt?.(105) ?? 105));
+    const drawLen = Math.max(bw * 0.45, bw - protrude);
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     for (const pivot of ART_PIVOTS) {
       const world = artToWorld(pivot.x, pivot.y);
       const angle = state.angles[pivot.id];
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
       const kick = recoilPx(pivot.id);
-      const flipY = Math.cos(angle) < 0;
+      const flipY = c < 0;
+      const ox = world.x + c * (protrude - kick);
+      const oy = world.y + s * (protrude - kick);
       ctx.save();
-      ctx.translate(world.x - Math.cos(angle) * kick, world.y - Math.sin(angle) * kick);
+      ctx.translate(ox, oy);
       ctx.rotate(angle);
       if (flipY) ctx.scale(1, -1);
-      /* 先画高对比剪影，再叠贴图，避免贴图过暗时「只有白球」 */
-      drawBarrelFallback(ctx, bw, bh);
+      drawBarrelFallback(ctx, drawLen, bh);
       if (useImg) {
-        ctx.globalAlpha = 0.92;
-        ctx.drawImage(img, 0, -bh / 2, bw, bh);
+        ctx.globalAlpha = 0.95;
+        ctx.drawImage(img, 0, -bh / 2, drawLen, bh);
         ctx.globalAlpha = 1;
       }
       ctx.restore();
@@ -547,8 +612,10 @@
     ammoCount,
     casingCount,
     getAngles: () => ({ ...state.angles }),
+    getTargetAngles: () => ({ ...state.targetAngles }),
     getPivotsWorld: () =>
       ART_PIVOTS.map((p) => ({ id: p.id, ...artToWorld(p.x, p.y) })),
+    TURN_RATE,
     AMMO_ID,
     CASING_ID,
   };

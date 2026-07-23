@@ -96,7 +96,9 @@ def _build_platforms() -> List[Dict[str, float]]:
 PLATFORMS = _build_platforms()
 WORLD_LEFT = PLATFORMS[0]["left"] + HALF_W
 WORLD_RIGHT = PLATFORMS[-1]["right"] - HALF_W
-DEFAULT_X = (WALK_LEFT + WALK_RIGHT) / 2.0
+# 开局出生在动力车厢（编组左→右：卫士、仓储、动力）走道中心
+POWER_CAR_WORLD_X = COUPLER_JOIN * 2
+DEFAULT_X = POWER_CAR_WORLD_X + (WALK_LEFT + WALK_RIGHT) / 2.0
 
 
 class PlayerConnection:
@@ -113,6 +115,8 @@ class PlayerConnection:
         self.pose_count_window = 0
 
     async def start(self) -> None:
+        if self.sender_task is not None and not self.sender_task.done():
+            return
         self.sender_task = asyncio.create_task(self._sender_loop())
 
     async def enqueue(self, message: Dict[str, Any]) -> None:
@@ -181,9 +185,12 @@ class LiminalPlayer:
         self.head_look = 0.0
         self.ack_sequence = 0
         self.appearance = _default_appearance(user_id)
+        self.held_id: Optional[str] = None
+        self.aim_x: Optional[float] = None
+        self.aim_y: Optional[float] = None
 
     def snapshot(self) -> Dict[str, Any]:
-        return {
+        data = {
             "id": self.user_id,
             "nickname": self.nickname,
             "x": round(self.x, 2),
@@ -196,7 +203,12 @@ class LiminalPlayer:
             "headLook": round(self.head_look, 3),
             "appearance": dict(self.appearance),
             "connected": self.connected,
+            "heldId": self.held_id,
         }
+        if self.aim_x is not None and self.aim_y is not None:
+            data["aimX"] = round(self.aim_x, 2)
+            data["aimY"] = round(self.aim_y, 2)
+        return data
 
 
 class LiminalRoom:
@@ -270,39 +282,57 @@ class LiminalRoom:
         await self.broadcast(self.world_snapshot())
 
     def step_train(self, dt: float) -> None:
-        """简化列车积分（与客户端大致同量级）。"""
-        throttle = self.train["throttle"]
-        brake = self.train["brake"]
-        speed = self.train["speed"]
-        emergency_decel = 16.0
+        """列车积分：牵引力/功率包络 + 滚动与风阻（与客户端 lp-train-drive.js 对齐）。"""
+        throttle = float(self.train["throttle"])
+        brake = float(self.train["brake"])
+        speed = float(self.train["speed"])
+        max_speed = 5.0
+        notch_max = 5.0
+        tractive_start = 1.75
+        power_ref = 1.55
+        resist_roll = 0.085
+        resist_drag = 0.0175
+        reverse_boost = 1.12
+        stop_eps = 0.03
+        emergency_decel = 9.0
+
         if brake >= 0.95:
             self.train["emergency"] = True
             self.train["throttle"] = 0.0
             throttle = 0.0
+
         if self.train.get("emergency"):
             self.train["throttle"] = 0.0
-            if speed > 0:
+            if speed > 0.0:
                 speed = max(0.0, speed - emergency_decel * dt)
-            elif speed < 0:
+            elif speed < 0.0:
                 speed = min(0.0, speed + emergency_decel * dt)
             if abs(speed) < 0.02:
                 speed = 0.0
                 self.train["emergency"] = False
             self.train["speed"] = speed
             return
-        desired = throttle * (1.0 - brake * 0.92)
-        rate = 2.4
-        if abs(desired) < abs(speed) - 0.01 or (
-            desired != 0 and speed != 0 and (desired > 0) != (speed > 0)
-        ):
-            rate = 0.55 + 6.5 * brake
-        elif abs(desired) < 0.01:
-            rate = 0.55 + 6.5 * brake
-        if speed < desired:
-            speed = min(speed + rate * dt, desired)
-        else:
-            speed = max(speed - rate * dt, desired)
-        self.train["speed"] = _clamp(speed, -5.0, 5.0)
+
+        demand = _clamp(throttle / notch_max, -1.0, 1.0) * (1.0 - brake * 0.92)
+        abs_demand = abs(demand)
+        accel = 0.0
+        if abs_demand >= 0.01:
+            direction = 1.0 if demand > 0.0 else -1.0
+            v = abs(speed)
+            effort = tractive_start * abs_demand
+            power_limited = (tractive_start * abs_demand * power_ref) / max(v, power_ref)
+            mag = min(effort, power_limited)
+            if abs(speed) > 0.05 and ((speed > 0.0) != (demand > 0.0)):
+                mag *= reverse_boost
+            accel += direction * mag
+        if abs(speed) >= 1e-5:
+            v = abs(speed)
+            accel -= (1.0 if speed > 0.0 else -1.0) * (resist_roll + resist_drag * v * v)
+
+        speed += accel * dt
+        if abs_demand < 0.01 and abs(speed) < stop_eps:
+            speed = 0.0
+        self.train["speed"] = _clamp(speed, -max_speed, max_speed)
 
     async def _tick_loop(self) -> None:
         step = 1.0 / SNAPSHOT_HZ
@@ -446,6 +476,22 @@ class LiminalLobbyManager:
         gait = str(payload.get("gait") or "walk")
         player.gait = "run" if gait == "run" else "walk"
         player.ack_sequence = sequence
+        held_raw = payload.get("heldId")
+        if held_raw is None or held_raw == "":
+            player.held_id = None
+        else:
+            held = str(held_raw).strip()[:64]
+            player.held_id = held or None
+        if "aimX" in payload and "aimY" in payload:
+            try:
+                player.aim_x = _clamp(float(payload["aimX"]), WORLD_LEFT - 400.0, WORLD_RIGHT + 400.0)
+                player.aim_y = _clamp(float(payload["aimY"]), -900.0, 200.0)
+            except (TypeError, ValueError):
+                player.aim_x = None
+                player.aim_y = None
+        else:
+            player.aim_x = None
+            player.aim_y = None
 
     async def handle_train(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)

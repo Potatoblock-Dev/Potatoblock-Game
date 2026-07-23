@@ -123,7 +123,7 @@
     const key = window.LpInputBindings?.formatAction('interact') || 'F';
     const c = cfg();
     const title = c?.crateTitle || '箱子';
-    hintDesktop.textContent = `拖拽存取${title} · ${key} 离席`;
+    hintDesktop.textContent = `拖拽存取${title} · ${key} 离开`;
   }
 
   /** 存入箱子。 */
