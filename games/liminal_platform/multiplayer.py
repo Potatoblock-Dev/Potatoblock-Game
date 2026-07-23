@@ -26,13 +26,15 @@ from starlette.websockets import WebSocketState
 from app.games.avatar_lobby import skins
 from app.games.common.room_registry import evict_from_other_games, register_game
 from app.games.liminal_platform import inventory_authority as Inv
+from app.games.liminal_platform.protocol import (
+    MAX_PLAYERS_PER_ROOM,
+    PROTOCOL_VERSION,
+    PUBLIC_ROOM_ID,
+)
 
 logger = logging.getLogger(__name__)
 
 GAME_ID = "liminal_platform"
-PROTOCOL_VERSION = 1
-PUBLIC_ROOM_ID = "public"
-MAX_PLAYERS_PER_ROOM = 10
 DISCONNECT_GRACE_SECONDS = 30
 SNAPSHOT_HZ = 15
 HALF_W = (40.0 * 1.35) / 2.0

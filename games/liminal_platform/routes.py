@@ -18,10 +18,10 @@ from app.games.liminal_platform.multiplayer import (
     CLOSE_BAD_PROTOCOL,
     CLOSE_ROOM_FULL,
     MAX_MESSAGE_BYTES,
-    PROTOCOL_VERSION,
     PlayerConnection,
     lobby_manager,
 )
+from app.games.liminal_platform.protocol import PROTOCOL_VERSION
 from app.routers.auth import (
     get_current_identity_ws,
     get_optional_identity,
