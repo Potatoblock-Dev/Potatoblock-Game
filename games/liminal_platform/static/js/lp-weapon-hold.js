@@ -1,7 +1,7 @@
 /**
  * 手持武器姿态：枪械绘制、枪口与抛壳点（随瞄准方向）。
  * 握把锚在前臂手部世界坐标，与 Avatar 绘制变换一致。
- * 过中垂线（枪口朝左）时纵向镜像，与卫士炮塔一致；可用 item.autoMirror: false 关闭。
+ * 过中垂线（枪口朝左）时纵向镜像，与卫兵防御炮塔一致；可用 item.autoMirror: false 关闭。
  */
 (() => {
   const Catalog = window.LpItemCatalog;

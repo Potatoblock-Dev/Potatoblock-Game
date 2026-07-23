@@ -32,7 +32,7 @@
 
   /** 当前编组签名：增减车厢时触发重建。 */
   function compositionKey(entries) {
-    return entries.map((e) => `${e.id}:${e.kind}:${e.shortLabel}`).join('|');
+    return entries.map((e) => `${e.id}:${e.kind}:${e.shortLabel}:${e.icon || ''}`).join('|');
   }
 
   /** 根据 Spec 重建车厢节点。 */
@@ -61,7 +61,19 @@
 
       const body = document.createElement('span');
       body.className = 'lp-train-minimap-car-body';
-      body.textContent = entry.shortLabel;
+      if (entry.icon) {
+        const img = document.createElement('img');
+        img.className = 'lp-train-minimap-car-icon';
+        img.src = entry.icon;
+        img.alt = '';
+        img.draggable = false;
+        body.appendChild(img);
+        body.classList.add('has-icon');
+      }
+      const label = document.createElement('span');
+      label.className = 'lp-train-minimap-car-label';
+      label.textContent = entry.shortLabel;
+      body.appendChild(label);
       item.appendChild(body);
 
       const pip = document.createElement('span');

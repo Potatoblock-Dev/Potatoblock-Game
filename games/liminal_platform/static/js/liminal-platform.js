@@ -212,7 +212,7 @@
     return getMuzzleWorld();
   }
 
-  /** 向当前瞄准方向开火（手持武器或卫兵炮塔）。 */
+  /** 向当前瞄准方向开火（手持武器或卫兵防御炮塔）。 */
   function requestFire() {
     if (isUiOpen() || !window.LpCombat) return;
     const aim = getAimWorld();

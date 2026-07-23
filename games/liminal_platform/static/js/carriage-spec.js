@@ -3,7 +3,7 @@
  * 07_gameplay 层走线若调整，同步改 ART_*；WORLD_SCALE 只调人车观感比例。
  *
  * 世界约定：屏幕右侧为列车前进方向（世界 +X）；
- * 编组（左→右）：卫士 → 仓储 → 动力（均按同一挂钩间距对接）。
+ * 编组（左→右）：卫兵防御 → 仓储 → 动力（与 Krita 成品译名一致）。
  */
 (() => {
   const ART_MODULE_W = 2250;
@@ -15,7 +15,7 @@
   const ART_WALK_RIGHT = 1793;
   /**
    * 相邻车厢 worldX 间距：前车右钩尖与后车左钩尖对接。
-   * 成品贴图测得：动力/卫兵右 tip≈1898，仓储左 tip≈372 → 1526。
+   * 成品贴图测得：动力/卫兵防御右 tip≈1898，仓储左 tip≈372 → 1526。
    */
   const ART_COUPLER_JOIN = 1526;
 
@@ -44,11 +44,12 @@
   const CARRIAGES = [
     {
       id: 'guard',
-      label: '卫士车厢',
-      image: '/static/games/liminal-platform/img/guard-car.png?v=2',
+      label: '卫兵防御车厢',
+      image: '/static/games/liminal-platform/img/cars/guard-car.png?v=3',
+      icon: '/static/games/liminal-platform/img/cars/guard-car-icon.png?v=1',
       worldX: 0,
       map: {
-        shortLabel: '卫士',
+        shortLabel: '卫兵',
         kind: 'defense',
         tone: '#b91c1c',
       },
@@ -56,7 +57,8 @@
     {
       id: 'storage',
       label: '仓储车厢',
-      image: '/static/games/liminal-platform/img/storage-car.png?v=3',
+      image: '/static/games/liminal-platform/img/cars/storage-car.png?v=4',
+      icon: '/static/games/liminal-platform/img/cars/storage-car-icon.png?v=1',
       worldX: COUPLER_JOIN_OFFSET,
       map: {
         shortLabel: '仓储',
@@ -67,7 +69,8 @@
     {
       id: 'power',
       label: '动力车厢',
-      image: '/static/games/liminal-platform/img/power-car.png?v=3',
+      image: '/static/games/liminal-platform/img/cars/power-car.png?v=4',
+      icon: '/static/games/liminal-platform/img/cars/power-car-icon.png?v=1',
       worldX: COUPLER_JOIN_OFFSET * 2,
       map: {
         shortLabel: '动力',
@@ -89,6 +92,7 @@
       shortLabel: map.shortLabel || car.label || car.id,
       kind: map.kind || 'default',
       tone: map.tone || null,
+      icon: car.icon || map.icon || null,
       worldX: car.worldX,
     };
   }

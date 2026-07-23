@@ -96,7 +96,7 @@ def _build_platforms() -> List[Dict[str, float]]:
 PLATFORMS = _build_platforms()
 WORLD_LEFT = PLATFORMS[0]["left"] + HALF_W
 WORLD_RIGHT = PLATFORMS[-1]["right"] - HALF_W
-# 开局出生在动力车厢（编组左→右：卫士、仓储、动力）走道中心
+# 开局出生在动力车厢（编组左→右：卫兵防御、仓储、动力）走道中心
 POWER_CAR_WORLD_X = COUPLER_JOIN * 2
 DEFAULT_X = POWER_CAR_WORLD_X + (WALK_LEFT + WALK_RIGHT) / 2.0
 

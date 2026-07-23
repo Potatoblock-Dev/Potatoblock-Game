@@ -97,7 +97,7 @@
       name: '机炮子弹',
       short: '弹',
       type: 'ammo',
-      use: '卫兵车厢双联机炮用弹，放入中间绿色弹药箱后开火消耗。',
+      use: '卫兵防御车厢双联机炮用弹，放入中间绿色弹药箱后开火消耗。',
       color: '#14532d',
       accent: '#4ade80',
       maxStack: 100,
@@ -134,7 +134,7 @@
     },
     gur65: {
       id: 'gur65',
-      name: 'GUR-65 冲锋枪',
+      name: 'GUR-65冲锋枪',
       short: 'G65',
       type: 'weapon',
       weaponId: 'gur65',

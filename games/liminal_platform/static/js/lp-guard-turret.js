@@ -21,7 +21,7 @@
   const RECOIL_RECOVER = 7.5;
   /** 炮塔最大转速（弧度/秒，约 150°/s）。 */
   const TURN_RATE = (150 * Math.PI) / 180;
-  const BARREL_URL = '/static/games/liminal-platform/img/guard-barrel.png?v=7';
+  const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=8';
   const SHOT_SFX = '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1';
   /** 开完一发后的装弹机装填（CC0）。 */
   const FEED_SFX = '/static/games/liminal-platform/audio/weapons/guard-turret-feed.wav?v=1';
@@ -33,7 +33,7 @@
   const MAX_DEPRESS = (10 * Math.PI) / 180;
   const MAX_ELEVATE = (82 * Math.PI) / 180;
 
-  /** 贴图像素枢轴：白球质心（由 guard-car.png 采样）。 */
+  /** 贴图像素枢轴：白球质心（由 cars/guard-car.png 采样）。 */
   const ART_PIVOTS = [
     { id: 'left', x: 615, y: 609 },
     { id: 'right', x: 1628, y: 608 },
@@ -107,7 +107,7 @@
     });
   }
 
-  /** 卫兵车厢世界原点。 */
+  /** 卫兵防御车厢世界原点。 */
   function guardCar() {
     return Spec?.CARRIAGES?.find((car) => car.id === 'guard') || null;
   }

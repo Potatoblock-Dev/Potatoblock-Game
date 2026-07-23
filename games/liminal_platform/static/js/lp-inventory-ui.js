@@ -1058,6 +1058,8 @@
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-inventory-open');
     settingsPanel.hidden = true;
+    settingsToggle?.setAttribute('aria-expanded', 'false');
+    settingsToggle?.classList.remove('is-active');
     sideLootPanel.hidden = true;
     groundSection.hidden = true;
     storageSection.hidden = true;
@@ -1108,7 +1110,10 @@
   closeButton?.addEventListener('click', close);
   root.querySelector('.lp-inventory-backdrop')?.addEventListener('click', close);
   settingsToggle?.addEventListener('click', () => {
-    settingsPanel.hidden = !settingsPanel.hidden;
+    const nextHidden = !settingsPanel.hidden;
+    settingsPanel.hidden = nextHidden;
+    settingsToggle.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
+    settingsToggle.classList.toggle('is-active', !nextHidden);
   });
   tabsNav?.addEventListener('click', (event) => {
     const btn = event.target.closest?.('[data-lp-inv-tab]');
