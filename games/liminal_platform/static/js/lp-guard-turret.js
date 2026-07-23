@@ -739,9 +739,10 @@
     });
   }
 
+
   /**
-   * 开火静默入回收箱 1 枚 shell_casing（无抛壳画面）。
-   * 离线写入本地 recycleInv；联机跳过（由 handle_fire 权威写入）。
+   * 弹壳落入回收箱：离线写入本地 recycleInv；联机跳过（由 handle_fire 权威写入）。
+   * 无视觉抛壳；开火成功时由 tryFire 直接调用。
    */
   function depositCasing() {
     if (window.LpInventoryNet?.isActive?.()) return;
@@ -875,7 +876,7 @@
       spawnMuzzleFlash(fired);
     }
     if (muzzles.length === 0) return null;
-    /* 一发弹药 → 一枚弹壳入回收箱；无抛壳特效。联机由服务端 handle_fire 写入。 */
+    /* 一发弹药 → 回收箱 +1 shell_casing；无抛壳特效。联机由服务端权威写入。 */
     if (!online) depositCasing();
     window.LpCombat?.syncCrosshairBloom?.();
 
@@ -918,7 +919,7 @@
   }
 
   /**
-   * 远端炮塔开火反馈：后坐与火光（无抛壳；弹道已由 session 生成；库存由服务端权威）。
+   * 远端炮塔开火反馈：后坐与炮口火光（弹道已由 session 生成；库存由服务端权威；无抛壳特效）。
    * 每发按枪口近邻踢后坐（双联 shots[] 时左右塔都会晃，不单靠 seat turretId）。
    */
   function noteRemoteFire(detail) {
@@ -975,7 +976,7 @@
     }
   }
 
-  /** 推进转向、冷却、后坐/散布回落、弹壳飞入与火光；并吸收远端瞄准。 */
+  /** 推进转向、冷却、后坐/散布回落与火光；并吸收远端瞄准。 */
   function tick(dt) {
     applyRemoteAims();
     let bloomChanged = false;
@@ -1079,7 +1080,7 @@
   }
 
   /**
-   * 在车厢贴图之上绘制炮口火光（无抛壳；与车厢同套颠簸）。
+   * 在车厢贴图之上绘制炮口火光（与车厢同套颠簸；无抛壳特效）。
    * 开火原点仍用未颠簸世界坐标。
    */
   function drawFx(ctx) {
