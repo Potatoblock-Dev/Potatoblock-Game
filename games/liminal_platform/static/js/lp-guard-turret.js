@@ -1,17 +1,22 @@
 /**
  * 卫兵防御车厢：双炮塔操控、弹药箱存取、回收箱。
- * 每座单管；轴心在圆球中心；过中垂线纵向镜像；限制下俯角；开火后坐、无抛壳。
+ * 炮管贴图 guard-barrel.png（整图，不从车厢裁）；枢轴=白球心；
+ * 瞄准角 atan2；过中垂线纵向镜像保贴图朝上；
+ * 各塔射界=外侧近水平 → 经天顶 → 对侧高仰（图2 交叉覆盖），禁止浅角打进甲板/货箱/友穹；
+ * 多人：座位决定控哪塔；仅 1 名操作员时可双联；联机经 pose.turretId 同步占用与瞄准。
+ * 开火后坐、无抛壳。
  */
 (() => {
-  const Spec = window.LiminalCarriageSpec;
   const Core = window.LpInventoryCore;
   const Catalog = window.LpItemCatalog;
+  /** 与 carriage-spec.WORLD_SCALE 对齐；Spec 未就绪时仍按此缩放，避免炮管相对车厢错位变大。 */
+  const WORLD_SCALE_FALLBACK = 0.88;
 
   const AMMO_ID = 'turret_ammo';
   const CASING_ID = 'shell_casing';
-  /** 机炮连射间隔（秒）。 */
-  const FIRE_COOLDOWN = 0.11;
-  const TRACE_RANGE = 980;
+  /** 机炮连射间隔（秒）；入座后长按连发（full-auto）。略降射速。 */
+  const FIRE_COOLDOWN = 0.14;
+  /** 炮弹射程由 LpCombat PROJECTILE_STYLE.shell.maxRange 决定（勿在此缩短）。 */
   const FLASH_LIFE = 0.13;
   /** 火光相对枪口再向前伸出（世界像素）。 */
   const FLASH_FORWARD = 10;
@@ -21,27 +26,53 @@
   const RECOIL_RECOVER = 7.5;
   /** 炮塔最大转速（弧度/秒，约 150°/s）。 */
   const TURN_RATE = (150 * Math.PI) / 180;
-  const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=10';
+  /**
+   * 开火角容差：炮管当前角与准星钳制目标角差须 ≤ 此值才允许开火。
+   * 约 4°——跟上瞄准后可连发，回转滞后时不开火。
+   */
+  const AIM_FIRE_TOLERANCE = (4 * Math.PI) / 180;
+  /** 独立炮管贴图（炮口朝 +X；整图绘制，禁止从 guard-car 裁切）。 */
+  const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=12';
   const SHOT_SFX = '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1';
   /** 开完一发后的装弹机装填（CC0）。 */
   const FEED_SFX = '/static/games/liminal-platform/audio/weapons/guard-turret-feed.wav?v=1';
   /** 装填音相对枪声的延迟（秒），贴近「打完再进弹」。 */
   const FEED_SFX_DELAY = 0.05;
-  /** 闲置朝向：与成品预览一致，双塔炮管均朝左。 */
-  const IDLE_ANGLE = { left: Math.PI, right: Math.PI };
-  /** 相对水平的最大下俯角 / 仰角。 */
-  const MAX_DEPRESS = (10 * Math.PI) / 180;
-  const MAX_ELEVATE = (82 * Math.PI) / 180;
   /**
-   * 白球半径（贴图像素）：炮管从球缘外缘起画。
-   * 由 guard-car 白球 bbox 半宽 ≈125，接榫约在 96–110。
+   * 闲置朝向：各塔朝车厢外侧（左塔← / 右塔→），避免闲置炮管指向货箱或友塔。
    */
-  const ART_DOME_RADIUS = 108;
-  /** 贴图未就绪时的炮管设计尺寸（与单根炮管裁剪接近，避免巨大占位条）。 */
-  const ART_BARREL_FALLBACK_W = 300;
-  const ART_BARREL_FALLBACK_H = 41;
+  const IDLE_ANGLE = { left: Math.PI, right: 0 };
+  /**
+   * 外侧下俯：仅允许略低于水平（图2 红线贴水平外向）；过大则打进甲板。
+   */
+  const MAX_DEPRESS = (8 * Math.PI) / 180;
+  /**
+   * 越过天顶后仍允许的内侧仰角余量（相对 −90°）。
+   * 图2：左塔上右、右塔上左交叉于车厢中线上方；约 35° 形成大重叠楔且避开浅角友穹。
+   */
+  const PAST_ZENITH = (35 * Math.PI) / 180;
+  /**
+   * 各塔射界端点（画布 atan2：0=右，−π/2=上，π=左，+π/2=下）。
+   * ARC_IN：越过天顶后的内侧高仰端；ARC_OUT：外侧近水平（含轻微下俯）。
+   * left：≈ −55° → 经天顶/−π → ≈172°；right：≈ −125° → 经天顶 → ≈8°。
+   * 禁止再锁「纯外侧半球」(cos≤0 / cos≥0)，否则挡掉图2 的对空交叉。
+   */
+  const ARC_IN = {
+    left: -Math.PI / 2 + PAST_ZENITH,
+    right: -Math.PI / 2 - PAST_ZENITH,
+  };
+  const ARC_OUT = {
+    left: Math.PI - MAX_DEPRESS,
+    right: MAX_DEPRESS,
+  };
+  /**
+   * 贴图未就绪时的设计尺寸（与 guard-barrel.png 303×43 对齐）。
+   * 仅占位；正式绘制用 naturalWidth/Height。
+   */
+  const ART_BARREL_FALLBACK_W = 303;
+  const ART_BARREL_FALLBACK_H = 43;
 
-  /** 贴图像素枢轴：白球质心（由 cars/guard-car.png 采样）。 */
+  /** 贴图像素枢轴：白球质心（由 cars/guard-car.png 白团质心采样）。 */
   const ART_PIVOTS = [
     { id: 'left', x: 615, y: 609 },
     { id: 'right', x: 1628, y: 608 },
@@ -49,6 +80,13 @@
 
   const state = {
     manned: null,
+    /**
+     * 远端入座：turretId → playerId。
+     * 与本地 manned 一起决定单人双控 / 多人分塔。
+     */
+    remoteClaims: { left: null, right: null },
+    /** 远端准星（世界坐标）；仅驱动非本机控制的炮管。 */
+    remoteAims: { left: null, right: null },
     barrelImg: null,
     barrelReady: false,
     angles: { left: IDLE_ANGLE.left, right: IDLE_ANGLE.right },
@@ -107,7 +145,7 @@
     window.LpGuardCrateUi?.refresh?.();
   }
 
-  /** 预加载炮管贴图。 */
+  /** 预加载独立炮管贴图（整图 URL；失败则 draw 走 fallback 剪影）。 */
   function loadBarrelImage() {
     if (state.barrelReady && state.barrelImg?.naturalWidth > 0) {
       return Promise.resolve(state.barrelImg);
@@ -115,94 +153,110 @@
     state.barrelReady = false;
     return new Promise((resolve, reject) => {
       const img = new Image();
+      img.decoding = 'async';
       img.onload = () => {
         state.barrelImg = img;
         state.barrelReady = img.naturalWidth > 0;
+        if (!state.barrelReady) {
+          reject(new Error('guard barrel empty'));
+          return;
+        }
         resolve(img);
       };
       img.onerror = () => {
         state.barrelReady = false;
-        reject(new Error('guard barrel load failed'));
+        state.barrelImg = null;
+        reject(new Error(`guard barrel load failed: ${BARREL_URL}`));
       };
       img.src = BARREL_URL;
     });
   }
 
+  /** 读取车厢规格（运行时查找，避免脚本顺序导致未缩放）。 */
+  function getSpec() {
+    return window.LiminalCarriageSpec || null;
+  }
+
+  /** 贴图像素 → 世界：优先 Spec.scaleArt，否则 WORLD_SCALE_FALLBACK。 */
+  function scaleArt(value) {
+    const Spec = getSpec();
+    if (typeof Spec?.scaleArt === 'function') return Spec.scaleArt(value);
+    const s =
+      typeof Spec?.WORLD_SCALE === 'number' && Spec.WORLD_SCALE > 0
+        ? Spec.WORLD_SCALE
+        : WORLD_SCALE_FALLBACK;
+    return value * s;
+  }
+
   /** 卫兵防御车厢世界原点。 */
   function guardCar() {
-    return Spec?.CARRIAGES?.find((car) => car.id === 'guard') || null;
+    return getSpec()?.CARRIAGES?.find((car) => car.id === 'guard') || null;
   }
 
   /** 贴图像素 → 世界坐标（含车厢偏移）。 */
   function artToWorld(artX, artY) {
     const car = guardCar();
-    const scale = Spec?.scaleArt || ((v) => v);
     return {
-      x: (car?.worldX ?? 0) + scale(artX),
-      y: scale(artY),
+      x: (car?.worldX ?? 0) + scaleArt(artX),
+      y: scaleArt(artY),
     };
   }
 
-  /** 炮管世界尺寸（贴图像素× WORLD_SCALE；未就绪用与成品接近的设计尺寸）。 */
-  function barrelSizeWorld() {
+  /** 炮管贴图设计尺寸（贴图像素；未就绪用 fallback）。 */
+  function barrelArtSize() {
     const img = state.barrelImg;
-    const artW =
-      img && state.barrelReady && img.naturalWidth
-        ? img.naturalWidth
-        : ART_BARREL_FALLBACK_W;
-    const artH =
-      img && state.barrelReady && img.naturalHeight
-        ? img.naturalHeight
-        : ART_BARREL_FALLBACK_H;
-    const scale = Spec?.scaleArt || ((v) => v);
-    return { w: scale(artW), h: scale(artH) };
+    if (img && state.barrelReady && img.naturalWidth > 0) {
+      return { w: img.naturalWidth, h: img.naturalHeight };
+    }
+    return { w: ART_BARREL_FALLBACK_W, h: ART_BARREL_FALLBACK_H };
   }
 
-  /** 白球世界半径。 */
-  function domeRadiusWorld() {
-    const scale = Spec?.scaleArt || ((v) => v);
-    return scale(ART_DOME_RADIUS);
+  /** 炮管世界尺寸（贴图像素 × WORLD_SCALE）。 */
+  function barrelSizeWorld() {
+    const { w, h } = barrelArtSize();
+    return { w: scaleArt(w), h: scaleArt(h) };
   }
 
   /**
-   * 无贴图时的单管剪影（贴合成品扁管，不再画巨型双联占位）。
+   * 无贴图时的双管剪影占位（尺寸贴近 guard-barrel.png）。
    * 仅在 barrel 贴图未就绪时使用。
    */
   function drawBarrelFallback(ctx, bw, bh) {
-    const r = Math.max(2, bh * 0.35);
-    ctx.fillStyle = '#6b6b70';
+    const r = Math.max(2, bh * 0.22);
+    ctx.fillStyle = '#5c5c62';
     ctx.beginPath();
-    ctx.roundRect(0, -bh * 0.5, bw, bh, r);
+    ctx.roundRect(0, -bh * 0.48, bw, bh * 0.48, r);
     ctx.fill();
-    ctx.fillStyle = '#9a9aa0';
+    ctx.fillStyle = '#8a8a90';
     ctx.beginPath();
-    ctx.roundRect(bw * 0.02, -bh * 0.28, bw * 0.96, bh * 0.34, r * 0.5);
+    ctx.roundRect(bw * 0.06, bh * 0.02, bw * 0.78, bh * 0.42, r * 0.85);
     ctx.fill();
-    ctx.fillStyle = '#55555a';
-    ctx.fillRect(0, -bh * 0.5, Math.max(6, bw * 0.06), bh);
   }
 
-  /**
-   * 枪口距枢轴距离：贴图按「球心→枪口」全长计，球缘外只画露出段。
-   */
+  /** 枪口距枢轴距离：贴图全长（炮尾在球心、炮口在远端）。 */
   function barrelLengthWorld() {
     return barrelSizeWorld().w;
   }
 
-  /** 将瞄准角限制在仰角 / 俯角范围内（画布 y 向下为正俯角）。 */
-  function clampTurretAngle(raw) {
-    let a = Math.atan2(Math.sin(raw), Math.cos(raw));
-    const s = Math.sin(a);
-    const c = Math.cos(a);
-    const maxDown = Math.sin(MAX_DEPRESS);
-    const maxUp = Math.sin(MAX_ELEVATE);
-    let ns = s;
-    if (s > maxDown) ns = maxDown;
-    if (s < -maxUp) ns = -maxUp;
-    if (ns === s) return a;
-    const sign = c >= 0 ? 1 : -1;
-    const nc = sign * Math.sqrt(Math.max(0, 1 - ns * ns));
-    return Math.atan2(ns, nc);
+  /** 归一化到 (−π, π]。 */
+  function normalizeAngle(raw) {
+    return Math.atan2(Math.sin(raw), Math.cos(raw));
+  }
+
+  /**
+   * 角是否落在该塔允许楔内（外侧近水平经天顶到内侧高仰；不含甲板/浅角友穹扇区）。
+   */
+  function angleInTurretArc(raw, pivotId) {
+    const a = normalizeAngle(raw);
+    const id = pivotId === 'right' ? 'right' : 'left';
+    const inward = ARC_IN[id];
+    const outward = ARC_OUT[id];
+    if (id === 'left') {
+      /* 允许 [−π, ARC_IN] ∪ [ARC_OUT, π]；禁止开区间 (ARC_IN, ARC_OUT) 内的右下浅扇。 */
+      return !(inward < a && a < outward);
+    }
+    /* 右塔：连续上弧 [ARC_IN, ARC_OUT]。 */
+    return a >= inward - 1e-9 && a <= outward + 1e-9;
   }
 
   /** 最短有符号角差（−π…π）。 */
@@ -210,37 +264,48 @@
     return Math.atan2(Math.sin(to - from), Math.cos(to - from));
   }
 
+  /** 两角最短弧长（非负）。 */
+  function angleDist(from, to) {
+    return Math.abs(angleDelta(from, to));
+  }
+
   /**
-   * 转向角差：优先不穿过下俯极限（左右大角度回转走仰角一侧）。
+   * 将瞄准角限制在该塔图2 射界楔内；越界软停到最近端点（ARC_IN / ARC_OUT）。
    */
-  function turnDelta(from, to) {
+  function clampTurretAngle(raw, pivotId) {
+    const id = pivotId === 'right' ? 'right' : 'left';
+    const a = normalizeAngle(raw);
+    if (angleInTurretArc(a, id)) return a;
+    const inward = ARC_IN[id];
+    const outward = ARC_OUT[id];
+    return angleDist(a, inward) <= angleDist(a, outward) ? inward : outward;
+  }
+
+  /**
+   * 转向角差：留在本塔楔内，优先走经天顶的上弧，避开穿甲板的下弧。
+   */
+  function turnDelta(from, to, pivotId) {
     let d = angleDelta(from, to);
     const midSin = Math.sin(from + d * 0.5);
     if (midSin > Math.sin(MAX_DEPRESS) * 0.35) {
       d = d > 0 ? d - Math.PI * 2 : d + Math.PI * 2;
     }
+    const midA = normalizeAngle(from + d * 0.5);
+    if (!angleInTurretArc(midA, pivotId)) {
+      d = d > 0 ? d - Math.PI * 2 : d + Math.PI * 2;
+    }
     return d;
   }
 
-  /** 按转速把当前角推向目标角。 */
-  function slewAngle(current, target, dt) {
-    const tgt = clampTurretAngle(target);
-    const d = turnDelta(current, tgt);
+  /** 按转速把当前角推向目标角（已按塔射界钳制）。 */
+  function slewAngle(current, target, dt, pivotId) {
+    const tgt = clampTurretAngle(target, pivotId);
+    const d = turnDelta(current, tgt, pivotId);
     const maxStep = TURN_RATE * Math.max(0, dt);
     if (Math.abs(d) <= maxStep) return tgt;
 
-    const curC = Math.cos(current);
-    const tgtC = Math.cos(tgt);
-    const apexSin = -Math.sin(MAX_ELEVATE);
-    const atApex = Math.sin(current) <= apexSin + 1e-3;
-
-    /* 左右半球切换时，仰到极限后整步翻面，避免卡在天顶。 */
-    if (curC * tgtC < 0 && atApex) {
-      const side = tgtC >= 0 ? 1 : -1;
-      return Math.atan2(apexSin, side * Math.sqrt(Math.max(0, 1 - apexSin * apexSin)));
-    }
-
-    return clampTurretAngle(current + Math.sign(d) * maxStep);
+    /* 沿楔内上弧步进；端点软停由 clampTurretAngle 保证。 */
+    return clampTurretAngle(current + Math.sign(d) * maxStep, pivotId);
   }
 
   /** 弹药箱剩余数量。 */
@@ -260,33 +325,130 @@
     return Boolean(state.manned);
   }
 
-  /** 当前操控的炮塔 id。 */
+  /** 当前操控的炮塔座位 id（左站/右站，非「实际控制的塔列表」）。 */
   function getMannedId() {
     return state.manned;
   }
 
-  /** 进入炮塔。 */
+  /** 规范化炮位 id。 */
+  function normalizeTurretId(turretId) {
+    return turretId === 'right' ? 'right' : 'left';
+  }
+
+  /** 当前房间入座人数（本机 + 远端占用）。 */
+  function operatorCount() {
+    let n = state.manned ? 1 : 0;
+    if (state.remoteClaims.left) n += 1;
+    if (state.remoteClaims.right) n += 1;
+    return n;
+  }
+
+  /**
+   * 本机实际控制的炮塔 id 列表。
+   * 仅 1 名操作员 → 双塔；2+ → 仅座位对应的一塔。
+   */
+  function getControlledTurretIds() {
+    if (!state.manned) return [];
+    if (operatorCount() <= 1) return ['left', 'right'];
+    return [state.manned];
+  }
+
+  /** 是否单人双控模式。 */
+  function isSoloDual() {
+    return Boolean(state.manned) && operatorCount() <= 1;
+  }
+
+  /** 某侧是否已被远端占用。 */
+  function isSeatClaimedByRemote(turretId) {
+    const id = normalizeTurretId(turretId);
+    return Boolean(state.remoteClaims[id]);
+  }
+
+  /**
+   * 从联机快照同步远端炮位与瞄准。
+   * 副作用：若本机所在侧被他人占用（服权威拒绝），强制离席。
+   */
+  function syncRemoteOperators(operators) {
+    const nextClaims = { left: null, right: null };
+    const nextAims = { left: null, right: null };
+    const list = Array.isArray(operators) ? operators : [];
+    for (const entry of list) {
+      const id = entry?.turretId === 'right' ? 'right' : entry?.turretId === 'left' ? 'left' : null;
+      if (!id) continue;
+      const playerId = String(entry.playerId || '');
+      if (!playerId) continue;
+      nextClaims[id] = playerId;
+      if (entry.aimX != null && entry.aimY != null) {
+        nextAims[id] = { x: Number(entry.aimX), y: Number(entry.aimY) };
+      }
+    }
+    state.remoteClaims = nextClaims;
+    state.remoteAims = nextAims;
+    if (state.manned && nextClaims[state.manned]) {
+      exitTurret();
+      window.LiminalInteract?.showToast?.('该炮位已被占用');
+    }
+  }
+
+  /** 把远端准星应用到本机未控制的炮管目标角。 */
+  function applyRemoteAims() {
+    const controlled = new Set(getControlledTurretIds());
+    for (const id of ['left', 'right']) {
+      if (controlled.has(id)) continue;
+      const aim = state.remoteAims[id];
+      if (!aim) continue;
+      const pivot = ART_PIVOTS.find((p) => p.id === id);
+      if (!pivot) continue;
+      const world = artToWorld(pivot.x, pivot.y);
+      state.targetAngles[id] = clampTurretAngle(
+        Math.atan2(aim.y - world.y, aim.x - world.x),
+        id
+      );
+    }
+  }
+
+  /** 无人炮管回到闲置角（无人占用时）。 */
+  function idleTurretIfFree(turretId) {
+    const id = normalizeTurretId(turretId);
+    if (state.manned === id) return;
+    if (state.remoteClaims[id]) return;
+    state.angles[id] = IDLE_ANGLE[id];
+    state.targetAngles[id] = IDLE_ANGLE[id];
+  }
+
+  /** 进入炮塔座位（位置决定 left/right）。 */
   function enterTurret(turretId) {
-    state.manned = turretId === 'right' ? 'right' : 'left';
+    const id = normalizeTurretId(turretId);
+    if (isSeatClaimedByRemote(id)) {
+      window.LiminalInteract?.showToast?.(
+        id === 'left' ? '左侧炮塔已被占用' : '右侧炮塔已被占用'
+      );
+      return false;
+    }
+    state.manned = id;
     document.body.classList.add('lp-turret-mode');
     window.LpSfx?.preload?.([SHOT_SFX, FEED_SFX]);
+    const soloHint = operatorCount() <= 1 ? '（双联）' : '';
     window.LiminalInteract?.showToast?.(
-      state.manned === 'left' ? '进入左侧炮塔' : '进入右侧炮塔'
+      (id === 'left' ? '进入左侧炮塔' : '进入右侧炮塔') + soloHint
     );
     window.dispatchEvent(
       new CustomEvent('lp:turret-enter', { detail: { turretId: state.manned } })
     );
+    return true;
   }
 
-  /** 离席：炮管回到外侧闲置朝向。 */
+  /** 离席：仅重置无人占用的炮管到闲置朝向。 */
   function exitTurret() {
     if (!state.manned) return;
+    const leftSeat = state.manned;
     state.manned = null;
-    state.angles.left = IDLE_ANGLE.left;
-    state.angles.right = IDLE_ANGLE.right;
-    state.targetAngles.left = IDLE_ANGLE.left;
-    state.targetAngles.right = IDLE_ANGLE.right;
     document.body.classList.remove('lp-turret-mode');
+    idleTurretIfFree(leftSeat);
+    if (operatorCount() === 0) {
+      idleTurretIfFree('left');
+      idleTurretIfFree('right');
+    }
     window.LiminalInteract?.showToast?.('离开炮塔');
     window.dispatchEvent(new CustomEvent('lp:turret-exit'));
   }
@@ -297,8 +459,7 @@
       exitTurret();
       return true;
     }
-    enterTurret(turretId);
-    return true;
+    return enterTurret(turretId);
   }
 
   /** 物品 id：弹药箱 / 回收箱。 */
@@ -441,14 +602,13 @@
     });
   }
 
-  /** 生成炮塔飞行炮弹实体。 */
+  /** 生成炮塔飞行炮弹实体（射程用 shell 弹种 maxRange）。 */
   function spawnTurretTracer(muzzle) {
     window.LpCombat?.spawnProjectile?.({
       originX: muzzle.x,
       originY: muzzle.y,
       dirX: muzzle.dirX,
       dirY: muzzle.dirY,
-      range: TRACE_RANGE,
       weaponId: 'guard_turret',
       style: 'shell',
       facing: muzzle.dirX >= 0 ? 1 : -1,
@@ -456,21 +616,66 @@
     });
   }
 
-  /** 按准星更新双塔目标朝向（实际旋转在 tick 中限速追赶）。 */
-  function aimBoth(aimX, aimY) {
-    for (const pivot of ART_PIVOTS) {
+  /** 枢轴到准星的原始瞄准角（未钳制；画布 atan2）。 */
+  function rawAimAngle(aimX, aimY, pivotId) {
+    const pivot = ART_PIVOTS.find((p) => p.id === pivotId);
+    const world = artToWorld(pivot.x, pivot.y);
+    return Math.atan2(aimY - world.y, aimX - world.x);
+  }
+
+  /**
+   * 准星是否落在该塔射界楔内（复用 angleInTurretArc；界外即使炮管贴边也不开火）。
+   */
+  function isAimInFireArc(aimX, aimY, pivotId) {
+    return angleInTurretArc(rawAimAngle(aimX, aimY, pivotId), pivotId);
+  }
+
+  /**
+   * 该塔炮管是否已转到足以朝向准星（相对钳制后的目标角，容差 AIM_FIRE_TOLERANCE）。
+   */
+  function isBarrelAimedAt(aimX, aimY, pivotId) {
+    const needed = clampTurretAngle(rawAimAngle(aimX, aimY, pivotId), pivotId);
+    return angleDist(state.angles[pivotId], needed) <= AIM_FIRE_TOLERANCE;
+  }
+
+  /**
+   * 入座机炮在准星处是否可开火：座位塔射界内，且炮管已跟上瞄准。
+   * 不检查弹药/冷却（由 tryFire 负责）。
+   */
+  function canFire(aimX, aimY) {
+    if (!state.manned) return false;
+    const id = state.manned;
+    return isAimInFireArc(aimX, aimY, id) && isBarrelAimedAt(aimX, aimY, id);
+  }
+
+  /** 按准星更新本机控制的炮塔目标朝向。 */
+  function aimControlled(aimX, aimY) {
+    for (const id of getControlledTurretIds()) {
+      const pivot = ART_PIVOTS.find((p) => p.id === id);
+      if (!pivot) continue;
       const world = artToWorld(pivot.x, pivot.y);
-      state.targetAngles[pivot.id] = clampTurretAngle(
-        Math.atan2(aimY - world.y, aimX - world.x)
+      state.targetAngles[id] = clampTurretAngle(
+        Math.atan2(aimY - world.y, aimX - world.x),
+        id
       );
     }
   }
 
   /**
-   * 炮塔开火：耗弹 1，双塔联射（各一管后坐 + 炮弹 + 火光）。
+   * 兼容旧调用名：入座后瞄准本机控制的塔（单人双塔 / 多人单塔）。
+   */
+  function aimBoth(aimX, aimY) {
+    aimControlled(aimX, aimY);
+  }
+
+  /**
+   * 炮塔开火：耗弹 1，对本机控制的塔联射（后坐 + 炮弹 + 火光）。
+   * 准星出射界或炮管未转到位时只更新瞄准、不开火不耗弹。
    */
   function tryFire(aimX, aimY) {
     if (!state.manned || state.fireCooldown > 0) return null;
+    aimControlled(aimX, aimY);
+    if (!canFire(aimX, aimY)) return null;
     if (window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
       ensureInventories();
       if (ammoCount() <= 0) {
@@ -490,18 +695,19 @@
       if (spent <= 0) return null;
       saveCrates();
     }
-    aimBoth(aimX, aimY);
     state.fireCooldown = FIRE_COOLDOWN;
 
-    for (const pivot of ART_PIVOTS) {
-      kickRecoil(pivot.id);
-    }
-
-    const muzzles = allMuzzlePoints();
-    for (const muzzle of muzzles) {
+    const controlled = getControlledTurretIds();
+    const muzzles = [];
+    for (const id of controlled) {
+      kickRecoil(id);
+      const muzzle = muzzlePoint(id);
+      if (!muzzle) continue;
+      muzzles.push(muzzle);
       spawnTurretTracer(muzzle);
       spawnMuzzleFlash(muzzle);
     }
+    if (muzzles.length === 0) return null;
 
     window.LpSfx?.play?.(SHOT_SFX, {
       volume: 0.45,
@@ -516,28 +722,94 @@
       });
     }, Math.round(FEED_SFX_DELAY * 1000));
 
-    const mannedMuzzle = muzzlePoint(state.manned) || muzzles[0];
+    const primary = muzzlePoint(state.manned) || muzzles[0];
+    const shots = muzzles.map((muzzle) => ({
+      x: muzzle.x,
+      y: muzzle.y,
+      dirX: muzzle.dirX,
+      dirY: muzzle.dirY,
+    }));
     window.dispatchEvent(
       new CustomEvent('lp:weapon-fired', {
         detail: {
           weaponId: 'guard_turret',
-          originX: mannedMuzzle?.x,
-          originY: mannedMuzzle?.y,
-          dirX: mannedMuzzle?.dirX,
-          dirY: mannedMuzzle?.dirY,
+          originX: primary?.x,
+          originY: primary?.y,
+          dirX: primary?.dirX,
+          dirY: primary?.dirY,
           turret: true,
           source: 'turret',
+          turretId: state.manned,
+          shots,
         },
       })
     );
-    return mannedMuzzle || null;
+    return primary || null;
   }
 
-  /** 推进转向、冷却、后坐回位与火光。 */
+  /**
+   * 远端炮塔开火反馈：后坐与火光（弹道已由 session 生成）。
+   */
+  function noteRemoteFire(detail) {
+    const shots = Array.isArray(detail?.shots) && detail.shots.length > 0
+      ? detail.shots
+      : [
+          {
+            x: detail?.x ?? detail?.originX,
+            y: detail?.y ?? detail?.originY,
+            dirX: detail?.dirX,
+            dirY: detail?.dirY,
+          },
+        ];
+    const turretId =
+      detail?.turretId === 'right'
+        ? 'right'
+        : detail?.turretId === 'left'
+          ? 'left'
+          : null;
+    if (turretId) kickRecoil(turretId);
+    for (const shot of shots) {
+      if (shot?.x == null || shot?.y == null) continue;
+      const dirX = Number(shot.dirX) || 0;
+      const dirY = Number(shot.dirY) || 0;
+      const angle = Math.atan2(dirY, dirX);
+      spawnMuzzleFlash({
+        x: Number(shot.x),
+        y: Number(shot.y),
+        dirX,
+        dirY,
+        angle,
+      });
+      if (!turretId) {
+        /* 无座位字段时按枪口近邻推断后坐塔。 */
+        let best = null;
+        let bestDist = Infinity;
+        for (const pivot of ART_PIVOTS) {
+          const world = artToWorld(pivot.x, pivot.y);
+          const dx = world.x - Number(shot.x);
+          const dy = world.y - Number(shot.y);
+          const d = dx * dx + dy * dy;
+          if (d < bestDist) {
+            bestDist = d;
+            best = pivot.id;
+          }
+        }
+        if (best) kickRecoil(best);
+      }
+    }
+  }
+
+  /** 推进转向、冷却、后坐回位与火光；并吸收远端瞄准。 */
   function tick(dt) {
+    applyRemoteAims();
     for (const pivot of ART_PIVOTS) {
       const id = pivot.id;
-      state.angles[id] = slewAngle(state.angles[id], state.targetAngles[id], dt);
+      state.angles[id] = slewAngle(
+        state.angles[id],
+        state.targetAngles[id],
+        dt,
+        id
+      );
       if (state.recoil[id] > 0) {
         state.recoil[id] = Math.max(0, state.recoil[id] - RECOIL_RECOVER * dt);
       }
@@ -552,35 +824,32 @@
   }
 
   /**
-   * 绘制单管炮管：枢轴在白球心；从球缘起画露出段（全长≈贴图宽）。
-   * 有贴图时不叠占位条，避免悬空巨型双联灰条。
+   * 绘制双塔炮管（经典 2D 枢轴模型）。
+   * 旧：平移到球缘 + 源矩形裁掉「球内段」→ 易与独立贴图错位，看起来悬空灰条。
+   * 新：translate(白球心) → rotate(atan2 角) → 朝左半球时 scale(1,-1) 保贴图顶朝上
+   *     → 后坐沿本地 −X → drawImage 整张 guard-barrel.png（炮尾在枢轴、炮口朝 +X）。
    */
   function drawBarrels(ctx) {
     const { w: bw, h: bh } = barrelSizeWorld();
     const img = state.barrelImg;
     const useImg = Boolean(img && state.barrelReady && img.naturalWidth > 0);
-    const domeR = domeRadiusWorld();
-    /* 贴图按球心→枪口全长；球内段不画，只画球缘以外 */
-    const drawLen = Math.max(bw * 0.4, bw - domeR);
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     for (const pivot of ART_PIVOTS) {
       const world = artToWorld(pivot.x, pivot.y);
       const angle = state.angles[pivot.id];
-      const c = Math.cos(angle);
-      const s = Math.sin(angle);
       const kick = recoilPx(pivot.id);
-      const flipY = c < 0;
-      const ox = world.x + c * (domeR - kick);
-      const oy = world.y + s * (domeR - kick);
+      /* 贴图直立绘制；转到左半球后 rotate 会让「顶」朝下，故纵向镜像还原。 */
+      const flipY = Math.cos(angle) < 0;
       ctx.save();
-      ctx.translate(ox, oy);
+      ctx.translate(world.x, world.y);
       ctx.rotate(angle);
       if (flipY) ctx.scale(1, -1);
+      ctx.translate(-kick, 0);
       if (useImg) {
-        ctx.drawImage(img, 0, -bh / 2, drawLen, bh);
+        ctx.drawImage(img, 0, -bh / 2, bw, bh);
       } else {
-        drawBarrelFallback(ctx, drawLen, bh);
+        drawBarrelFallback(ctx, bw, bh);
       }
       ctx.restore();
     }
@@ -656,6 +925,9 @@
     loadBarrelImage,
     isManned,
     getMannedId,
+    getControlledTurretIds,
+    isSoloDual,
+    operatorCount,
     enterTurret,
     exitTurret,
     interactTurret,
@@ -664,7 +936,16 @@
     depositItem,
     withdrawItem,
     aimBoth,
+    aimControlled,
     tryFire,
+    canFire,
+    isAimInFireArc,
+    clampTurretAngle,
+    AIM_FIRE_TOLERANCE,
+    syncRemoteOperators,
+    noteRemoteFire,
+    /** 卫兵机炮始终全自动（长按连发）。 */
+    isFullAuto: () => true,
     tick,
     draw,
     getAimLeadScale,

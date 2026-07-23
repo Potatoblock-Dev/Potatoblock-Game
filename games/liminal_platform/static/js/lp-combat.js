@@ -5,22 +5,41 @@
 (() => {
   const Catalog = window.LpItemCatalog;
   const DEFAULT_COOLDOWN = 0.22;
-  const TRACE_LENGTH = 560;
+  /**
+   * 弹道射程兜底（世界像素）。优先 style.maxRange / item.maxRange / options.range。
+   * 旧值 560 过短，炮弹约 0.3s 即消失。
+   */
+  const DEFAULT_MAX_RANGE = 1600;
   const CASING_REST_LIFE = 4.0;
   const GRAVITY = 920;
-  /** 小口径子弹飞行速度。 */
-  const PROJECTILE_SPEED_BULLET = 2400;
-  /** 机炮炮弹稍慢。 */
-  const PROJECTILE_SPEED_SHELL = 1650;
+  /** 小口径子弹飞行速度（GUR-65 / machine_gun bullet 样式）。 */
+  const PROJECTILE_SPEED_BULLET = 3000;
+  /** 机炮炮弹：快于步枪弹，大弹体仍需可见航迹。 */
+  const PROJECTILE_SPEED_SHELL = 3600;
+  /**
+   * 枪炮准星中心最小空隙（像素）。
+   * 高精度武器也略微散开，禁止四臂收成实心十字。
+   */
+  const CROSSHAIR_MIN_GAP_PX = 7;
+  /** 机炮塔准星最小空隙（像素）；大于手持，匹配炮口散布观感。 */
+  const TURRET_CROSSHAIR_MIN_GAP_PX = 14;
+  /** spreadBaseDeg → 准星基础空隙的像素换算。 */
+  const SPREAD_DEG_TO_GAP_PX = 4;
+  /** 后坐满时额外张开（像素）。 */
+  const RECOIL_GAP_PX = 22;
 
   /**
-   * 弹种外观：实体尺寸（世界像素），非尾迹长度。
+   * 弹种外观与默认射程（世界像素）。
    * kind: bullet=步枪/冲锋枪弹头；shell=机炮弹体。
+   * maxRange：飞行实体在命中前可走的最大距离；lifetime ≈ maxRange/speed。
+   * 默认：bullet 1600（~0.53s @ 3000）；shell 9600（~2.7s @ 3600，约数节车厢）。
+   * 武器 catalog 可设 item.maxRange 覆盖；spawn 也可传 options.range。
    */
   const PROJECTILE_STYLE = {
     bullet: {
       kind: 'bullet',
       speed: PROJECTILE_SPEED_BULLET,
+      maxRange: 1600,
       /* ~半原尺寸；勿再腰斩（曾误缩两次） */
       bodyLen: 4.5,
       bodyH: 1.2,
@@ -29,10 +48,14 @@
       body: '#c4a35a',
       band: '#8a6a2a',
       flashR: 4,
+      /** 命中车底 / 轨道时播尘土；scale 控制喷溅大小。 */
+      impactDust: true,
+      impactDustScale: 1,
     },
     shell: {
       kind: 'shell',
       speed: PROJECTILE_SPEED_SHELL,
+      maxRange: 9600,
       bodyLen: 18,
       bodyH: 5.5,
       tipLen: 5,
@@ -40,6 +63,8 @@
       body: '#d97706',
       band: '#92400e',
       flashR: 14,
+      impactDust: true,
+      impactDustScale: 1.75,
     },
   };
 
@@ -73,16 +98,15 @@
     return DEFAULT_COOLDOWN;
   }
 
-  /** 手持武器槽位（优先 HUD 选中槽，再右手、左手）。 */
+  /** 手持武器槽：仅用 HUD 选中槽；空槽/非武器视为徒手（不回退其它手槽）。 */
   function getHeldWeaponSlot() {
     const hands = window.LpInventory?.getHandsInventory?.();
     if (!hands || !Catalog?.isWeapon) return null;
     const preferred = window.LpHandsHud?.getActiveIndex?.();
-    const order = [];
-    if (preferred === 0 || preferred === 1) order.push(preferred);
-    for (const index of [1, 0]) {
-      if (!order.includes(index)) order.push(index);
-    }
+    const order =
+      preferred === 0 || preferred === 1 || preferred === 2
+        ? [preferred]
+        : [1, 0];
     for (const index of order) {
       if (index >= hands.size()) continue;
       if (hands.isCovered?.(index)) continue;
@@ -122,12 +146,22 @@
     return { x: dir.x * c - dir.y * s, y: dir.x * s + dir.y * c };
   }
 
-  /** 后坐标度 → 准星中心空隙（像素）。 */
+  /**
+   * 计算准星中心空隙（像素）。
+   * 手持：max(全局最小, spreadBaseDeg 换算) + 后坐张开；机炮塔：更大的固定最小空隙。
+   */
   function getCrosshairGapPx() {
-    return 3 + state.recoil * 24;
+    if (document.body.classList.contains('lp-turret-mode')) {
+      return TURRET_CROSSHAIR_MIN_GAP_PX;
+    }
+    const item = getHeldWeaponItem();
+    const baseDeg = item?.spreadBaseDeg ?? 0.8;
+    const fromSpread = baseDeg * SPREAD_DEG_TO_GAP_PX;
+    const baseGap = Math.max(CROSSHAIR_MIN_GAP_PX, fromSpread);
+    return baseGap + state.recoil * RECOIL_GAP_PX;
   }
 
-  /** 同步准星张开尺寸。 */
+  /** 同步准星张开尺寸到 --lp-aim-gap（覆盖 CSS，含机炮塔模式）。 */
   function syncCrosshairBloom() {
     const gap = getCrosshairGapPx();
     const el = document.getElementById('lpCrosshair');
@@ -309,16 +343,34 @@
     return true;
   }
 
+  /**
+   * 解析弹道最大射程：显式 range > 物品 maxRange > 弹种 maxRange > 全局兜底。
+   * 远端回放只带 weaponId 时，经 style 仍能与本机一致。
+   */
+  function resolveProjectileRange(options, style) {
+    if (options.range != null && Number.isFinite(options.range)) {
+      return Math.max(0, options.range);
+    }
+    const itemRange = options.item?.maxRange;
+    if (itemRange != null && Number.isFinite(itemRange)) {
+      return Math.max(0, itemRange);
+    }
+    if (style?.maxRange != null && Number.isFinite(style.maxRange)) {
+      return Math.max(0, style.maxRange);
+    }
+    return DEFAULT_MAX_RANGE;
+  }
+
   /** 生成飞行弹实体（本地或远端回放；不占用冷却、不检查持枪）。 */
   function spawnProjectile(options = {}) {
     const facing = options.facing >= 0 ? 1 : -1;
     const originX = options.originX ?? options.x ?? 0;
     const originY = options.originY ?? options.y ?? 0;
     const dir = normalizeDir(options.dirX ?? facing, options.dirY ?? 0, facing);
-    const range = options.range ?? TRACE_LENGTH;
     const weaponId = options.weaponId || state.weaponId;
     const styleKey = resolveProjectileStyleKey({ ...options, weaponId });
     const style = PROJECTILE_STYLE[styleKey] || PROJECTILE_STYLE.bullet;
+    const range = resolveProjectileRange(options, style);
     const speed = options.speed ?? style.speed;
     const shot = {
       x: originX,
@@ -347,6 +399,7 @@
       dirY: dir.y,
       weaponId,
       range,
+      style: styleKey,
       facing,
     };
   }
@@ -354,6 +407,24 @@
   /** @deprecated 用 spawnProjectile；保留别名兼容会话/炮塔。 */
   function spawnTracer(options) {
     return spawnProjectile(options);
+  }
+
+  /** 弹体命中车底 / 轨道时生成尘土并销毁弹实体。 */
+  function applySurfaceImpact(shot) {
+    const Spec = window.LiminalCarriageSpec;
+    if (!Spec?.hitProjectileSurfaces) return false;
+    const hit = Spec.hitProjectileSurfaces(shot.prevX, shot.prevY, shot.x, shot.y);
+    if (!hit) return false;
+    const style = PROJECTILE_STYLE[shot.style] || PROJECTILE_STYLE.bullet;
+    if (style.impactDust) {
+      window.LpImpactFx?.spawnDust?.(hit.x, hit.y, {
+        surface: hit.surface,
+        dirX: shot.dirX,
+        dirY: shot.dirY,
+        scale: style.impactDustScale ?? 1,
+      });
+    }
+    return true;
   }
 
   /** 推进冷却、后坐衰减、弹实体飞行与弹壳物理。 */
@@ -380,6 +451,10 @@
       shot.age += dt;
       if (shot.muzzleFlashLife > 0) {
         shot.muzzleFlashLife = Math.max(0, shot.muzzleFlashLife - dt);
+      }
+      if (applySurfaceImpact(shot)) {
+        state.shots.splice(i, 1);
+        continue;
       }
       if (shot.distLeft <= 0 || shot.age >= shot.maxAge) {
         state.shots.splice(i, 1);
@@ -507,6 +582,11 @@
     );
   }
 
+  /** 当前手持武器是否全自动（长按连发）；无持枪为 false。 */
+  function isHeldWeaponFullAuto() {
+    return Boolean(Catalog?.isFullAuto?.(getHeldWeaponItem()));
+  }
+
   /** 当前弹匣文案。 */
   function getMagReadout() {
     const held = getHeldWeaponSlot();
@@ -529,6 +609,7 @@
     draw,
     setWeapon,
     canFire,
+    isHeldWeaponFullAuto,
     getHeldWeaponItem,
     getHeldWeaponSlot,
     getMagReadout,

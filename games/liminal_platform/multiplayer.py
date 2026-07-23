@@ -193,6 +193,7 @@ class LiminalPlayer:
         self.held_id: Optional[str] = None
         self.aim_x: Optional[float] = None
         self.aim_y: Optional[float] = None
+        self.turret_id: Optional[str] = None
         self.inventories = Inv.PlayerInventories()
         self.sync_held_from_inv()
 
@@ -231,6 +232,8 @@ class LiminalPlayer:
         if self.aim_x is not None and self.aim_y is not None:
             data["aimX"] = round(self.aim_x, 2)
             data["aimY"] = round(self.aim_y, 2)
+        if self.turret_id in ("left", "right"):
+            data["turretId"] = self.turret_id
         return data
 
 
@@ -516,6 +519,27 @@ class LiminalLobbyManager:
         else:
             player.aim_x = None
             player.aim_y = None
+        self._apply_turret_claim(room, player, payload.get("turretId"))
+
+    def _apply_turret_claim(
+        self, room: "LiminalRoom", player: LiminalPlayer, raw_turret_id: Any
+    ) -> None:
+        """写入炮位占用：仅 left/right；同侧已被其他在线玩家占用则拒绝（保持未占用）。"""
+        want = str(raw_turret_id or "").strip().lower()
+        if want not in ("left", "right"):
+            player.turret_id = None
+            return
+        for other in room.players.values():
+            if (
+                other.user_id != player.user_id
+                and other.connected
+                and other.turret_id == want
+            ):
+                # 抢座失败：若本人原本不在该侧，清掉声明；已坐同一侧则保持
+                if player.turret_id != want:
+                    player.turret_id = None
+                return
+        player.turret_id = want
 
     async def handle_train(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)
@@ -619,22 +643,52 @@ class LiminalLobbyManager:
         await player.connection.enqueue(player.inv_message(room))
         if room_changed:
             await self._broadcast_inv_room(room, exclude_id=user_id)
-        await room.broadcast(
-            {
-                "type": "weapon_fired",
-                "protocolVersion": PROTOCOL_VERSION,
-                "roomId": room.room_id,
-                "playerId": user_id,
-                "weaponId": weapon_id,
-                "x": payload.get("x"),
-                "y": payload.get("y"),
-                "dirX": payload.get("dirX"),
-                "dirY": payload.get("dirY"),
-                "facing": payload.get("facing", player.facing),
-                "source": source or None,
-            },
-            exclude_id=user_id,
-        )
+        shots_out: List[Dict[str, Any]] = []
+        raw_shots = payload.get("shots")
+        if isinstance(raw_shots, list):
+            for entry in raw_shots[:2]:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    shots_out.append(
+                        {
+                            "x": float(entry.get("x")),
+                            "y": float(entry.get("y")),
+                            "dirX": float(entry.get("dirX")),
+                            "dirY": float(entry.get("dirY")),
+                        }
+                    )
+                except (TypeError, ValueError):
+                    continue
+        if not shots_out:
+            shots_out = [
+                {
+                    "x": payload.get("x"),
+                    "y": payload.get("y"),
+                    "dirX": payload.get("dirX"),
+                    "dirY": payload.get("dirY"),
+                }
+            ]
+        primary = shots_out[0]
+        turret_id = str(payload.get("turretId") or "").strip().lower()
+        fired: Dict[str, Any] = {
+            "type": "weapon_fired",
+            "protocolVersion": PROTOCOL_VERSION,
+            "roomId": room.room_id,
+            "playerId": user_id,
+            "weaponId": weapon_id,
+            "x": primary.get("x"),
+            "y": primary.get("y"),
+            "dirX": primary.get("dirX"),
+            "dirY": primary.get("dirY"),
+            "facing": payload.get("facing", player.facing),
+            "source": source or None,
+        }
+        if source == "turret" and turret_id in ("left", "right"):
+            fired["turretId"] = turret_id
+        if len(shots_out) > 1:
+            fired["shots"] = shots_out
+        await room.broadcast(fired, exclude_id=user_id)
 
     async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:
         """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop。"""
@@ -992,6 +1046,7 @@ class LiminalLobbyManager:
         if player.connection.websocket is not connection.websocket:
             return
         player.connected = False
+        player.turret_id = None
         token = uuid.uuid4().hex
         player.disconnect_token = token
         await room.broadcast(

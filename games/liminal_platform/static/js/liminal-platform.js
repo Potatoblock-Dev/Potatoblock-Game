@@ -234,6 +234,29 @@
     });
   }
 
+  /**
+   * 按住时是否应连发：入座机炮，或手持全自动/机炮类武器。
+   * 半自动仅依赖 pointerdown / keydown / lp:fire 单发。
+   */
+  function shouldHoldFire() {
+    if (window.LpGuardTurret?.isManned?.()) return true;
+    return Boolean(window.LpCombat?.isHeldWeaponFullAuto?.());
+  }
+
+  /**
+   * 每帧轮询开火键/指针是否仍按住；全自动或入座机炮时触发 requestFire。
+   * 入座 early-return 路径也必须调用，否则长按无法连发。
+   */
+  function pollHoldFire() {
+    const touch = readTouchInput();
+    const fireHeld =
+      touch.fire ||
+      window.LpTouchControls?.isFireHeld?.() ||
+      desktopFireHeld ||
+      window.LpInputBindings?.isPressed('fire', keys);
+    if (fireHeld && shouldHoldFire()) requestFire();
+  }
+
   /** 装填手持武器弹匣。 */
   function requestReload() {
     if (isUiOpen() || window.LpGuardTurret?.isManned?.()) return;
@@ -492,7 +515,8 @@
         if (window.LpReloadAction?.isBusy?.()) {
           window.LpReloadAction.applyArmPose(avatar);
         } else {
-          window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld());
+          const held = window.LpCombat?.getHeldWeaponItem?.();
+          window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld(), held);
         }
       }
       {
@@ -510,6 +534,8 @@
           aimY: aim?.y,
         });
       }
+      // 入座机炮时本分支会 return，须在此轮询长按连发（与下方步行路径共用 pollHoldFire）
+      if (!isUiOpen() && window.LpGuardTurret?.isManned?.()) pollHoldFire();
       return;
     }
 
@@ -583,7 +609,8 @@
       if (window.LpReloadAction?.isBusy?.()) {
         window.LpReloadAction.applyArmPose(avatar);
       } else {
-        window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld());
+        const held = window.LpCombat?.getHeldWeaponItem?.();
+        window.LpWeaponHold?.applyAimArmPose?.(avatar, getWeaponAimWorld(), held);
       }
     }
     {
@@ -602,12 +629,7 @@
       });
     }
 
-    const wantFire =
-      touch.fire ||
-      window.LpTouchControls?.isFireHeld?.() ||
-      desktopFireHeld ||
-      window.LpInputBindings?.isPressed('fire', keys);
-    if (wantFire) requestFire();
+    pollHoldFire();
 
     const activeSpot = window.LiminalInteract?.findActive(local) || null;
     window.LpTouchControls?.setInteractVisible(Boolean(activeSpot), activeSpot?.actionLabel);
@@ -641,11 +663,13 @@
       view.offsetX * dpr, view.offsetY * dpr
     );
 
+    /* 炮管在车厢贴图之下，白球/车身挡住炮尾 */
+    window.LpGuardTurret?.draw?.(ctx);
     for (const car of Spec.CARRIAGES) drawCarriage(car);
     window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
     const heldItem = window.LpCombat?.getHeldWeaponItem?.();
     const holdingGun = Boolean(heldItem) && !window.LpGuardTurret?.isManned?.();
-    /* 持枪层序：身/腿 → 后臂(护木) → 枪 → 换弹匣 → 前臂(扳机手) */
+    /* 持枪层序：身/腿 → 后臂(扳机握把) → 枪 → 换弹匣 → 前臂(护木) */
     Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipFrontArm: true, skipBackArm: true } : {});
     if (holdingGun) {
       const weaponAim = getWeaponAimWorld();
@@ -656,8 +680,7 @@
     }
     window.LpGroundLoot?.draw?.(ctx);
     window.LpCombat?.draw(ctx);
-    /* 炮管必须盖在车厢贴图之上 */
-    window.LpGuardTurret?.draw?.(ctx);
+    window.LpImpactFx?.draw?.(ctx);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     window.LiminalInteract?.drawActivePrompt(ctx, local, view, dpr, formatInteractKey(), {
@@ -680,6 +703,7 @@
       floorY: Spec.FLOOR_Y,
       moveSpeed: local.vx,
     });
+    window.LpImpactFx?.tick?.(dt);
     window.LpReloadAction?.tick?.(dt);
     window.LpGuardTurret?.tick?.(dt);
     stepCamera(dt);

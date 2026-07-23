@@ -23,8 +23,18 @@
     return t * t * (3 - 2 * t);
   }
 
-  /** 解析式双骨骼 IK：第一段相对竖直角 + 关节弯折。 */
-  function solveTwoBone(targetX, targetY, upperLen = UPPER_LEG_LENGTH, lowerLen = LOWER_LEG_LENGTH) {
+  /**
+   * 解析式双骨骼 IK（Law of Cosines）：第一段相对竖直角 + 关节弯折。
+   * elbowSign>0：肘/膝朝「正弯」侧（腿默认、肘上）；<0：镜像（侧视持枪肘下/外展）。
+   * 参考常见 2D two-bone IK：保留符号避免折进躯干。
+   */
+  function solveTwoBone(
+    targetX,
+    targetY,
+    upperLen = UPPER_LEG_LENGTH,
+    lowerLen = LOWER_LEG_LENGTH,
+    elbowSign = 1
+  ) {
     const minimumReach = Math.abs(upperLen - lowerLen) + 0.01;
     const maximumReach = upperLen + lowerLen - 0.01;
     const distance = clamp(Math.hypot(targetX, targetY), minimumReach, maximumReach);
@@ -37,13 +47,14 @@
       -1,
       1
     );
-    const bend = Math.acos(kneeCosine);
+    const bendAbs = Math.acos(kneeCosine);
     const direction = Math.atan2(-targetX, targetY);
     const offset = Math.atan2(
-      lowerLen * Math.sin(bend),
-      upperLen + lowerLen * Math.cos(bend)
+      lowerLen * Math.sin(bendAbs),
+      upperLen + lowerLen * Math.cos(bendAbs)
     );
-    return { upper: direction - offset, bend };
+    const sign = elbowSign >= 0 ? 1 : -1;
+    return { upper: direction - sign * offset, bend: sign * bendAbs };
   }
 
   /** 行走：中等步幅，摆动腿抬起、支撑腿贴地。 */
@@ -153,20 +164,92 @@
   }
 
   /**
-   * 由面向局部瞄准向量计算持枪手臂角。
-   * 关键：小臂（肩+肘）对准瞄准方向，枪管与前臂同轴；肘弯固定，由肩承担仰角。
-   * localAim：面向右时 +X 向前、+Y 向下。
+   * 默认火器持握（角色局部：面向 +X，+Y 向下）。
+   * gripLimb=back / forendLimb=front：肩宽内几何上后臂够得着握把、前臂够得着护木，
+   * 避免旧方案「前臂握把+后臂护木」把两手挤到同一点或肘角过度折叠。
    */
-  function computeAimArmPose(localAimX, localAimY) {
-    const tipAngle = clamp(Math.atan2(-localAimX, localAimY), -2.35, 0.55);
-    const frontElbow = 0.52;
-    const frontShoulder = tipAngle - frontElbow;
-    /* 后手略靠前护木：抬肩、肘弯，贴近枪身下方而非顶匣 */
+  const FIREARM_HOLD_DEFAULTS = {
+    chestX: 4,
+    chestY: -12,
+    gripAlong: 3,
+    forendAlong: 22,
+    forendBelow: 3,
+    gripLimb: 'back',
+    forendLimb: 'front',
+    gripElbowSign: 1,
+    forendElbowSign: 1,
+    shoulderX: 11,
+    shoulderY: -16,
+    upperLen: 15,
+    lowerLen: 16,
+  };
+
+  /** 合并火器持握规格（物品 holdPose 可覆盖默认）。 */
+  function resolveFirearmHoldSpec(spec) {
+    return { ...FIREARM_HOLD_DEFAULTS, ...(spec || {}) };
+  }
+
+  /**
+   * 由瞄准方向算出握把/护木两个局部附着点（可复用；不绑死某一把枪）。
+   * @returns {{ grip:{x,y}, forend:{x,y}, dir:{x,y}, angle:number, spec:object }}
+   */
+  function computeFirearmAttachLocals(localAimX, localAimY, spec) {
+    const h = resolveFirearmHoldSpec(spec);
+    const aimLen = Math.hypot(localAimX, localAimY) || 1;
+    const dir = { x: localAimX / aimLen, y: localAimY / aimLen };
+    const grip = {
+      x: h.chestX + dir.x * h.gripAlong,
+      y: h.chestY + dir.y * h.gripAlong,
+    };
+    const forend = {
+      x: h.chestX + dir.x * h.forendAlong,
+      y: h.chestY + dir.y * h.forendAlong + h.forendBelow,
+    };
+    return { grip, forend, dir, angle: Math.atan2(dir.y, dir.x), spec: h };
+  }
+
+  /** 单臂两骨 IK 到局部目标点。 */
+  function computeArmIkToLocal(shoulderX, shoulderY, targetX, targetY, upperLen, lowerLen, elbowSign) {
+    const solved = solveTwoBone(
+      targetX - shoulderX,
+      targetY - shoulderY,
+      upperLen,
+      lowerLen,
+      elbowSign
+    );
     return {
-      frontShoulder,
-      frontElbow,
-      backShoulder: tipAngle * 0.42 - 0.12,
-      backElbow: 0.95,
+      shoulder: clamp(solved.upper, -2.55, 1.05),
+      elbow: clamp(solved.bend, -2.15, 2.15),
+    };
+  }
+
+  /**
+   * 持枪双臂：按附着点 IK（大厅/月台/任意火器共用）。
+   * localAim：面向右时 +X 向前、+Y 向下；spec 见 FIREARM_HOLD_DEFAULTS。
+   */
+  function computeAimArmPose(localAimX, localAimY, spec) {
+    const attach = computeFirearmAttachLocals(localAimX, localAimY, spec);
+    const h = attach.spec;
+    const sx = h.shoulderX;
+    const sy = h.shoulderY;
+    const gripShoulderX = h.gripLimb === 'front' ? sx : -sx;
+    const forendShoulderX = h.forendLimb === 'front' ? sx : -sx;
+    const gripIk = computeArmIkToLocal(
+      gripShoulderX, sy, attach.grip.x, attach.grip.y,
+      h.upperLen, h.lowerLen, h.gripElbowSign
+    );
+    const forendIk = computeArmIkToLocal(
+      forendShoulderX, sy, attach.forend.x, attach.forend.y,
+      h.upperLen, h.lowerLen, h.forendElbowSign
+    );
+    const frontIk = h.gripLimb === 'front' ? gripIk : forendIk;
+    const backIk = h.gripLimb === 'back' ? gripIk : forendIk;
+    return {
+      frontShoulder: frontIk.shoulder,
+      frontElbow: frontIk.elbow,
+      backShoulder: backIk.shoulder,
+      backElbow: backIk.elbow,
+      attach,
     };
   }
 
@@ -184,6 +267,7 @@
   }
 
   window.ProceduralMotion = {
+    FIREARM_HOLD_DEFAULTS,
     computePose(state) {
       return {
         ...computeLegPose(state),
@@ -191,8 +275,12 @@
         ...computeBodyPose(state),
       };
     },
+    resolveFirearmHoldSpec,
+    computeFirearmAttachLocals,
+    computeArmIkToLocal,
     computeAimArmPose,
     computeArmReachPose,
+    solveTwoBone,
     clamp,
     lerp,
   };

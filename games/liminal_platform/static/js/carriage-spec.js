@@ -10,6 +10,16 @@
   const ART_MODULE_H = 1688;
   /** 主走道顶边 Y（源图像素）：红色底盘顶面，脚底落在此线。 */
   const ART_FLOOR_Y = 972;
+  /**
+   * 车厢底盘下表面 Y（源图像素；贴图不透明底边众数 ≈1023）。
+   * 弹道命中此水平面 → 车底尘土 FX。
+   */
+  const ART_UNDERSIDE_Y = 1023;
+  /**
+   * 轨道 / 轨道路基虚拟地面 Y（源图像素；贴图轮缘约至 1058，略下为逻辑轨面）。
+   * 弹道命中此水平面 → 地面尘土 FX。
+   */
+  const ART_TRACK_Y = 1100;
   /** 单节车厢内可行走水平范围（含 chassis 顶边，不含外侧链钩）。 */
   const ART_WALK_LEFT = 456;
   const ART_WALK_RIGHT = 1793;
@@ -37,6 +47,8 @@
   const MODULE_W = scaleArt(ART_MODULE_W);
   const MODULE_H = scaleArt(ART_MODULE_H);
   const FLOOR_Y = scaleArt(ART_FLOOR_Y);
+  const UNDERSIDE_Y = scaleArt(ART_UNDERSIDE_Y);
+  const TRACK_Y = scaleArt(ART_TRACK_Y);
   const WALK_LEFT = scaleArt(ART_WALK_LEFT);
   const WALK_RIGHT = scaleArt(ART_WALK_RIGHT);
   const COUPLER_JOIN_OFFSET = scaleArt(ART_COUPLER_JOIN);
@@ -155,6 +167,59 @@
     return null;
   }
 
+  /**
+   * 线段与水平面相交：若本帧跨越 planeY 且命中 x 落在 [xMin,xMax]，写入候选（取更近的 t）。
+   */
+  function considerPlaneHit(best, x0, y0, dx, dy, planeY, surface, xMin, xMax) {
+    if (Math.abs(dy) < 1e-8) return best;
+    if ((y0 - planeY) * (y0 + dy - planeY) > 0) return best;
+    const t = (planeY - y0) / dy;
+    if (t < 0 || t > 1) return best;
+    const hx = x0 + t * dx;
+    if (hx < xMin || hx > xMax) return best;
+    if (best && t >= best.t) return best;
+    return { t, x: hx, y: planeY, surface };
+  }
+
+  /**
+   * 弹道本帧线段相对车底 / 轨道地面的最早命中点（世界坐标）。
+   * 无命中返回 null；surface 为 'underside' | 'ground'。
+   */
+  function hitProjectileSurfaces(x0, y0, x1, y1) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    let best = null;
+    for (const car of CARRIAGES) {
+      best = considerPlaneHit(
+        best,
+        x0,
+        y0,
+        dx,
+        dy,
+        UNDERSIDE_Y,
+        'underside',
+        car.worldX + WALK_LEFT,
+        car.worldX + WALK_RIGHT
+      );
+    }
+    const trackLeft = CARRIAGES[0].worldX - scaleArt(80);
+    const trackRight =
+      CARRIAGES[CARRIAGES.length - 1].worldX + MODULE_W + scaleArt(80);
+    best = considerPlaneHit(
+      best,
+      x0,
+      y0,
+      dx,
+      dy,
+      TRACK_Y,
+      'ground',
+      trackLeft,
+      trackRight
+    );
+    if (!best) return null;
+    return { surface: best.surface, x: best.x, y: best.y };
+  }
+
   window.LiminalCarriageSpec = {
     WORLD_SCALE,
     TRAIN_FORWARD_X,
@@ -163,6 +228,8 @@
     MODULE_W,
     MODULE_H,
     FLOOR_Y,
+    UNDERSIDE_Y,
+    TRACK_Y,
     WALK_LEFT,
     WALK_RIGHT,
     COUPLER_JOIN_OFFSET,
@@ -173,5 +240,6 @@
     defaultSpawnX,
     buildWalkPlatforms,
     carriageAt,
+    hitProjectileSurfaces,
   };
 })();

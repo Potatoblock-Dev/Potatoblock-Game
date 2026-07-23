@@ -233,14 +233,6 @@
         ? '点按查看 · 拖拽到格子移动 · 点关闭退出'
         : `悬停弹出说明 · 拖拽移动 · Shift+点击快速转移 · ${formatAction('inventory')} 关闭`;
     }
-    const desktopHint = document.querySelector('.lp-hint-desktop');
-    if (desktopHint) {
-      const moveHint = settings.autoRun
-        ? `A/D 移动（自动奔跑，按住 ${formatAction('sprint') || 'Shift'} 行走）`
-        : `A/D 移动（按住 ${formatAction('sprint') || 'Shift'} 奔跑）`;
-      desktopHint.textContent =
-        `${moveHint} · 空格跳跃 · 鼠标瞄准 · 左键开火 · ${formatAction('interact') || 'F'} 交互 · ${formatAction('handsHud') || 'X'} 切换手部 · ${formatAction('inventory') || 'Tab'} 物品栏`;
-    }
   }
 
   /** 开始录制键位。 */

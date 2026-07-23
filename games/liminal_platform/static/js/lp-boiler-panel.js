@@ -1,6 +1,7 @@
 /**
- * 动力车驾驶台：节流阀 + 制动阀（嵌入式机柜 UI）。
+ * 动力车驾驶台：节流阀 + 制动阀 + 汽笛绳（嵌入式机柜 UI）。
  * 拖动时滑块跟手；外部改档 / 松手吸附时滑块缓动就位。
+ * 汽笛为本地音效（不下发协议）；下拉 intro→loop，松手 outro 回弹；关面板硬停。
  */
 (() => {
   const root = document.getElementById('lpBoilerPanelRoot');
@@ -16,15 +17,21 @@
   const closeButton = document.getElementById('lpBoilerPanelClose');
   const fuelFill = document.getElementById('lpFuelGaugeFill');
   const cabStencilDesktop = document.getElementById('lpCabStencilDesktop');
+  const whistleRope = document.getElementById('lpWhistleRope');
+  const whistleReadout = document.getElementById('lpWhistleReadout');
 
   if (!root || !throttleTrack || !brakeTrack) return;
 
   const Drive = window.LpTrainDrive;
+  const Whistle = window.LpWhistleAudio;
   const SPEED_DISPLAY_MAX = 120;
   /** 节流滑块就位速率（越大越快）。 */
   const THROTTLE_EASE = 14;
   /** 制动非回弹时的就位速率。 */
   const BRAKE_EASE = 16;
+
+  const WHISTLE_MAX_PULL_PX = 88;
+  const WHISTLE_SOUND_THRESHOLD = 0.22;
 
   let open = false;
   let drag = null;
@@ -33,6 +40,11 @@
   /** 界面显示用制动比例 0…1。 */
   let uiBrake = 0;
   let lastSyncTs = performance.now();
+
+  let whistlePulling = false;
+  let whistlePull = 0;
+  let whistlePointerId = null;
+  let whistleStartY = 0;
 
   /** 面板是否打开。 */
   function isOpen() {
@@ -43,7 +55,90 @@
   function syncLeaveHint() {
     if (!cabStencilDesktop) return;
     const key = window.LpInputBindings?.formatAction('interact') || 'F';
-    cabStencilDesktop.textContent = `拖动拉杆或点刻度 · ${key} / Esc 离开`;
+    cabStencilDesktop.textContent = `拖动拉杆或点刻度 · 下拉汽笛 · ${key} / Esc 离开`;
+  }
+
+  /** 更新汽笛绳下拉视觉与「松/鸣」标签。 */
+  function paintWhistle() {
+    if (!whistleRope) return;
+    const sounding = Boolean(Whistle?.isSounding?.());
+    const px = Math.round(whistlePull * WHISTLE_MAX_PULL_PX);
+    whistleRope.style.setProperty('--lp-whistle-pull', `${px}px`);
+    whistleRope.classList.toggle('is-pulling', whistlePulling);
+    whistleRope.classList.toggle('is-sounding', sounding);
+    whistleRope.setAttribute('aria-pressed', sounding ? 'true' : 'false');
+    if (whistleReadout) {
+      whistleReadout.textContent = sounding ? '汽笛 · 鸣' : '汽笛 · 松';
+    }
+  }
+
+  /** 开始汽笛（intro→loop）；异步解锁后补绘一次。 */
+  function startWhistleSound() {
+    if (!Whistle || Whistle.isSounding()) {
+      paintWhistle();
+      return;
+    }
+    paintWhistle();
+    const started = Whistle.start();
+    if (started && typeof started.then === 'function') {
+      started.then(() => paintWhistle()).catch((err) => {
+        console.warn('[lp-boiler] whistle start', err);
+      });
+    }
+  }
+
+  /** 松手：绳回弹并播 outro（若曾发声）。 */
+  function releaseWhistle() {
+    whistlePulling = false;
+    whistlePointerId = null;
+    whistlePull = 0;
+    Whistle?.release?.();
+    paintWhistle();
+  }
+
+  /** 关面板：绳复位并硬停汽笛（不播 outro）。 */
+  function abortWhistle() {
+    whistlePulling = false;
+    whistlePointerId = null;
+    whistlePull = 0;
+    Whistle?.stop?.();
+    paintWhistle();
+  }
+
+  /** 按指针位移更新下拉量；过阈值后 intro→loop 直至松手。 */
+  function applyWhistlePointer(clientY) {
+    const delta = Math.max(0, clientY - whistleStartY);
+    whistlePull = Math.min(1, delta / WHISTLE_MAX_PULL_PX);
+    paintWhistle();
+    if (whistlePull >= WHISTLE_SOUND_THRESHOLD) startWhistleSound();
+  }
+
+  /** 绑定汽笛绳拖拽（本地下拉鸣笛）。 */
+  function bindWhistleRope() {
+    if (!whistleRope) return;
+
+    whistleRope.addEventListener('pointerdown', (event) => {
+      if (!open || event.button != null && event.button !== 0) return;
+      whistlePulling = true;
+      whistlePointerId = event.pointerId;
+      whistleStartY = event.clientY;
+      whistleRope.setPointerCapture(event.pointerId);
+      Whistle?.unlock?.();
+      applyWhistlePointer(event.clientY);
+      event.preventDefault();
+    });
+
+    whistleRope.addEventListener('pointermove', (event) => {
+      if (!whistlePulling || event.pointerId !== whistlePointerId) return;
+      applyWhistlePointer(event.clientY);
+    });
+
+    const end = (event) => {
+      if (!whistlePulling || event.pointerId !== whistlePointerId) return;
+      releaseWhistle();
+    };
+    whistleRope.addEventListener('pointerup', end);
+    whistleRope.addEventListener('pointercancel', end);
   }
 
   /** 打开驾驶台。 */
@@ -65,6 +160,7 @@
     lastSyncTs = performance.now();
     syncFromState();
     syncFuelGauge();
+    paintWhistle();
   }
 
   /** 关闭驾驶台。 */
@@ -72,6 +168,7 @@
     if (!open) return;
     open = false;
     drag = null;
+    abortWhistle();
     root.hidden = true;
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-boiler-panel-open');
@@ -175,6 +272,7 @@
 
   bindLever(throttleTrack, 'throttle');
   bindLever(brakeTrack, 'brake');
+  bindWhistleRope();
 
   window.addEventListener('pointermove', (event) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
@@ -264,4 +362,5 @@
   uiBrake = initial.brake;
   syncFromState();
   syncFuelGauge();
+  paintWhistle();
 })();

@@ -1,0 +1,27 @@
+Source: Desktop/音效/火车鸣笛（需要处理）.mp3 (~3.08s, 320kbps MP3, large ID3 cover art)
+
+Base processing (2026-07-23):
+1. Copied to ASCII work path; stripped ID3v2 (~62KB cover) and first Xing/info frame
+   (needed — afconvert/AVFoundation choked on the tagged file).
+2. Decoded to 44.1kHz stereo PCM.
+3. Trimmed leading silence (~80ms) to first audible energy (+30ms pad).
+4. Peak-normalized to ~-1.5 dBFS.
+5. 40ms raised-cosine fade in/out on full file (kill end clicks).
+6. Encoded AAC .m4a @ ~96–128kbps → train-whistle.m4a (legacy single-file; unused by UI).
+
+Segment split (2026-07-23, from whistle-processed.wav @ 2.960s):
+Cut points chosen by zero-crossing + head/tail residual score for seamless loop.
+
+| Segment | Source range (s) | Duration | File |
+|---------|------------------|----------|------|
+| intro   | 0.000 – 0.560    | 0.560s   | train-whistle-intro.m4a |
+| loop    | 0.560 – 1.060    | 0.491s*  | train-whistle-loop.m4a  |
+| outro   | 1.850 – 2.960    | 1.110s   | train-whistle-outro.m4a |
+
+*Loop: 8ms self crossfade (tail→head) so BufferSource.loop has no click;
+ encoded length ≈ 0.4915s (original slice 0.4995s − 8ms).
+Outro starts at decay (~1.85s) so release feels like valve close; 6ms fade-in
+softens mid-loop → decay jump. Encode: afconvert AAC 128kbps m4af.
+
+Runtime (lp-whistle-audio.js): Web Audio — schedule intro at t0, loop at
+t0+intro.duration; on release stop intro/loop and play outro; close cab → stop().

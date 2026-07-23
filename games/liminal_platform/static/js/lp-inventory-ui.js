@@ -483,12 +483,27 @@
     return button;
   }
 
+  /**
+   * 拖拽已提起时，源足迹格是否应画成空位（数据仍留在 inventory，仅视觉腾空）。
+   * 避免多格物品的 is-span 在提起后仍盖住原点格。
+   */
+  function isDragVacatedCell(inventory, index) {
+    if (!state.dragSource || !state.dragMoved) return false;
+    if (state.dragSource.inventory !== inventory) return false;
+    const origin = state.dragSource.index;
+    const stack = inventory.getSlot(origin);
+    if (!stack) return false;
+    const cells = inventory.footprint(origin, stack.itemId);
+    return Boolean(cells && cells.includes(index));
+  }
+
   /** 绘制槽位内容；多格物品用 grid 真实占格，图标铺满当前格子尺寸。 */
   function paintSlot(button, inventory, index) {
-    const covered = inventory.isCovered(index);
+    const vacated = isDragVacatedCell(inventory, index);
+    const covered = !vacated && inventory.isCovered(index);
     const { col, row } = inventory.coordsOf(index);
     button.classList.toggle('is-covered', covered);
-    button.classList.remove('is-span', 'has-item', 'place-ok', 'place-bad', 'place-merge');
+    button.classList.remove('is-span', 'has-item', 'is-dragging', 'place-ok', 'place-bad', 'place-merge');
     button.style.removeProperty('--span-w');
     button.style.removeProperty('--span-h');
     button.replaceChildren();
@@ -502,7 +517,8 @@
     }
 
     button.hidden = false;
-    const stack = inventory.getSlot(index);
+    // 提起拖拽时足迹按空位画，避免原点仍显示占用高亮。
+    const stack = vacated ? null : inventory.getSlot(index);
     const span = stack ? inventory.spanAt(index) : { w: 1, h: 1 };
     button.style.gridColumn = `${col + 1} / span ${span.w}`;
     button.style.gridRow = `${row + 1} / span ${span.h}`;
@@ -815,15 +831,9 @@
     return null;
   }
 
-  /** 拖拽源格半透明，表示物品已提起。 */
+  /** 拖拽提起/结束后重绘网格，使源足迹显示为空或恢复占用。 */
   function syncDragSourceVisual() {
-    root
-      .querySelectorAll('.lp-inventory-slot.is-dragging')
-      .forEach((el) => el.classList.remove('is-dragging'));
-    if (!state.dragSource || !state.dragMoved) return;
-    const buttons = slotButtonsFor(state.dragSource.inventory);
-    const btn = buttons[state.dragSource.index];
-    btn?.classList.add('is-dragging');
+    renderGrids();
   }
 
   /** 渲染鼠标持物 / 拖拽幽灵（按物品占格缩放）。 */

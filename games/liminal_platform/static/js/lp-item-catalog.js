@@ -138,7 +138,13 @@
       short: 'G65',
       type: 'weapon',
       weaponId: 'gur65',
-      use: '顶部供弹冲锋枪。弹匣 27 发，后坐中等；移动时后坐加剧。按 R 装填小口径子弹。',
+      /**
+       * 机炮/冲锋枪类别：长按连发（见 isFullAuto）。
+       * 未来机炮武器设 weaponClass: 'machine_gun'（或 fullAuto / fireMode:'auto'）即可。
+       */
+      weaponClass: 'machine_gun',
+      fullAuto: true,
+      use: '顶部供弹冲锋枪。弹匣 27 发，长按连发；后坐中等，移动时加剧。按 R 装填小口径子弹。',
       color: '#1f2937',
       accent: '#9ca3af',
       maxStack: 1,
@@ -147,15 +153,25 @@
       canHoldInHand: true,
       icon: '/static/games/liminal-platform/img/weapons/gur-65-icon.png?v=3',
       holdSprite: '/static/games/liminal-platform/img/weapons/gur-65.png?v=3',
-      gripOffset: { x: 22, y: -22 },
-      muzzleLength: 42,
-      muzzleOffsetY: -3,
-      ejectLocal: { x: 12, y: -8 },
-      holdDrawW: 56,
-      holdDrawH: 24,
-      /* 握把略偏贴图左下（枪柄），配合前臂 0.88 掌心锚 */
-      holdPivotX: 8,
-      holdPivotY: 15,
+      gripOffset: { x: 28, y: -28 },
+      muzzleLength: 56,
+      muzzleOffsetY: -4,
+      ejectLocal: { x: 16, y: -11 },
+      /* 手持放大约 +36%（相对躯干更像冲锋枪） */
+      holdDrawW: 76,
+      holdDrawH: 32,
+      holdPivotX: 11,
+      holdPivotY: 20,
+      /** 可复用持握规格：后臂握把、前臂护木、胸高 */
+      holdPose: {
+        chestX: 4,
+        chestY: -12,
+        gripAlong: 3,
+        forendAlong: 22,
+        forendBelow: 3,
+        gripLimb: 'back',
+        forendLimb: 'front',
+      },
       magazineSize: 27,
       ammoId: 'small_caliber_ammo',
       /** 顶部供弹换弹动作。 */
@@ -175,6 +191,11 @@
       shellCasingScale: 0.42,
       /** 飞行弹种：离散子弹实体（非激光）。 */
       projectileStyle: 'bullet',
+      /**
+       * 最大飞行距离（世界像素）；缺省用 PROJECTILE_STYLE[projectileStyle].maxRange。
+       * bullet 默认 1600；shell（机炮）默认 6400。
+       */
+      maxRange: 1600,
       /** 单发音效（CC0：ak47 shooting.wav）。 */
       fireSound: '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1',
       fireSoundVolume: 0.62,
@@ -323,6 +344,19 @@
     return Boolean(item && (item.type === 'weapon' || item.weaponId));
   }
 
+  /**
+   * 是否全自动（长按连发）。
+   * 判定：fullAuto === true，或 fireMode === 'auto'，或 weaponClass === 'machine_gun'。
+   * 半自动/单发武器不要设这些字段。
+   */
+  function isFullAuto(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    if (!item) return false;
+    if (item.fullAuto === true) return true;
+    if (item.fireMode === 'auto') return true;
+    return item.weaponClass === 'machine_gun';
+  }
+
   /** 测试阶段：燃料/弹药用后自动补满。正式上线前改为 false。 */
   const TEST_AUTO_REFILL_CONSUMABLES = true;
 
@@ -354,6 +388,7 @@
     getBoilerFuelValue,
     listBoilerFuels,
     isWeapon,
+    isFullAuto,
     getWeaponId,
   };
 })();

@@ -264,6 +264,10 @@
     const [, frontLegLL] = limbSize('frontLegLower', 8, 17);
     const [frontArmUW, frontArmUL] = limbSize('frontArmUpper', 7, 15);
     const [, frontArmLL] = limbSize('frontArmLower', 7, 16);
+    /* 左右臂共用段宽，避免皮套不对称或数值漂移造成粗细不一 */
+    const armUW = Math.max(frontArmUW, backArmUW);
+    const armUL = Math.max(frontArmUL, backArmUL);
+    const armLL = Math.max(frontArmLL, backArmLL);
     const bodyDraw = (parts.body && parts.body.drawRect) || [-11, -17, 22, 26];
     const skipFrontArm = Boolean(options.skipFrontArm);
     const skipBackArm = Boolean(options.skipBackArm);
@@ -275,12 +279,12 @@
 
     if (backArmOnly) {
       drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
-        -rig.shoulderX, rig.shoulderY + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
+        -rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.backShoulder.angle, joints.backElbow.angle);
       return;
     }
     if (frontArmOnly) {
       drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
-        rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
+        rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.frontShoulder.angle, joints.frontElbow.angle);
       return;
     }
 
@@ -288,7 +292,7 @@
       -rig.hipX, rig.hipY + kneelOffset, backLegUW, backLegUL, backLegLL, joints.backHip.angle, joints.backKnee.angle);
     if (!skipBackArm) {
       drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
-        -rig.shoulderX, rig.shoulderY + kneelOffset, backArmUW, backArmUL, backArmLL, joints.backShoulder.angle, joints.backElbow.angle);
+        -rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.backShoulder.angle, joints.backElbow.angle);
     }
     drawPartRect(
       ctx,
@@ -302,7 +306,7 @@
       rig.hipX, rig.hipY + kneelOffset, frontLegUW, frontLegUL, frontLegLL, joints.frontHip.angle, joints.frontKnee.angle);
     if (!skipFrontArm) {
       drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
-        rig.shoulderX, rig.shoulderY + kneelOffset, frontArmUW, frontArmUL, frontArmLL, joints.frontShoulder.angle, joints.frontElbow.angle);
+        rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.frontShoulder.angle, joints.frontElbow.angle);
     }
 
     const headDrawRect = atlas && parts.head.drawRect
@@ -375,7 +379,7 @@
     if (!options.skipNickname) drawNickname(ctx, entity, view, dpr);
   }
 
-  /** 仅绘制后臂（持枪时叠在枪械之下，护木手夹在身体与枪之间）。 */
+  /** 仅绘制后臂（持枪时叠在枪械之下；默认规格下为扳机握把手）。 */
   function drawBackArm(ctx, entity) {
     withAvatarTransform(ctx, entity, () => {
       const atlas = entity.uvAtlas || null;
@@ -384,7 +388,7 @@
     });
   }
 
-  /** 仅绘制前臂（持枪时叠在枪械之上，保证手在最前层）。 */
+  /** 仅绘制前臂（持枪时叠在枪械之上；默认规格下为护木扶枪手）。 */
   function drawFrontArm(ctx, entity) {
     withAvatarTransform(ctx, entity, () => {
       const atlas = entity.uvAtlas || null;
@@ -435,6 +439,10 @@
     stepBodySpring(entity, 'headLook', 'headLookVelocity', target, dt, 90, 14);
   }
 
+  /**
+   * 在屏幕空间画昵称；必须 save/restore，避免 setTransform 清掉相机矩阵，
+   * 导致随后的持枪手/枪在错误坐标系里画到画布边角。
+   */
   function drawNickname(ctx, entity, view, dpr) {
     if (!entity.nickname) return;
     const avatarScaleY = AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash);
@@ -445,6 +453,7 @@
       ? `${entity.nickname.slice(0, 15)}…`
       : entity.nickname;
 
+    ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = '600 14px system-ui, sans-serif';
     ctx.textAlign = 'center';
@@ -464,6 +473,7 @@
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.fillText(label, screenX, screenY);
+    ctx.restore();
   }
 
   // 与服务端一致的归一化可用宽度（参考宽 1600），外推时把 vx 换算回 nx。
@@ -632,16 +642,46 @@
   }
 
   /**
-   * 将手臂设为指向世界瞄准点（持枪/指向；大厅与月台共用）。
-   * 直接写关节角并清速度，覆盖程序化摆臂。
+   * 瞄准局部坐标（相对前肩，已按 facing 折到面向 +X）。
    */
-  function applyAimArmPose(entity, aimWorld) {
-    if (!entity?.joints || !aimWorld || !window.ProceduralMotion?.computeAimArmPose) return;
+  function aimToLocal(entity, aimWorld) {
     const facing = entity.facing >= 0 ? 1 : -1;
     const shoulder = getFrontShoulderWorld(entity);
-    const localAimX = (aimWorld.x - shoulder.x) * facing;
-    const localAimY = aimWorld.y - shoulder.y;
-    const pose = window.ProceduralMotion.computeAimArmPose(localAimX, localAimY);
+    return {
+      facing,
+      x: (aimWorld.x - shoulder.x) * facing,
+      y: aimWorld.y - shoulder.y,
+    };
+  }
+
+  /**
+   * 火器握把世界坐标 + 枪管角（由可复用附着点解算，不跟漂手尖）。
+   * holdSpec 来自物品 holdPose，缺省用 ProceduralMotion 默认。
+   */
+  function getFirearmHoldWorld(entity, aimWorld, holdSpec) {
+    const Motion = window.ProceduralMotion;
+    if (!entity || !aimWorld || !Motion?.computeFirearmAttachLocals) return null;
+    const local = aimToLocal(entity, aimWorld);
+    const attach = Motion.computeFirearmAttachLocals(local.x, local.y, holdSpec);
+    const grip = localPointToWorld(entity, attach.grip.x, attach.grip.y);
+    const angle = Math.atan2(aimWorld.y - grip.y, aimWorld.x - grip.x);
+    return {
+      gripX: grip.x,
+      gripY: grip.y,
+      angle,
+      facing: local.facing,
+      attach,
+    };
+  }
+
+  /**
+   * 将手臂设为持枪/指向姿态（大厅与月台共用；holdSpec 可选）。
+   * 直接写关节角并清速度，覆盖程序化摆臂。
+   */
+  function applyAimArmPose(entity, aimWorld, holdSpec) {
+    if (!entity?.joints || !aimWorld || !window.ProceduralMotion?.computeAimArmPose) return;
+    const local = aimToLocal(entity, aimWorld);
+    const pose = window.ProceduralMotion.computeAimArmPose(local.x, local.y, holdSpec);
     const map = [
       ['frontShoulder', pose.frontShoulder],
       ['frontElbow', pose.frontElbow],
@@ -676,6 +716,7 @@
     getBackHandWorld,
     getFrontShoulderWorld,
     getBackShoulderWorld,
+    getFirearmHoldWorld,
     applyAimArmPose,
     pushSnapshot,
     sampleRemote,

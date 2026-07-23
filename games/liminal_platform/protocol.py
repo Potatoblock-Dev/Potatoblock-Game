@@ -4,7 +4,7 @@
 改字段时同步：本文件、client/src/protocol/messages.ts、docs/liminal-protocol.md
 
 注意：仅使用 typing 标准库（无 NotRequired），兼容 Python 3.10+ 生产环境。
-可选字段（aimX、throttle 等）在运行时可能缺失，以 TS / 文档为准。
+可选字段（aimX、turretId、throttle、fire.shots 等）在运行时可能缺失，以 TS / 文档为准。
 """
 
 from __future__ import annotations

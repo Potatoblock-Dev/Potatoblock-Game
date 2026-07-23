@@ -1,6 +1,6 @@
 /**
  * 手持武器姿态：枪械绘制、枪口与抛壳点（随瞄准方向）。
- * 握把锚在前臂手部世界坐标，与 Avatar 绘制变换一致。
+ * 握把锚优先用 AvatarEntity.getFirearmHoldWorld（程序化附着点），与臂 IK 同源。
  * 过中垂线（枪口朝左）时纵向镜像，与卫兵防御炮塔一致；可用 item.autoMirror: false 关闭。
  */
 (() => {
@@ -42,7 +42,7 @@
     return Math.cos(angle) < 0;
   }
 
-  /** 握把回退（无 AvatarEntity API 时）。 */
+  /** 握把回退（无附着点 API 时）。 */
   function fallbackGrip(avatar, item) {
     const facing = avatar.facing >= 0 ? 1 : -1;
     const gripOffX = item?.gripOffset?.x ?? 22;
@@ -61,8 +61,15 @@
    */
   function getHoldPose(avatar, aim, item) {
     const facing = avatar.facing >= 0 ? 1 : -1;
-    const hand = Entity?.getFrontHandWorld?.(avatar) || fallbackGrip(avatar, item);
-    const angle = Math.atan2(aim.y - hand.y, aim.x - hand.x);
+    const hold = Entity?.getFirearmHoldWorld?.(avatar, aim, item?.holdPose);
+    const gripX = hold?.gripX;
+    const gripY = hold?.gripY;
+    const hand = (Number.isFinite(gripX) && Number.isFinite(gripY))
+      ? { x: gripX, y: gripY }
+      : (Entity?.getBackHandWorld?.(avatar) || Entity?.getFrontHandWorld?.(avatar) || fallbackGrip(avatar, item));
+    const angle = Number.isFinite(hold?.angle)
+      ? hold.angle
+      : Math.atan2(aim.y - hand.y, aim.x - hand.x);
     const flipY = shouldMirrorY(angle, item);
     return {
       gripX: hand.x,
@@ -131,9 +138,9 @@
     return pose;
   }
 
-  /** 持枪：前臂对准瞄准；后手略抬向护木方向。 */
-  function applyAimArmPose(avatar, aim) {
-    Entity?.applyAimArmPose?.(avatar, aim);
+  /** 持枪：双臂 IK 到物品 holdPose 附着点（可复用默认规格）。 */
+  function applyAimArmPose(avatar, aim, item) {
+    Entity?.applyAimArmPose?.(avatar, aim, item?.holdPose);
   }
 
   window.LpWeaponHold = {

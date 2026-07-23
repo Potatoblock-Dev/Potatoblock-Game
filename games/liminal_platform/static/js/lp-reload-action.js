@@ -124,13 +124,13 @@
   }
 
   /**
-   * 前臂跟瞄同轴；后手按进度 IK 到顶匣。
+   * 持枪附着点跟瞄；后手按进度 IK 到顶匣（换弹时临时覆盖护木手）。
    */
   function applyArmPose(avatar) {
     if (!active || !avatar?.joints) return false;
     const aim = getAimOverride(avatar);
     if (!aim) return false;
-    Entity?.applyAimArmPose?.(avatar, aim);
+    Entity?.applyAimArmPose?.(avatar, aim, active.item?.holdPose);
 
     const reachW = sampleSeries(active._style.reach, getProgress());
     if (reachW < 0.05 || !Motion?.computeArmReachPose) return true;
