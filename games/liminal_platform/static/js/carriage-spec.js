@@ -3,7 +3,9 @@
  * 07_gameplay 层走线若调整，同步改 ART_*；WORLD_SCALE 只调人车观感比例。
  *
  * 世界约定：屏幕右侧为列车前进方向（世界 +X）；
- * 编组（左→右）：卫兵防御 → 仓储 → 动力（与 Krita 成品译名一致）。
+ * 编组（左→右 = 车尾→车头前进方向）：
+ * 卫兵防御 → 仓储 → 动力 → 绘轨 → 枢机
+ * （绘轨接在车头/动力前，枢机接在绘轨前；译名取自 成品/车厢 文件名。）
  */
 (() => {
   const ART_MODULE_W = 2250;
@@ -88,6 +90,30 @@
         shortLabel: '动力',
         kind: 'engine',
         tone: '#d97706',
+      },
+    },
+    {
+      id: 'huigui',
+      label: '绘轨车厢',
+      image: '/static/games/liminal-platform/img/cars/huigui-car.png?v=1',
+      icon: '/static/games/liminal-platform/img/cars/huigui-car-icon.png?v=1',
+      worldX: COUPLER_JOIN_OFFSET * 3,
+      map: {
+        shortLabel: '绘轨',
+        kind: 'sensor',
+        tone: '#0f766e',
+      },
+    },
+    {
+      id: 'shuji',
+      label: '枢机车厢',
+      image: '/static/games/liminal-platform/img/cars/shuji-car.png?v=1',
+      icon: '/static/games/liminal-platform/img/cars/shuji-car-icon.png?v=1',
+      worldX: COUPLER_JOIN_OFFSET * 4,
+      map: {
+        shortLabel: '枢机',
+        kind: 'compute',
+        tone: '#6366f1',
       },
     },
   ];

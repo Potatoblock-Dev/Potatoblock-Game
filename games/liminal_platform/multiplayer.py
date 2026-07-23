@@ -78,7 +78,8 @@ def _default_appearance(user_id: str) -> Dict[str, Any]:
 
 
 def _build_platforms() -> List[Dict[str, float]]:
-    cars = [0.0, COUPLER_JOIN, COUPLER_JOIN * 2]
+    # 与 carriage-spec CARRIAGES 对齐：卫兵→仓储→动力→绘轨→枢机
+    cars = [COUPLER_JOIN * i for i in range(5)]
     floors = [
         {"left": wx + WALK_LEFT, "right": wx + WALK_RIGHT, "y": FLOOR_Y} for wx in cars
     ]
@@ -101,7 +102,7 @@ def _build_platforms() -> List[Dict[str, float]]:
 PLATFORMS = _build_platforms()
 WORLD_LEFT = PLATFORMS[0]["left"] + HALF_W
 WORLD_RIGHT = PLATFORMS[-1]["right"] - HALF_W
-# 开局出生在动力车厢（编组左→右：卫兵防御、仓储、动力）走道中心
+# 开局出生在动力车厢（编组左→右：卫兵、仓储、动力、绘轨、枢机）走道中心
 POWER_CAR_WORLD_X = COUPLER_JOIN * 2
 DEFAULT_X = POWER_CAR_WORLD_X + (WALK_LEFT + WALK_RIGHT) / 2.0
 
@@ -213,7 +214,9 @@ class LiminalPlayer:
         }
 
     def snapshot(self) -> Dict[str, Any]:
+        """组装世界快照玩家条目；入座炮塔时不回显 heldId（远端不画手持枪）。"""
         self.sync_held_from_inv()
+        manned = self.turret_id in ("left", "right")
         data = {
             "id": self.user_id,
             "nickname": self.nickname,
@@ -227,12 +230,12 @@ class LiminalPlayer:
             "headLook": round(self.head_look, 3),
             "appearance": dict(self.appearance),
             "connected": self.connected,
-            "heldId": self.held_id,
+            "heldId": None if manned else self.held_id,
         }
         if self.aim_x is not None and self.aim_y is not None:
             data["aimX"] = round(self.aim_x, 2)
             data["aimY"] = round(self.aim_y, 2)
-        if self.turret_id in ("left", "right"):
+        if manned:
             data["turretId"] = self.turret_id
         return data
 
@@ -603,7 +606,7 @@ class LiminalLobbyManager:
         )
 
     async def handle_fire(self, user_id: str, payload: Dict[str, Any]) -> None:
-        """开火：炮塔扣箱弹，否则扣手持武器弹匣，再广播曳光。"""
+        """开火：炮塔扣箱弹并写入回收弹壳，否则扣手持弹匣，再广播曳光。"""
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
@@ -616,7 +619,13 @@ class LiminalLobbyManager:
         weapon_id: Optional[str] = None
         room_changed = False
         if source == "turret":
+            # 须已占炮位；若 fire 先于 pose 到达，用 payload.turretId 尝试认领
+            if player.turret_id not in ("left", "right"):
+                self._apply_turret_claim(room, player, payload.get("turretId"))
+            if player.turret_id not in ("left", "right"):
+                return
             ammo_bag = room.inventories.crates["ammo"]
+            recycle_bag = room.inventories.crates["recycle"]
             if Inv.TEST_AUTO_REFILL_CONSUMABLES:
                 if ammo_bag.count_item("turret_ammo") <= 0:
                     ammo_bag.add_item(
@@ -629,6 +638,8 @@ class LiminalLobbyManager:
             if spent <= 0:
                 await player.connection.enqueue(player.inv_message(room))
                 return
+            # 耗 1 发弹药 → 回收箱入 1 枚弹壳（箱满则丢弃多余）
+            recycle_bag.add_item("shell_casing", 1)
             weapon_id = "guard_turret"
             room_changed = True
         else:
@@ -638,8 +649,7 @@ class LiminalLobbyManager:
                 await player.connection.enqueue(player.inv_message(room))
                 return
             weapon_id = fired
-            if Inv.TEST_AUTO_REFILL_CONSUMABLES:
-                Inv.refill_player_consumables(player.inventories)
+            # 不在开火后 refill 玩家弹匣；测试无限只针对仓库/弹药堆，见 refill_storage_infinite。
         await player.connection.enqueue(player.inv_message(room))
         if room_changed:
             await self._broadcast_inv_room(room, exclude_id=user_id)
@@ -691,7 +701,7 @@ class LiminalLobbyManager:
         await room.broadcast(fired, exclude_id=user_id)
 
     async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:
-        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop。"""
+        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop / rotate。"""
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
@@ -709,11 +719,13 @@ class LiminalLobbyManager:
         elif action == "consume":
             self._inv_consume(player, payload)
         elif action == "reload":
-            self._inv_reload(player, payload)
+            room_changed = self._inv_reload(room, player, payload)
         elif action == "crate":
             room_changed = self._inv_crate(room, player, payload)
         elif action == "drop":
             room_changed = self._inv_drop(room, player, payload)
+        elif action == "rotate":
+            room_changed = self._inv_rotate(room, player, payload)
         else:
             return
         overflow = Inv.sync_player_to_equip(player.inventories.player, player.inventories.equip)
@@ -821,13 +833,7 @@ class LiminalLobbyManager:
             if mag_size is None:
                 return stack["itemId"]
             mag = int(stack.get("mag") or 0)
-            if Inv.TEST_AUTO_REFILL_CONSUMABLES:
-                # 测试：空匣先补满，开火不扣弹
-                if mag <= 0:
-                    player.inventories.hands.update_slot(
-                        index, {"mag": int(mag_size)}
-                    )
-                return stack["itemId"]
+            # 手持武器始终扣弹匣；TEST_AUTO_REFILL 不跳过（仅仓库/弹药堆无限）。
             if mag <= 0:
                 return None
             player.inventories.hands.update_slot(index, {"mag": mag - 1})
@@ -863,6 +869,13 @@ class LiminalLobbyManager:
             if take < int(stack["qty"]):
                 src.slots[origin]["qty"] = int(stack["qty"]) - take
                 moving = {"itemId": stack["itemId"], "qty": take}
+                if stack.get("mag") is not None:
+                    moving["mag"] = stack["mag"]
+                try:
+                    if int(stack.get("rot") or 0) == 90:
+                        moving["rot"] = 90
+                except (TypeError, ValueError):
+                    pass
             else:
                 taken = src.take_slot(origin)
                 if not taken:
@@ -913,8 +926,15 @@ class LiminalLobbyManager:
             qty = 1
         Inv.consume_from_personal(player.inventories, item_id, qty)
 
-    def _inv_reload(self, player: LiminalPlayer, payload: Dict[str, Any]) -> None:
-        """用手中/背包备弹装填手持武器。"""
+    def _inv_reload(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """装填：拖放 ammo→weapon 指定格，或 R 键手持武器从个人备弹补匣。"""
+        weapon_ref = payload.get("weapon")
+        ammo_ref = payload.get("ammo")
+        if weapon_ref is not None and ammo_ref is not None:
+            return self._inv_reload_onto(room, player, weapon_ref, ammo_ref)
+
         hand_index = payload.get("handIndex")
         indices: List[int]
         if hand_index is None:
@@ -935,14 +955,77 @@ class LiminalLobbyManager:
                 continue
             need = int(mag_size) - int(stack.get("mag") or 0)
             if need <= 0:
-                return
+                return False
             removed = Inv.consume_from_personal(player.inventories, str(ammo_id), need)
             if removed <= 0:
-                return
+                return False
             player.inventories.hands.update_slot(
                 index, {"mag": int(stack.get("mag") or 0) + removed}
             )
-            return
+            return False
+        return False
+
+    def _inv_reload_onto(
+        self,
+        room: LiminalRoom,
+        player: LiminalPlayer,
+        weapon_ref: Any,
+        ammo_ref: Any,
+    ) -> bool:
+        """把指定弹药堆装进指定武器格；不匹配则拒绝（弹药留在原格）。"""
+        weapon_inv = self._resolve_bag(room, player, weapon_ref)
+        ammo_inv = self._resolve_bag(room, player, ammo_ref)
+        if (
+            weapon_inv is None
+            or ammo_inv is None
+            or not isinstance(weapon_ref, dict)
+            or not isinstance(ammo_ref, dict)
+        ):
+            return False
+        try:
+            weapon_index = int(weapon_ref.get("index"))
+            ammo_index = int(ammo_ref.get("index"))
+        except (TypeError, ValueError):
+            return False
+        ammo_origin = ammo_inv.origin_index(ammo_index)
+        ammo_stack = ammo_inv.get_slot(ammo_origin)
+        weapon_origin = weapon_inv.origin_index(weapon_index)
+        weapon_stack = weapon_inv.get_slot(weapon_origin)
+        if not Inv.is_ammo_onto_weapon_intent(ammo_stack, weapon_stack):
+            return False
+        if not ammo_stack:
+            return False
+        if not Inv.weapon_accepts_ammo(str(weapon_stack["itemId"]), str(ammo_stack["itemId"])):
+            return False
+        taken = ammo_inv.take_slot(ammo_origin)
+        if not taken:
+            return False
+        ok, _loaded, leftover = Inv.try_load_ammo_onto_weapon(
+            weapon_inv, weapon_origin, taken
+        )
+        if not ok:
+            ammo_inv.place_stack(ammo_origin, taken)
+            return False
+        if leftover:
+            ammo_inv.place_stack(ammo_origin, leftover)
+        return self._bag_is_room(weapon_ref) or self._bag_is_room(ammo_ref)
+
+    def _inv_rotate(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """切换目标格堆叠朝向（0↔90）；足迹冲突时拒绝。"""
+        bag_ref = payload.get("bag") or payload.get("from")
+        inv = self._resolve_bag(room, player, bag_ref)
+        if inv is None or not isinstance(bag_ref, dict):
+            return False
+        try:
+            index = int(bag_ref.get("index"))
+        except (TypeError, ValueError):
+            return False
+        origin = inv.origin_index(index)
+        if not inv.toggle_rotation(origin):
+            return False
+        return self._bag_is_room(bag_ref)
 
     def _inv_crate(
         self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
@@ -1001,6 +1084,13 @@ class LiminalLobbyManager:
             if take < int(stack["qty"]):
                 src.slots[origin]["qty"] = int(stack["qty"]) - take
                 dropped = {"itemId": stack["itemId"], "qty": take}
+                if stack.get("mag") is not None:
+                    dropped["mag"] = stack["mag"]
+                try:
+                    if int(stack.get("rot") or 0) == 90:
+                        dropped["rot"] = 90
+                except (TypeError, ValueError):
+                    pass
             else:
                 taken = src.take_slot(origin)
                 if not taken:

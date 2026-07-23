@@ -31,7 +31,8 @@ PHYSICS_HZ = 30
 SNAPSHOT_HZ = 15
 # 超过该时间没有输入帧（切后台、半开连接）时清零持续输入，防止角色沿旧方向跑飞。
 INPUT_IDLE_SECONDS = 0.6
-MOVE_SPEED = 260.0
+# 与客户端 AvatarEntity.MOVE_SPEED 对齐（步行权威速度 px/s）。
+MOVE_SPEED = 340.0
 JUMP_SPEED = 520.0
 GRAVITY = 1400.0
 AVATAR_SIZE = 72.0

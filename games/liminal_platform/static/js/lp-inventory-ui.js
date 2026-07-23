@@ -1,5 +1,5 @@
 /**
- * 阈限月台物品栏 UI：Tab 开关、仓储双栏、点击/拖拽与 Shift 快速转移。
+ * 阈限月台物品栏 UI：主背包弹窗 + 左侧地面/仓库独立弹窗、拖拽与 Shift 快速转移。
  */
 (() => {
   const Spec = window.LiminalCarriageSpec;
@@ -12,10 +12,9 @@
   const playerGrid = document.getElementById('lpPlayerGrid');
   const groundGrid = document.getElementById('lpGroundGrid');
   const storageGrid = document.getElementById('lpStorageGrid');
-  const sideLootPanel = document.getElementById('lpSideLootPanel');
+  const sideLootFloats = document.getElementById('lpSideLootFloats');
   const groundSection = document.getElementById('lpGroundSection');
   const storageSection = document.getElementById('lpStorageSection');
-  const sideLootDivider = document.getElementById('lpSideLootDivider');
   const handsHosts = [0, 1, 2].map((i) => document.getElementById(`lpHandsSlot${i}`));
   const playerPanel = document.getElementById('lpPlayerInventoryPanel');
   const cursorEl = document.getElementById('lpInventoryCursor');
@@ -35,6 +34,8 @@
   const detailUse = document.getElementById('lpInventoryDetailUse');
   const equipPreview = document.getElementById('lpEquipPreview');
   const hintEl = document.getElementById('lpInventoryHint');
+  const inventoryShell = root?.querySelector('.lp-inventory-shell') || null;
+  const inventoryFooter = inventoryShell?.querySelector('.lp-inventory-footer') || null;
 
   const EQUIP_HOSTS = [
     document.getElementById('lpEquipSlot0'),
@@ -50,10 +51,9 @@
     !playerGrid ||
     !storageGrid ||
     !groundGrid ||
-    !sideLootPanel ||
+    !sideLootFloats ||
     !groundSection ||
     !storageSection ||
-    !sideLootDivider ||
     handsHosts.some((el) => !el) ||
     EQUIP_HOSTS.some((el) => !el)
   ) {
@@ -87,10 +87,18 @@
   let pendingSeedOverflow = loaded.seedOverflow || loaded.overflow || null;
   /** 联机时记录拾起源，关闭时原位退回（服务端尚未得知 take）。 */
   let cursorSource = null;
+  /** 移动端双击旋转：记录上一次点按的槽。 */
+  let lastTap = null;
 
   const previewEntity = Entity?.createAvatarEntity
     ? Entity.createAvatarEntity({ nickname: '' })
     : null;
+
+  /** 给图标节点打上/去掉 90° 旋转样式。 */
+  function applyIconRotation(iconEl, stack) {
+    if (!iconEl) return;
+    iconEl.classList.toggle('is-rotated', Core.stackRot(stack) === 90);
+  }
 
   /** 从场上角色同步皮套到装备预览实体（站立 idle）。 */
   function syncEquipPreviewEntity(source) {
@@ -251,12 +259,12 @@
     return null;
   }
 
-  /** 是否显示附近侧栏（地面或仓库）。 */
+  /** 是否显示左侧附近弹窗（地面或仓库）。 */
   function hasSideLoot() {
     return Boolean(state.groundInv) || state.inStorageCar;
   }
 
-  /** 同步附近侧栏（地面 / 仓库共用，可同时显示并以分割线隔开）。 */
+  /** 同步左侧地面 / 仓库独立弹窗显隐（可同时开）。 */
   function syncSideLootPanel(worldX = state.openWorldX) {
     const pile = window.LpGroundLoot?.getNearbyPile?.(worldX) || null;
     state.groundPile = pile;
@@ -267,9 +275,10 @@
 
     groundSection.hidden = !showGround;
     storageSection.hidden = !showStorage;
-    sideLootDivider.hidden = !(showGround && showStorage);
-    sideLootPanel.hidden = !showSide;
+    sideLootFloats.hidden = !showSide;
     root.classList.toggle('is-side-loot', showSide);
+    root.classList.toggle('is-ground-loot', showGround);
+    root.classList.toggle('is-storage-loot', showStorage);
 
     const nearbyTab = tabsNav?.querySelector('[data-lp-inv-tab="nearby"]');
     if (nearbyTab) nearbyTab.hidden = !showSide;
@@ -305,6 +314,8 @@
   function persistAndRender() {
     applyBagCapacity();
     if (!window.LpInventoryNet?.isActive?.()) {
+      // TEST_ONLY：单机取仓后补满种子物资
+      Core.restoreTestInfiniteStorage?.(storage);
       Core.saveInventories(player, storage, hands, equip);
       window.LpGroundLoot?.pruneAndSave?.();
     }
@@ -414,6 +425,7 @@
         detailIcon.style.backgroundImage = '';
         detailIcon.textContent = item.short;
       }
+      applyIconRotation(detailIcon, stack);
     }
     if (detailName) detailName.textContent = item.name;
     if (detailQty) {
@@ -424,7 +436,7 @@
     }
     if (detailType) detailType.textContent = Catalog.typeLabel(item.type);
     if (detailSize) {
-      const size = Catalog.getItemSize(item.id);
+      const size = Core.orientedSize(item.id, Core.stackRot(stack));
       detailSize.textContent = `${size.w}×${size.h}`;
     }
     if (detailEquip) {
@@ -493,7 +505,7 @@
     const origin = state.dragSource.index;
     const stack = inventory.getSlot(origin);
     if (!stack) return false;
-    const cells = inventory.footprint(origin, stack.itemId);
+    const cells = inventory.footprint(origin, stack.itemId, Core.stackRot(stack));
     return Boolean(cells && cells.includes(index));
   }
 
@@ -503,7 +515,16 @@
     const covered = !vacated && inventory.isCovered(index);
     const { col, row } = inventory.coordsOf(index);
     button.classList.toggle('is-covered', covered);
-    button.classList.remove('is-span', 'has-item', 'is-dragging', 'place-ok', 'place-bad', 'place-merge');
+    button.classList.remove(
+      'is-span',
+      'has-item',
+      'is-dragging',
+      'place-ok',
+      'place-bad',
+      'place-merge',
+      'reload-ok',
+      'reload-bad'
+    );
     button.style.removeProperty('--span-w');
     button.style.removeProperty('--span-h');
     button.replaceChildren();
@@ -547,6 +568,7 @@
     } else {
       icon.textContent = item.short;
     }
+    applyIconRotation(icon, stack);
 
     const qty = document.createElement('span');
     qty.className = 'lp-inventory-item-qty';
@@ -592,9 +614,13 @@
 
   /** 清除占地预览高亮。 */
   function clearPlacePreview() {
-    root.querySelectorAll('.lp-inventory-slot.place-ok, .lp-inventory-slot.place-bad, .lp-inventory-slot.place-merge').forEach((el) => {
-      el.classList.remove('place-ok', 'place-bad', 'place-merge');
-    });
+    root
+      .querySelectorAll(
+        '.lp-inventory-slot.place-ok, .lp-inventory-slot.place-bad, .lp-inventory-slot.place-merge, .lp-inventory-slot.reload-ok, .lp-inventory-slot.reload-bad'
+      )
+      .forEach((el) => {
+        el.classList.remove('place-ok', 'place-bad', 'place-merge', 'reload-ok', 'reload-bad');
+      });
   }
 
   /** 给指定格子加上预览类名（占位格已隐藏时改标原点）。 */
@@ -615,13 +641,40 @@
     }
   }
 
+  /**
+   * 若手持弹药悬停在带弹匣武器上，绘制绿/红装填预览并返回 true。
+   * 匹配规则：Catalog.weaponAcceptsAmmo（weapon.ammoId === ammo.id）。
+   */
+  function tryPaintAmmoReloadPreview(inventory, hoverIndex, held) {
+    if (!held || !inventory || hoverIndex == null || hoverIndex < 0) return false;
+    const heldItem = Catalog.getItem(held.itemId);
+    if (!heldItem || heldItem.type !== 'ammo') return false;
+
+    const origin = inventory.originIndex(hoverIndex);
+    const ignoreOrigin = ignoreOriginFor(inventory);
+    if (ignoreOrigin === origin) return false;
+
+    const existing = inventory.getSlot(origin);
+    if (!Core.isAmmoOntoWeaponIntent(held, existing)) return false;
+
+    const cells = inventory.footprint(origin, existing.itemId, Core.stackRot(existing)) || [
+      origin,
+    ];
+    const ok = Catalog.weaponAcceptsAmmo(existing.itemId, held.itemId);
+    paintPreviewCells(inventory, cells, ok ? 'reload-ok' : 'reload-bad');
+    return true;
+  }
+
   /** 根据当前手持物与悬停格绘制占地预览。 */
   function applyPlacePreview(inventory, hoverIndex) {
     clearPlacePreview();
     const held = heldStackForPreview();
     if (!held || !inventory || hoverIndex == null || hoverIndex < 0) return;
 
-    const size = Catalog.getItemSize(held.itemId);
+    if (tryPaintAmmoReloadPreview(inventory, hoverIndex, held)) return;
+
+    const heldRot = Core.stackRot(held);
+    const size = inventory.sizeFor(held.itemId, heldRot);
     const item = Catalog.getItem(held.itemId);
     if (!item) return;
     const ignoreOrigin = ignoreOriginFor(inventory);
@@ -647,18 +700,28 @@
       (inventory.isCovered(hoverIndex) || originOfHover === hoverIndex);
 
     if (hoveringOccupied) {
-      const cells = inventory.footprint(originOfHover, existing.itemId);
+      const cells = inventory.footprint(
+        originOfHover,
+        existing.itemId,
+        Core.stackRot(existing)
+      );
       if (existing.itemId === held.itemId && existing.qty < item.stack) {
         paintPreviewCells(inventory, cells, 'place-merge');
         return;
       }
-      const canSwap = inventory.canPlaceAt(originOfHover, held.itemId, originOfHover);
+      const canSwap = inventory.canPlaceAt(
+        originOfHover,
+        held.itemId,
+        originOfHover,
+        heldRot
+      );
       paintPreviewCells(inventory, cells, canSwap ? 'place-merge' : 'place-bad');
       return;
     }
 
-    const cells = inventory.footprint(hoverIndex, held.itemId);
-    const ok = Boolean(cells) && inventory.canPlaceAt(hoverIndex, held.itemId, ignoreOrigin);
+    const cells = inventory.footprint(hoverIndex, held.itemId, heldRot);
+    const ok =
+      Boolean(cells) && inventory.canPlaceAt(hoverIndex, held.itemId, ignoreOrigin, heldRot);
     if (!cells) {
       const { col, row } = inventory.coordsOf(hoverIndex);
       const clipped = [];
@@ -747,7 +810,7 @@
       groundGrid.replaceChildren();
     }
     syncSideLootPanel();
-    playerPanel.classList.toggle('is-compact', !hasSideLoot());
+    playerPanel.classList.add('is-compact');
     syncMobileChrome();
   }
 
@@ -755,30 +818,52 @@
   function updateInventoryHint() {
     if (!hintEl) return;
     if (!isCoarse()) {
-      hintEl.textContent = '拖拽移动 · Shift+点击快速转移 · Tab 关闭';
+      hintEl.textContent = '拖拽移动 · R 旋转 · Shift+点击快速转移 · Tab 关闭';
       return;
     }
     if (state.cursor) {
       hintEl.textContent = hasSideLoot()
-        ? '持物中：点空位放置，或切换「背包 / 附近」转移'
-        : '持物中：点空位放置，切到「人物」可装装备/手部';
+        ? '持物中：双击物品旋转 · 点空位放置 · 或切换「背包 / 附近」转移'
+        : '持物中：双击物品旋转 · 点空位放置 · 切到「人物」可装装备/手部';
       return;
     }
     if (state.mobileTab === 'gear') {
-      hintEl.textContent = '点选查看 · 再点拾起 · 点格子穿戴或到手部';
+      hintEl.textContent = '点选查看 · 双击旋转 · 再点拾起 · 点格子穿戴或到手部';
       return;
     }
     if (state.mobileTab === 'nearby') {
-      hintEl.textContent = '点选拾起 · 切到「背包」放入随身或仓库';
+      hintEl.textContent = '点选拾起 · 双击旋转 · 切到「背包」放入随身或仓库';
       return;
     }
-    hintEl.textContent = '点选查看 · 再点拾起 · 拖到其他格移动';
+    hintEl.textContent = '点选查看 · 双击旋转 · 再点拾起 · 拖到其他格移动';
+  }
+
+  /**
+   * 桌面：详情挂在 inventory root（避开 shell 层叠/overflow）；
+   * 移动端：挂回 shell（footer 前）以保持底部停靠布局。
+   */
+  function mountDetailHost() {
+    if (!detailPanel || !root) return;
+    if (isCoarse() && inventoryShell) {
+      if (inventoryFooter) {
+        inventoryShell.insertBefore(detailPanel, inventoryFooter);
+      } else {
+        inventoryShell.appendChild(detailPanel);
+      }
+      return;
+    }
+    if (cursorEl) {
+      root.insertBefore(detailPanel, cursorEl);
+    } else {
+      root.appendChild(detailPanel);
+    }
   }
 
   /** 同步移动端顶栏分区与当前面板。 */
   function syncMobileChrome() {
     const mobile = isCoarse();
     root.classList.toggle('is-mobile-inv', mobile);
+    mountDetailHost();
     if (tabsNav) tabsNav.hidden = !mobile;
 
     const nearbyTab = tabsNav?.querySelector('[data-lp-inv-tab="nearby"]');
@@ -810,16 +895,17 @@
     syncMobileChrome();
   }
 
-  /** 持物光标单格边长（优先跟随当前悬停网格，否则背包格）。 */
-  function cursorCellPx() {
-    const hoverInv = state.hoverSlot?.inventory;
-    let probe = null;
-    if (hoverInv === storage) probe = storageGrid?.querySelector('.lp-inventory-slot:not([hidden])');
-    else if (hoverInv === state.groundInv) probe = groundGrid?.querySelector('.lp-inventory-slot:not([hidden])');
-    else if (hoverInv === player) probe = playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
-    if (!probe) probe = playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
+  /**
+   * 拖拽/持物幽灵边长：固定紧凑方块（约装备格 78%），不随足迹 w×h 放大。
+   * 网格上的占位预览仍由 place-* 高亮负责，与幽灵尺寸无关。
+   */
+  function cursorGhostPx() {
+    const probe =
+      root?.querySelector('.lp-equip-slot-host .lp-inventory-slot') ||
+      playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
     const w = probe?.getBoundingClientRect?.().width;
-    return w > 8 ? w : 44;
+    const equip = w > 8 ? w : 48;
+    return Math.max(28, Math.round(equip * 0.78));
   }
 
   /** 光标幽灵用的堆叠：点击持物或拖拽中。 */
@@ -836,7 +922,7 @@
     renderGrids();
   }
 
-  /** 渲染鼠标持物 / 拖拽幽灵（按物品占格缩放）。 */
+  /** 渲染鼠标持物 / 拖拽幽灵（统一紧凑方块，多格仅用 is-span 边框提示）。 */
   function renderCursor() {
     const stack = heldGhostStack();
     if (!stack) {
@@ -846,22 +932,24 @@
       cursorEl.style.height = '';
       cursorEl.style.margin = '';
       cursorEl.classList.remove('is-span');
+      cursorEl.style.pointerEvents = 'none';
       return;
     }
     const item = Catalog.getItem(stack.itemId);
     if (!item) {
       cursorEl.hidden = true;
+      cursorEl.style.pointerEvents = 'none';
       return;
     }
-    const size = Catalog.getItemSize(item.id);
-    const cell = cursorCellPx();
-    const width = cell * size.w;
-    const height = cell * size.h;
+    const size = Core.orientedSize(item.id, Core.stackRot(stack));
+    const ghost = cursorGhostPx();
     cursorEl.hidden = false;
+    // 移动端持物时可点幽灵双击旋转
+    cursorEl.style.pointerEvents = isCoarse() && state.cursor ? 'auto' : 'none';
     cursorEl.classList.toggle('is-span', size.w > 1 || size.h > 1);
-    cursorEl.style.width = `${width}px`;
-    cursorEl.style.height = `${height}px`;
-    cursorEl.style.margin = `${-height / 2}px 0 0 ${-width / 2}px`;
+    cursorEl.style.width = `${ghost}px`;
+    cursorEl.style.height = `${ghost}px`;
+    cursorEl.style.margin = `${-ghost / 2}px 0 0 ${-ghost / 2}px`;
     cursorEl.replaceChildren();
     const icon = document.createElement('span');
     icon.className = 'lp-inventory-item-icon';
@@ -875,6 +963,7 @@
     } else {
       icon.textContent = item.short;
     }
+    applyIconRotation(icon, stack);
     const qty = document.createElement('span');
     qty.className = 'lp-inventory-item-qty';
     if (item.magazineSize != null) {
@@ -895,7 +984,7 @@
     }
   }
 
-  /** 左键点击槽位：拾起 / 放置 / 合并；触屏单击优先查看信息。 */
+  /** 左键点击槽位：拾起 / 放置 / 合并；触屏单击优先查看信息，快速再点旋转。 */
   function handleSlotClick(event, inventory, index) {
     if (state.suppressClick || state.dragMoved) {
       state.suppressClick = false;
@@ -903,10 +992,17 @@
       return;
     }
 
+    const origin = inventory.originIndex(index);
+    const now = performance.now();
+    const tapKey = `${inventory.id}:${origin}`;
+    const isDoubleTap =
+      lastTap && lastTap.key === tapKey && now - lastTap.time < 320;
+    lastTap = { key: tapKey, time: now };
+
     const stackBefore = inventory.getSlot(index);
     const slotEl = event.currentTarget;
 
-    // 触屏：空手单击有物品 → 查看信息；再点同一格则拾起；拖拽仍可转移
+    // 触屏：空手单击有物品 → 查看信息；快速再点同一格 → 旋转；较慢再点 → 拾起
     if (isCoarse() && !state.cursor && stackBefore && !event.shiftKey) {
       const already =
         state.inspectPinned &&
@@ -918,6 +1014,10 @@
           clientX: event.clientX,
           clientY: event.clientY,
         });
+        return;
+      }
+      if (isDoubleTap) {
+        rotateStackInPlace(inventory, origin);
         return;
       }
     }
@@ -979,6 +1079,36 @@
     const placeIndex = inventory.originIndex(index);
     const to = bagRef(inventory, placeIndex);
     const from = cursorSource;
+
+    if (state.cursor && Core.isAmmoOntoWeaponIntent(state.cursor, inventory.getSlot(placeIndex))) {
+      const outcome = applyAmmoReloadOntoWeapon({
+        ammoInv: null,
+        ammoIndex: -1,
+        ammoRef: cursorSource,
+        weaponInv: inventory,
+        weaponIndex: placeIndex,
+        ammoStack: state.cursor,
+      });
+      if (outcome.status === 'rejected') {
+        persistAndRender();
+        return;
+      }
+      if (outcome.status === 'loaded') {
+        state.cursor = outcome.leftover;
+        if (!outcome.leftover) cursorSource = null;
+        persistAndRender();
+        if (outcome.leftover) {
+          showDetail(outcome.leftover, {
+            pinned: isCoarse(),
+            clientX: event.clientX,
+            clientY: event.clientY,
+          });
+        } else if (isCoarse()) clearDetail();
+        else clearDetail();
+        return;
+      }
+    }
+
     const returned = Core.placeOnSlot(inventory, index, state.cursor);
     state.cursor = returned;
     persistAndRender();
@@ -1009,7 +1139,10 @@
         state.cursor = inventory.takeSlot(origin);
       } else {
         inventory.slots[origin].qty = stack.qty - half;
-        state.cursor = { itemId: stack.itemId, qty: half };
+        const halfStack = { itemId: stack.itemId, qty: half };
+        if (stack.mag != null) halfStack.mag = stack.mag;
+        if (Core.stackRot(stack) === 90) halfStack.rot = 90;
+        state.cursor = halfStack;
       }
       persistAndRender();
       return;
@@ -1021,11 +1154,15 @@
     const returned = Core.placeOnSlot(inventory, origin, {
       itemId: state.cursor.itemId,
       qty: 1,
+      mag: state.cursor.mag,
+      rot: state.cursor.rot,
     });
     if (returned === null) {
       state.cursor = {
         itemId: state.cursor.itemId,
         qty: state.cursor.qty - 1,
+        mag: state.cursor.mag,
+        rot: state.cursor.rot,
       };
       if (state.cursor.qty <= 0) state.cursor = null;
     }
@@ -1069,6 +1206,58 @@
     }
   }
 
+  /**
+   * 弹药拖/放到带弹匣武器：匹配则装填，不匹配则原位退回（不交换）。
+   * @returns {{ status: 'none'|'rejected'|'loaded', leftover: object|null }}
+   */
+  function applyAmmoReloadOntoWeapon(options) {
+    const {
+      ammoInv = null,
+      ammoIndex = -1,
+      ammoRef = null,
+      weaponInv,
+      weaponIndex,
+      ammoStack,
+    } = options || {};
+    const weaponOrigin = weaponInv.originIndex(weaponIndex);
+    const weaponStack = weaponInv.getSlot(weaponOrigin);
+    if (!Core.isAmmoOntoWeaponIntent(ammoStack, weaponStack)) {
+      return { status: 'none', leftover: ammoStack || null };
+    }
+
+    if (!Catalog.weaponAcceptsAmmo(weaponStack.itemId, ammoStack.itemId)) {
+      window.LiminalInteract?.showToast?.('弹药不匹配');
+      return { status: 'rejected', leftover: ammoStack };
+    }
+
+    const result = Core.tryLoadAmmoOntoWeapon(weaponInv, weaponOrigin, ammoStack);
+    if (!result.ok) {
+      window.LiminalInteract?.showToast?.('弹药不匹配');
+      return { status: 'rejected', leftover: ammoStack };
+    }
+
+    if (ammoInv && result.leftover) {
+      ammoInv.placeStack(ammoIndex, result.leftover);
+    }
+
+    const weaponItem = Catalog.getItem(weaponStack.itemId);
+    const next = weaponInv.getSlot(weaponOrigin);
+    if (result.loaded > 0) {
+      window.LiminalInteract?.showToast?.(
+        `装填 ${result.loaded} 发（${next?.mag ?? 0}/${weaponItem?.magazineSize ?? '?'}）`
+      );
+    } else {
+      window.LiminalInteract?.showToast?.('弹匣已满');
+    }
+
+    const from = ammoRef || (ammoInv ? bagRef(ammoInv, ammoIndex) : null);
+    const to = bagRef(weaponInv, weaponOrigin);
+    if (from && to) {
+      netSend({ action: 'reload', ammo: from, weapon: to });
+    }
+    return { status: 'loaded', leftover: result.leftover };
+  }
+
   /** 结束拖拽到目标槽。 */
   function finishDrag(event) {
     if (!state.dragSource) return;
@@ -1091,6 +1280,26 @@
     if (!targetInventory) return;
     const targetIndex = Number(target.dataset.slotIndex);
     if (targetInventory === source.inventory && targetIndex === source.index) return;
+
+    const ammoPeek = source.inventory.getSlot(source.index);
+    const weaponPeek = targetInventory.getSlot(targetInventory.originIndex(targetIndex));
+    if (Core.isAmmoOntoWeaponIntent(ammoPeek, weaponPeek)) {
+      const moving = source.inventory.takeSlot(source.index);
+      if (!moving) return;
+      const outcome = applyAmmoReloadOntoWeapon({
+        ammoInv: source.inventory,
+        ammoIndex: source.index,
+        ammoRef: bagRef(source.inventory, source.index),
+        weaponInv: targetInventory,
+        weaponIndex: targetIndex,
+        ammoStack: moving,
+      });
+      if (outcome.status === 'rejected') {
+        source.inventory.placeStack(source.index, moving);
+      }
+      persistAndRender();
+      return;
+    }
 
     const moving = source.inventory.takeSlot(source.index);
     if (!moving) return;
@@ -1123,11 +1332,12 @@
     }
     cursorSource = null;
     const leftoverQty = player.addItem(stack.itemId, stack.qty);
-    if (leftoverQty < stack.qty && stack.mag != null) {
+    if (leftoverQty < stack.qty && (stack.mag != null || Core.stackRot(stack) === 90)) {
       for (let i = 0; i < player.size(); i += 1) {
         const raw = player.slots[i];
-        if (raw && raw.itemId === stack.itemId && raw.mag == null) {
-          raw.mag = stack.mag;
+        if (raw && raw.itemId === stack.itemId && raw.mag == null && raw.rot == null) {
+          if (stack.mag != null) raw.mag = stack.mag;
+          if (Core.stackRot(stack) === 90) raw.rot = 90;
           break;
         }
       }
@@ -1135,8 +1345,104 @@
     if (leftoverQty > 0) {
       const drop = { itemId: stack.itemId, qty: leftoverQty };
       if (stack.mag != null) drop.mag = stack.mag;
+      if (Core.stackRot(stack) === 90) drop.rot = 90;
       window.LpGroundLoot?.dropStacks?.(state.openWorldX, [drop]);
     }
+  }
+
+  /**
+   * 原地切换堆叠朝向；失败则保持原状。
+   * 联机时向权威发送 rotate。
+   */
+  function rotateStackInPlace(inventory, origin) {
+    if (!inventory?.toggleRotation?.(origin)) return false;
+    const ref = bagRef(inventory, origin);
+    if (ref) netSend({ action: 'rotate', bag: ref });
+    persistAndRender();
+    const stack = inventory.getSlot(origin);
+    if (stack) {
+      const slotEl = slotButtonsFor(inventory)[origin];
+      showDetail(stack, {
+        pinned: isCoarse() || state.inspectPinned,
+        slotEl: slotEl || null,
+      });
+    }
+    return true;
+  }
+
+  /** 切换光标持物朝向（联机同步源格，因服务端尚未 take）。 */
+  function rotateCursorStack() {
+    if (!state.cursor) return false;
+    const next = Core.toggledRot(Core.stackRot(state.cursor));
+    if (next === 90) state.cursor.rot = 90;
+    else delete state.cursor.rot;
+    if (cursorSource && window.LpInventoryNet?.isActive?.()) {
+      netSend({ action: 'rotate', bag: cursorSource });
+    }
+    persistAndRender();
+    showDetail(state.cursor, { pinned: isCoarse() });
+    return true;
+  }
+
+  /** 拖拽中切换源堆叠朝向，并刷新幽灵足迹。 */
+  function rotateDragStack() {
+    if (!state.dragSource) return false;
+    const { inventory, index } = state.dragSource;
+    if (!inventory.toggleRotation(index)) return false;
+    const ref = bagRef(inventory, index);
+    if (ref) netSend({ action: 'rotate', bag: ref });
+    persistAndRender();
+    if (state.hoverSlot) {
+      applyPlacePreview(state.hoverSlot.inventory, state.hoverSlot.index);
+    }
+    return true;
+  }
+
+  /** 解析当前应旋转的目标：持物 > 拖拽 > 详情选中格。 */
+  function rotateHeldOrSelected() {
+    if (state.cursor) return rotateCursorStack();
+    if (state.dragSource) return rotateDragStack();
+    const inspecting = root.querySelector('.lp-inventory-slot.is-inspecting');
+    if (!inspecting) return false;
+    const inv = inventoryById(inspecting.dataset.inventoryId);
+    const index = Number(inspecting.dataset.slotIndex);
+    if (!inv || Number.isNaN(index)) return false;
+    return rotateStackInPlace(inv, inv.originIndex(index));
+  }
+
+  /** 桌面：物品栏打开时 R 优先旋转（盖过世界装填）。 */
+  function onInventoryKeyDown(event) {
+    if (!state.open || event.repeat) return;
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+    const isRotateKey =
+      Bindings?.matchesKeyEvent?.('reload', event) ||
+      event.code === 'KeyR' ||
+      event.key === 'r' ||
+      event.key === 'R';
+    if (!isRotateKey) return;
+    if (!state.cursor && !state.dragSource) {
+      const inspecting = root.querySelector('.lp-inventory-slot.is-inspecting');
+      if (!inspecting && !heldStackForPreview()) return;
+    }
+    if (rotateHeldOrSelected()) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
+  /** 移动端：双击持物幽灵以旋转。 */
+  function onCursorGhostClick(event) {
+    if (!isCoarse() || !state.cursor) return;
+    const now = performance.now();
+    const isDouble =
+      lastTap && lastTap.key === 'cursor-ghost' && now - lastTap.time < 320;
+    lastTap = { key: 'cursor-ghost', time: now };
+    if (!isDouble) return;
+    event.preventDefault();
+    event.stopPropagation();
+    rotateCursorStack();
   }
 
   /** 打开物品栏。 */
@@ -1163,6 +1469,7 @@
     returnCursorToPlayer();
     applyBagCapacity(state.openWorldX);
     if (!window.LpInventoryNet?.isActive?.()) {
+      Core.restoreTestInfiniteStorage?.(storage);
       Core.saveInventories(player, storage, hands, equip);
       window.LpGroundLoot?.pruneAndSave?.();
     }
@@ -1177,17 +1484,23 @@
     stopEquipPreviewLoop();
     clearPlacePreview();
     root.hidden = true;
-    root.classList.remove('is-dual', 'is-ground', 'is-side-loot', 'is-mobile-inv');
+    root.classList.remove(
+      'is-dual',
+      'is-ground',
+      'is-side-loot',
+      'is-ground-loot',
+      'is-storage-loot',
+      'is-mobile-inv'
+    );
     root.dataset.lpInvTab = '';
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-inventory-open');
     settingsPanel.hidden = true;
     settingsToggle?.setAttribute('aria-expanded', 'false');
     settingsToggle?.classList.remove('is-active');
-    sideLootPanel.hidden = true;
+    sideLootFloats.hidden = true;
     groundSection.hidden = true;
     storageSection.hidden = true;
-    sideLootDivider.hidden = true;
     clearDetail();
     renderCursor();
     window.LpHandsHud?.render?.();
@@ -1282,6 +1595,8 @@
   document.addEventListener('pointermove', onPointerMove);
   document.addEventListener('pointerup', finishDrag);
   document.addEventListener('pointercancel', finishDrag);
+  window.addEventListener('keydown', onInventoryKeyDown, true);
+  cursorEl.addEventListener('click', onCursorGhostClick);
   window.addEventListener('lp:bindings-changed', () => Bindings.renderBindings?.());
 
   window.LpInventory = {
@@ -1302,5 +1617,6 @@
   };
 
   renderGrids();
+  mountDetailHost();
   window.LpInputBindings?.renderBindings?.();
 })();

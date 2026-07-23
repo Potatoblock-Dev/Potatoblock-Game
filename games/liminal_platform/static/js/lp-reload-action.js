@@ -1,6 +1,6 @@
 /**
- * 换弹动作模组：抬枪露匣 → 后手 IK 扶顶匣 → 插入关键帧入弹 → 回瞄。
- * 前臂始终与枪管同轴（复用瞄准解算），避免枪手分离。
+ * 换弹动作模组：抬枪露匣 → 护木手 IK 扶顶匣 → 插入关键帧入弹 → 回瞄。
+ * 扳机握把手始终与枪管同轴（复用瞄准解算），避免枪手分离。
  */
 (() => {
   const Entity = window.AvatarEntity;
@@ -15,7 +15,7 @@
       commitAt: 0.52,
       /* 枪口上扬角（世界：0=右，负=上） */
       gunTilt: [-0.25, -0.95, -0.85, -0.45, -0.15],
-      /* 后手扶匣强度 0–1 */
+      /* 护木手扶匣强度 0–1 */
       reach: [0, 0.35, 1, 1, 0.55, 0.15, 0],
       magLocal: { x: 14, y: -10 },
     },
@@ -124,39 +124,48 @@
   }
 
   /**
-   * 持枪附着点跟瞄；后手按进度 IK 到顶匣（换弹时临时覆盖护木手）。
+   * 持枪附着点跟瞄；护木手按进度 IK 到顶匣（换弹时临时覆盖 forendLimb）。
    */
   function applyArmPose(avatar) {
     if (!active || !avatar?.joints) return false;
     const aim = getAimOverride(avatar);
     if (!aim) return false;
-    Entity?.applyAimArmPose?.(avatar, aim, active.item?.holdPose);
+    const holdPose =
+      window.LpWeaponHold?.resolveHoldPose?.(active.item) ?? active.item?.holdPose;
+    Entity?.applyAimArmPose?.(avatar, aim, holdPose);
 
     const reachW = sampleSeries(active._style.reach, getProgress());
     if (reachW < 0.05 || !Motion?.computeArmReachPose) return true;
 
     const well = getMagWellWorld(avatar, aim);
-    const backShoulderWorld = Entity?.getBackShoulderWorld?.(avatar);
-    if (!well || !backShoulderWorld) return true;
+    const forendIsBack = (holdPose?.forendLimb || 'front') === 'back';
+    const forendShoulderWorld = forendIsBack
+      ? Entity?.getBackShoulderWorld?.(avatar)
+      : Entity?.getFrontShoulderWorld?.(avatar);
+    if (!well || !forendShoulderWorld) return true;
 
     const facing = avatar.facing >= 0 ? 1 : -1;
-    const localX = (well.x - backShoulderWorld.x) * facing;
-    const localY = well.y - backShoulderWorld.y;
+    const localX = (well.x - forendShoulderWorld.x) * facing;
+    const localY = well.y - forendShoulderWorld.y;
     const reach = Motion.computeArmReachPose(localX, localY);
-    const bsh = avatar.joints.backShoulder;
-    const bel = avatar.joints.backElbow;
-    if (bsh) {
-      bsh.angle = Motion.lerp(bsh.angle, reach.shoulder, reachW);
-      bsh.velocity = 0;
+    const shJoint = forendIsBack
+      ? avatar.joints.backShoulder
+      : avatar.joints.frontShoulder;
+    const elJoint = forendIsBack
+      ? avatar.joints.backElbow
+      : avatar.joints.frontElbow;
+    if (shJoint) {
+      shJoint.angle = Motion.lerp(shJoint.angle, reach.shoulder, reachW);
+      shJoint.velocity = 0;
     }
-    if (bel) {
-      bel.angle = Motion.lerp(bel.angle, reach.elbow, reachW);
-      bel.velocity = 0;
+    if (elJoint) {
+      elJoint.angle = Motion.lerp(elJoint.angle, reach.elbow, reachW);
+      elJoint.velocity = 0;
     }
     return true;
   }
 
-  /** 绘制顶匣道具（沿后手 → 匣井）。 */
+  /** 绘制顶匣道具（沿护木手 → 匣井）。 */
   function draw(ctx, avatar, aim) {
     if (!active || active.style !== 'top_mag') return;
     const t = getProgress();
@@ -165,12 +174,17 @@
 
     const item = active.item;
     const well = getMagWellWorld(avatar, aim);
-    const backHand = Entity?.getBackHandWorld?.(avatar);
-    if (!well || !backHand) return;
+    const holdPose =
+      window.LpWeaponHold?.resolveHoldPose?.(item) ?? item?.holdPose;
+    const forendIsBack = (holdPose?.forendLimb || 'front') === 'back';
+    const forendHand = forendIsBack
+      ? Entity?.getBackHandWorld?.(avatar)
+      : Entity?.getFrontHandWorld?.(avatar);
+    if (!well || !forendHand) return;
 
     const u = Math.min(1, reachW);
-    const mx = backHand.x + (well.x - backHand.x) * Math.min(1, u * 1.15);
-    const my = backHand.y + (well.y - backHand.y) * Math.min(1, u * 1.15);
+    const mx = forendHand.x + (well.x - forendHand.x) * Math.min(1, u * 1.15);
+    const my = forendHand.y + (well.y - forendHand.y) * Math.min(1, u * 1.15);
     const scale = t > 0.5 ? Math.max(0.15, 1 - (t - 0.5) * 2.2) : 1;
     if (scale <= 0.05) return;
 

@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=62">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=102">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -20,6 +20,15 @@
       <span class="lp-crosshair-arm lp-crosshair-arm-w" aria-hidden="true"></span>
       <span class="lp-crosshair-arm lp-crosshair-arm-e" aria-hidden="true"></span>
       <span class="lp-crosshair-dot"></span>
+    </div>
+    <!-- 单人双联：对角线准星显示 2 号炮塔散布 -->
+    <div id="lpCrosshairAlt" class="lp-crosshair lp-crosshair-alt" hidden aria-hidden="true">
+      <div class="lp-crosshair-alt-rot">
+        <span class="lp-crosshair-arm lp-crosshair-arm-n" aria-hidden="true"></span>
+        <span class="lp-crosshair-arm lp-crosshair-arm-s" aria-hidden="true"></span>
+        <span class="lp-crosshair-arm lp-crosshair-arm-w" aria-hidden="true"></span>
+        <span class="lp-crosshair-arm lp-crosshair-arm-e" aria-hidden="true"></span>
+      </div>
     </div>
     <div class="lp-stage-ui">
       <header class="lp-hud-top">
@@ -44,6 +53,17 @@
         </div>
         <div class="lp-hud-rail">
           <nav class="lp-hud-actions">
+            <button
+              type="button"
+              id="lpFullscreenButton"
+              class="lp-fullscreen-btn"
+              aria-pressed="false"
+              aria-label="全屏"
+              title="全屏 (F11)"
+            >
+              <span class="lp-label-long" data-lp-fs-text="long">全屏</span>
+              <span class="lp-label-short" data-lp-fs-text="short">全屏</span>
+            </button>
             <a class="lp-skin-link" href="/avatar-lobby">
               <span class="lp-label-long">换皮套</span>
               <span class="lp-label-short">皮套</span>
@@ -53,13 +73,13 @@
               <span class="lp-label-short">返回</span>
             </a>
           </nav>
-          <aside id="lpTrainMinimap" class="lp-train-minimap" aria-label="列车编组小地图">
+          <aside id="lpTrainMinimap" class="lp-train-minimap" aria-label="列车编组小地图" title="打开完整地图 (M)" role="button" tabindex="0">
             <div class="lp-train-minimap-head">
               <span class="lp-train-minimap-title">编组</span>
               <span id="lpTrainMinimapActive" class="lp-train-minimap-active">—</span>
             </div>
             <ol id="lpTrainMinimapCars" class="lp-train-minimap-cars"></ol>
-            <p class="lp-train-minimap-legend" aria-hidden="true">右 = 前进</p>
+            <p class="lp-train-minimap-legend" aria-hidden="true">右 = 前进 · M 地图</p>
           </aside>
         </div>
       </header>
@@ -96,6 +116,9 @@
             <span id="lpLookJoystickKnob" class="lp-look-joystick-knob"></span>
           </div>
           <div class="lp-mobile-action-secondary">
+            <button type="button" id="lpMobileMapButton" class="lp-mobile-map-button" aria-label="地图" title="地图">
+              <span class="lp-mc-icon" aria-hidden="true"></span>
+            </button>
             <button type="button" id="lpMobileInventoryButton" class="lp-mobile-inventory-button" data-mode="inventory" aria-label="物品" title="物品">
               <span class="lp-mc-icon" aria-hidden="true"></span>
             </button>
@@ -140,6 +163,11 @@
               <span>物品栏</span>
               <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="0"></button>
               <button type="button" data-lp-binding-action="inventory" data-lp-binding-slot="1"></button>
+            </div>
+            <div class="lp-binding-row">
+              <span>列车地图</span>
+              <button type="button" data-lp-binding-action="trainMap" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="trainMap" data-lp-binding-slot="1"></button>
             </div>
           </div>
         </details>
@@ -190,6 +218,35 @@
         <button type="button" id="lpResetBindingsButton" class="lp-inventory-ghost-button lp-desktop-only">恢复默认</button>
       </div>
 
+      <!-- 桌面：侧栏（地面/仓库）在左、主物品栏在右；DOM 先侧栏以免依赖 order -->
+      <div id="lpSideLootFloats" class="lp-side-loot-floats" hidden data-lp-inv-pane="nearby">
+        <section
+          id="lpGroundSection"
+          class="lp-inventory-float lp-inventory-float-ground"
+          hidden
+          aria-label="地面"
+        >
+          <header class="lp-inventory-float-header">
+            <h3 class="lp-inventory-panel-title">地面</h3>
+          </header>
+          <div class="lp-inventory-float-body">
+            <div id="lpGroundGrid" class="lp-inventory-grid lp-inventory-grid-ground"></div>
+          </div>
+        </section>
+        <section
+          id="lpStorageSection"
+          class="lp-inventory-float lp-inventory-float-storage"
+          hidden
+          aria-label="仓储车厢 · 仓库"
+        >
+          <header class="lp-inventory-float-header">
+            <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
+          </header>
+          <div class="lp-inventory-float-body">
+            <div id="lpStorageGrid" class="lp-inventory-grid lp-inventory-grid-storage"></div>
+          </div>
+        </section>
+      </div>
       <div class="lp-inventory-shell" role="dialog" aria-modal="true" aria-label="物品栏">
         <header class="lp-inventory-header">
           <div>
@@ -255,53 +312,41 @@
             <h3 class="lp-inventory-panel-title">背包</h3>
             <div id="lpPlayerGrid" class="lp-inventory-grid"></div>
           </section>
-          <section id="lpSideLootPanel" class="lp-inventory-panel lp-side-loot-panel" data-lp-inv-pane="nearby" hidden>
-            <div class="lp-side-loot-scroll">
-              <div id="lpGroundSection" class="lp-side-loot-section is-ground" hidden>
-                <h3 class="lp-inventory-panel-title">地面</h3>
-                <div id="lpGroundGrid" class="lp-inventory-grid lp-inventory-grid-ground"></div>
-              </div>
-              <div id="lpSideLootDivider" class="lp-side-loot-divider" hidden aria-hidden="true"></div>
-              <div id="lpStorageSection" class="lp-side-loot-section is-storage" hidden>
-                <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
-                <div id="lpStorageGrid" class="lp-inventory-grid lp-inventory-grid-storage"></div>
-              </div>
-            </div>
-          </section>
         </div>
-        <aside id="lpInventoryDetail" class="lp-inventory-detail" hidden aria-live="polite">
-          <p class="lp-inventory-detail-empty" id="lpInventoryDetailEmpty" hidden>点击物品查看信息</p>
-          <div class="lp-inventory-detail-body" id="lpInventoryDetailBody" hidden>
-            <div class="lp-inventory-detail-icon-wrap">
-              <span id="lpInventoryDetailIcon" class="lp-inventory-item-icon"></span>
-            </div>
-            <h3 id="lpInventoryDetailName" class="lp-inventory-detail-name"></h3>
-            <dl class="lp-inventory-detail-meta">
-              <div>
-                <dt>数量</dt>
-                <dd id="lpInventoryDetailQty"></dd>
-              </div>
-              <div>
-                <dt>类型</dt>
-                <dd id="lpInventoryDetailType"></dd>
-              </div>
-              <div>
-                <dt>占格</dt>
-                <dd id="lpInventoryDetailSize"></dd>
-              </div>
-              <div>
-                <dt>装备</dt>
-                <dd id="lpInventoryDetailEquip"></dd>
-              </div>
-            </dl>
-            <p class="lp-inventory-detail-use-label">作用</p>
-            <p id="lpInventoryDetailUse" class="lp-inventory-detail-use"></p>
-          </div>
-        </aside>
         <footer class="lp-inventory-footer">
-          <p id="lpInventoryHint">拖拽移动 · Shift+点击快速转移 · Tab 关闭</p>
+          <p id="lpInventoryHint">拖拽移动 · R 旋转 · Shift+点击快速转移 · Tab 关闭</p>
         </footer>
       </div>
+      <!-- 详情浮层挂在 root（非 shell）以免被侧栏 z-index / overflow 盖住；移动端由 JS 挂回 shell -->
+      <aside id="lpInventoryDetail" class="lp-inventory-detail" hidden aria-live="polite">
+        <p class="lp-inventory-detail-empty" id="lpInventoryDetailEmpty" hidden>点击物品查看信息</p>
+        <div class="lp-inventory-detail-body" id="lpInventoryDetailBody" hidden>
+          <div class="lp-inventory-detail-icon-wrap">
+            <span id="lpInventoryDetailIcon" class="lp-inventory-item-icon"></span>
+          </div>
+          <h3 id="lpInventoryDetailName" class="lp-inventory-detail-name"></h3>
+          <dl class="lp-inventory-detail-meta">
+            <div>
+              <dt>数量</dt>
+              <dd id="lpInventoryDetailQty"></dd>
+            </div>
+            <div>
+              <dt>类型</dt>
+              <dd id="lpInventoryDetailType"></dd>
+            </div>
+            <div>
+              <dt>占格</dt>
+              <dd id="lpInventoryDetailSize"></dd>
+            </div>
+            <div>
+              <dt>装备</dt>
+              <dd id="lpInventoryDetailEquip"></dd>
+            </div>
+          </dl>
+          <p class="lp-inventory-detail-use-label">作用</p>
+          <p id="lpInventoryDetailUse" class="lp-inventory-detail-use"></p>
+        </div>
+      </aside>
       <div id="lpInventoryCursor" class="lp-inventory-cursor-slot" hidden aria-hidden="true"></div>
     </div>
     <div id="lpFuelFeedRoot" class="lp-fuel-feed-root" hidden aria-hidden="true">
@@ -340,13 +385,11 @@
           <div id="lpGuardCrateZone" class="lp-fuel-drop-zone lp-guard-crate-zone">
             <span id="lpGuardCrateLabel" class="lp-fuel-drop-label">弹药箱</span>
             <span id="lpGuardCrateSub" class="lp-fuel-drop-sub">拖入存放 · 拖出取出</span>
-            <button type="button" id="lpGuardCrateSlot" class="lp-fuel-item-slot" aria-label="箱内物品"></button>
+            <div id="lpGuardCrateGrid" class="lp-inventory-grid lp-guard-crate-grid" aria-label="箱内物品"></div>
           </div>
-          <div class="lp-fuel-rack" aria-label="背包物品">
-            <p id="lpGuardCrateBagTitle" class="lp-fuel-rack-title">背包</p>
-            <div class="lp-fuel-source-grid">
-              <button type="button" id="lpGuardCrateBagSlot" class="lp-fuel-item-slot" aria-label="背包物品"></button>
-            </div>
+          <div class="lp-fuel-rack lp-guard-crate-rack" aria-label="背包物品">
+            <p id="lpGuardCrateBagTitle" class="lp-fuel-rack-title">背包弹药</p>
+            <div id="lpGuardCrateBagGrid" class="lp-inventory-grid lp-guard-crate-grid" aria-label="背包物品"></div>
           </div>
         </div>
       </div>
@@ -356,6 +399,23 @@
     </div>
     <div id="lpBoilerPanelRoot" class="lp-boiler-panel-root" hidden aria-hidden="true">
       <div class="lp-boiler-backdrop"></div>
+      <!-- 固定在视口右上角；随驾驶台 root 显隐，不挂在机柜内 -->
+      <div class="lp-whistle-hang" aria-label="汽笛">
+        <span class="lp-whistle-ceiling" aria-hidden="true"></span>
+        <div
+          id="lpWhistleRope"
+          class="lp-whistle-rope"
+          role="button"
+          tabindex="0"
+          aria-label="拉动汽笛绳"
+          aria-pressed="false"
+        >
+          <span class="lp-whistle-mount" aria-hidden="true"></span>
+          <span class="lp-whistle-cord" aria-hidden="true"></span>
+          <span class="lp-whistle-handle" aria-hidden="true"></span>
+        </div>
+        <p id="lpWhistleReadout" class="lp-whistle-tag">汽笛 · 松</p>
+      </div>
       <div class="lp-boiler-shell" role="dialog" aria-modal="true" aria-label="动力车驾驶台">
         <div class="lp-cab-desk">
           <div class="lp-cab-desk-lip" aria-hidden="true"></div>
@@ -369,23 +429,6 @@
               离开
             </button>
           </header>
-
-          <div class="lp-whistle-hang" aria-label="汽笛">
-            <span class="lp-whistle-ceiling" aria-hidden="true"></span>
-            <div
-              id="lpWhistleRope"
-              class="lp-whistle-rope"
-              role="button"
-              tabindex="0"
-              aria-label="拉动汽笛绳"
-              aria-pressed="false"
-            >
-              <span class="lp-whistle-mount" aria-hidden="true"></span>
-              <span class="lp-whistle-cord" aria-hidden="true"></span>
-              <span class="lp-whistle-handle" aria-hidden="true"></span>
-            </div>
-            <p id="lpWhistleReadout" class="lp-whistle-tag">汽笛 · 松</p>
-          </div>
 
           <div class="lp-boiler-instruments">
             <div class="lp-fuel-gauge" aria-label="燃料表">
@@ -502,37 +545,202 @@
       </div>
     </div>
   </div>
+
+  <div id="lpTrainMapRoot" class="lp-train-map-root" hidden aria-hidden="true">
+    <div class="lp-train-map-backdrop"></div>
+    <div class="lp-train-map-shell" role="dialog" aria-modal="true" aria-label="列车地图">
+      <header class="lp-train-map-header">
+        <div>
+          <p class="lp-train-map-eyebrow">编组全览</p>
+          <h2 class="lp-train-map-title">列车地图</h2>
+        </div>
+        <div class="lp-train-map-header-meta">
+          <span id="lpTrainMapActive" class="lp-train-map-active">—</span>
+          <button type="button" id="lpTrainMapClose" class="lp-train-map-close">关闭</button>
+        </div>
+      </header>
+      <div class="lp-train-map-stage" aria-label="编组与敌袭方向">
+        <ol id="lpTrainMapRaid" class="lp-train-map-raid" aria-label="敌袭方向（预留）"></ol>
+        <ol id="lpTrainMapCars" class="lp-train-map-cars"></ol>
+        <p class="lp-train-map-forward" aria-hidden="true">→ 前进</p>
+      </div>
+      <p id="lpTrainMapHint" class="lp-train-map-hint">M / Esc 关闭</p>
+    </div>
+  </div>
+
+  <div id="lpRadarScopeRoot" class="lp-radar-scope-root" hidden aria-hidden="true">
+    <div class="lp-radar-backdrop"></div>
+    <div class="lp-radar-shell" role="dialog" aria-modal="true" aria-label="绘轨雷达示波器">
+      <header class="lp-radar-header">
+        <div>
+          <p class="lp-radar-eyebrow">绘轨车厢 · 示波器</p>
+          <h2 class="lp-radar-title">RADAR SCOPE</h2>
+        </div>
+        <button type="button" id="lpRadarScopeClose" class="lp-radar-close">离开</button>
+      </header>
+      <div class="lp-radar-bezel">
+        <div class="lp-radar-scope-row">
+          <canvas id="lpRadarScopeCanvas" width="560" height="560" aria-label="PPI 雷达画面"></canvas>
+          <div class="lp-radar-gear" aria-label="量程档位">
+            <div class="lp-radar-gear-head">
+              <span class="lp-radar-gear-title">量程档</span>
+              <span class="lp-radar-gear-cap">远↑ 近↓</span>
+            </div>
+            <div class="lp-radar-gear-stage">
+              <div id="lpRadarRangeNotches" class="lp-radar-gear-notches" role="listbox" aria-label="量程档位刻度"></div>
+              <div
+                id="lpRadarRangeTrack"
+                class="lp-radar-gear-track"
+                role="slider"
+                tabindex="0"
+                aria-valuemin="1200"
+                aria-valuemax="12000"
+                aria-valuenow="4800"
+                aria-label="量程档位拉杆"
+              >
+                <span class="lp-radar-gear-slot"></span>
+                <span id="lpRadarRangeKnob" class="lp-radar-gear-knob"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="lp-radar-readouts">
+          <span id="lpRadarModeReadout">接触 — · PPI</span>
+          <div class="lp-radar-range-row">
+            <span id="lpRadarRangeReadout">量程 —</span>
+            <div class="lp-radar-range-btns" aria-label="量程调节">
+              <button type="button" id="lpRadarRangeFar" class="lp-radar-range-btn" aria-label="量程更远">远</button>
+              <button type="button" id="lpRadarRangeNear" class="lp-radar-range-btn" aria-label="量程更近">近</button>
+            </div>
+          </div>
+        </div>
+        <div class="lp-radar-aim-wrap">
+          <div
+            id="lpRadarAimStick"
+            class="lp-radar-aim-stick"
+            role="slider"
+            aria-label="锁定雷达瞄准"
+          >
+            <span id="lpRadarAimKnob" class="lp-radar-aim-knob"></span>
+          </div>
+          <span class="lp-radar-aim-label">LOCK</span>
+        </div>
+      </div>
+      <p class="lp-radar-hint lp-desktop-only">鼠标/摇杆转锁定扇区 · 滚轮或档位拉杆调量程 · 本列车厢与铁轨 · F / Esc 离开</p>
+      <p class="lp-radar-hint lp-mobile-only">摇杆转锁定扇区 · 拉杆档位 / 双指缩放 /「远近」调量程 · 点离开退出</p>
+    </div>
+  </div>
+
+  <div id="lpAutoConsoleRoot" class="lp-auto-console-root" hidden aria-hidden="true">
+    <div class="lp-auto-backdrop"></div>
+    <div class="lp-auto-shell" role="dialog" aria-modal="true" aria-label="枢机自动化控制台">
+      <header class="lp-auto-header">
+        <div>
+          <p class="lp-auto-eyebrow">枢机车厢 · 自动化</p>
+          <h2 class="lp-auto-title">列车编程</h2>
+        </div>
+        <div class="lp-auto-header-actions">
+          <button type="button" id="lpAutoCopyClipboard" class="lp-auto-btn ghost">复制到剪贴板</button>
+          <button type="button" id="lpAutoImportClipboard" class="lp-auto-btn ghost">从剪贴板导入</button>
+          <button type="button" id="lpAutoConsoleClose" class="lp-auto-btn danger">离开</button>
+        </div>
+      </header>
+
+      <div id="lpAutoUndoBanner" class="lp-auto-undo-banner" hidden role="status" aria-live="polite">
+        <span class="lp-auto-undo-banner-text">已覆盖导入整份程序</span>
+        <button type="button" data-act="undo-import" class="lp-auto-btn primary">撤销导入</button>
+        <button type="button" data-act="dismiss-undo" class="lp-auto-btn ghost" title="关闭">×</button>
+      </div>
+
+      <section class="lp-auto-train-wrap" aria-label="列车编组（可横向滚动）">
+        <div id="lpAutoTrainStrip" class="lp-auto-train-strip"></div>
+      </section>
+
+      <div class="lp-auto-main">
+        <aside class="lp-auto-side">
+          <h3>玩家参数</h3>
+          <div id="lpAutoVarsBox" class="lp-auto-vars"></div>
+          <p class="lp-auto-side-hint">持续判定：段内越靠上优先级越高。瞬时触发：顺序仅美观，无优先级。持续≈每帧；瞬时≈边沿一次。</p>
+        </aside>
+        <section class="lp-auto-editor">
+          <div class="lp-auto-editor-head">
+            <h3 id="lpAutoCarTitle">选择车厢</h3>
+            <button type="button" id="lpAutoAddRule" class="lp-auto-btn primary">添加规则</button>
+          </div>
+          <div id="lpAutoRulesList" class="lp-auto-rules"></div>
+        </section>
+      </div>
+
+      <div id="lpAutoWizard" class="lp-auto-wizard" hidden>
+        <div class="lp-auto-wizard-card">
+          <div class="lp-auto-wizard-top">
+            <h4 data-role="title">步骤</h4>
+            <div data-role="steps" class="lp-auto-steps"></div>
+          </div>
+          <div data-role="body" class="lp-auto-wizard-body"></div>
+          <footer class="lp-auto-wizard-foot">
+            <button type="button" data-act="cancel" class="lp-auto-btn ghost">取消</button>
+            <button type="button" data-act="prev" class="lp-auto-btn">上一步</button>
+            <button type="button" data-act="next" class="lp-auto-btn primary">下一步 / 完成</button>
+          </footer>
+        </div>
+      </div>
+
+      <div id="lpAutoPasteDialog" class="lp-auto-paste-dialog" hidden>
+        <div class="lp-auto-paste-card" role="dialog" aria-modal="true" aria-label="粘贴导入程序">
+          <h4>从文本导入</h4>
+          <p class="lp-auto-side-hint">粘贴 JSON：整份程序（kind=liminal-auto-program）会覆盖全部变量与规则，可随后撤销；单条规则（kind=liminal-auto-rule）只追加到当前车厢对应段。</p>
+          <textarea id="lpAutoPasteText" class="lp-auto-paste-text" rows="12" spellcheck="false" placeholder='{"kind":"liminal-auto-program"|"liminal-auto-rule", ...}'></textarea>
+          <p id="lpAutoPasteError" class="lp-auto-paste-error" aria-live="polite"></p>
+          <footer class="lp-auto-wizard-foot">
+            <button type="button" data-act="paste-cancel" class="lp-auto-btn ghost">取消</button>
+            <button type="button" data-act="paste-import" class="lp-auto-btn primary">导入</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
-  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=10"></script>
+  <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=15"></script>
   <script src="/static/games/avatar-lobby/js/avatar-skin-cache.js?v=1"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=23"></script>
-  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=14"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=28"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=12"></script>
-  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=11"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=9"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=16"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=29"></script>
+  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=15"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=48"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=16"></script>
+  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=21"></script>
   <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-net.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=25"></script>
-  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=30"></script>
+  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=6"></script>
   <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=9"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=5"></script>
   <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=15"></script>
-  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=9"></script>
-  <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=14"></script>
+  <script src="/static/games/liminal-platform/js/lp-hold-pose-debug.js?v=6"></script>
+  <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=6"></script>
   <script src="/static/games/liminal-platform/js/lp-impact-fx.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-combat.js?v=25"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=31"></script>
+  <script src="/static/games/liminal-platform/js/lp-combat.js?v=29"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=48"></script>
   <script src="/static/games/liminal-platform/js/lp-sfx.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=4"></script>
-  <script src="/static/games/liminal-platform/js/lp-whistle-audio.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/lp-whistle-audio.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=11"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-minimap.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=13"></script>
+  <script src="/static/games/liminal-platform/js/lp-carriage-bob.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-minimap.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-map.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=16"></script>
+  <script src="/static/games/liminal-platform/js/lp-radar-scope.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-program-catalog.js?v=8"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-program.js?v=7"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-sensors.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-console.js?v=10"></script>
   <script src="/static/games/liminal-platform/js/lp-network.js?v=5"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-session.js?v=7"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=46"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/lp-fullscreen.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=57"></script>
 </body>
 </html>

@@ -84,12 +84,48 @@
       listEl.appendChild(item);
     });
 
-    syncActive(activeId);
+    /* DOM 换新后需重上高亮；强制居中以免左端车厢被裁切。 */
+    syncActive(activeId, { forceCenter: true });
   }
 
-  /** 高亮玩家所在车厢。 */
-  function syncActive(carId) {
+  let centerRaf = 0;
+
+  /** 将指定车厢图标滚到编组条可视区水平中心。 */
+  function scrollCarIntoCenter(carId) {
+    if (!carId) return;
+    const node = listEl.querySelector(
+      `.lp-train-minimap-car[data-car-id="${CSS.escape(String(carId))}"]`,
+    );
+    if (!node) return;
+    const listRect = listEl.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    if (listRect.width <= 0) return;
+    const delta =
+      nodeRect.left + nodeRect.width / 2 - (listRect.left + listRect.width / 2);
+    const maxScroll = Math.max(0, listEl.scrollWidth - listEl.clientWidth);
+    const nextLeft = Math.min(maxScroll, Math.max(0, listEl.scrollLeft + delta));
+    if (Math.abs(nextLeft - listEl.scrollLeft) < 1) return;
+    listEl.scrollTo({ left: nextLeft, behavior: 'smooth' });
+  }
+
+  /** 下一帧再居中，避开重建后尚未完成的布局。 */
+  function scheduleCenterActive() {
+    if (!activeId) return;
+    cancelAnimationFrame(centerRaf);
+    centerRaf = requestAnimationFrame(() => {
+      centerRaf = 0;
+      scrollCarIntoCenter(activeId);
+    });
+  }
+
+  /**
+   * 高亮玩家所在车厢；车厢切换时横向滚到该图标居中。
+   * @param {string|null|undefined} carId
+   * @param {{ forceCenter?: boolean }} [opts]
+   */
+  function syncActive(carId, opts) {
     const next = carId || null;
+    const changed = next !== activeId;
     activeId = next;
     listEl.querySelectorAll('.lp-train-minimap-car').forEach((node) => {
       const on = node.dataset.carId === next;
@@ -102,9 +138,10 @@
         ? Spec.mapEntryFor?.(entry)?.shortLabel || entry.label
         : '连廊';
     }
+    if (changed || opts?.forceCenter) scheduleCenterActive();
   }
 
-  /** 按世界 X 更新所在车厢高亮。 */
+  /** 按世界 X 更新所在车厢高亮（每帧调用；仅换厢时滚动）。 */
   function syncFromWorldX(worldX) {
     rebuild();
     const car = Spec?.carriageAt?.(worldX);
@@ -115,15 +152,35 @@
   function refresh() {
     builtKey = '';
     rebuild();
+    syncActive(activeId, { forceCenter: true });
   }
 
+  /**
+   * 桌面端：指针在编组条上时，将滚轮纵向位移映射为横向 scrollLeft。
+   * 有可滚余量时 preventDefault，避免带动页面滚动；触控横滑与点击开图不受影响。
+   */
+  function onCarsWheel(event) {
+    const maxScroll = Math.max(0, listEl.scrollWidth - listEl.clientWidth);
+    if (maxScroll <= 0) return;
+    const delta = event.deltaX !== 0 ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+    const next = Math.min(maxScroll, Math.max(0, listEl.scrollLeft + delta));
+    if (next === listEl.scrollLeft) return;
+    event.preventDefault();
+    listEl.scrollLeft = next;
+  }
+
+  root.addEventListener('wheel', onCarsWheel, { passive: false });
+
   rebuild();
+  syncActive(activeId, { forceCenter: true });
 
   window.LpTrainMinimap = {
     rebuild,
     refresh,
     syncActive,
     syncFromWorldX,
+    scrollCarIntoCenter,
     registerKind,
     getActiveId: () => activeId,
   };

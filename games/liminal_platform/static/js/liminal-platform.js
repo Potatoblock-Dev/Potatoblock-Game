@@ -55,6 +55,7 @@
   const LOOK_WEIGHT_Y = 0.36;
   const CAM_SMOOTH = 9;
   const crosshairEl = document.getElementById('lpCrosshair');
+  const crosshairAltEl = document.getElementById('lpCrosshairAlt');
 
   const coarsePointer = window.matchMedia('(hover: none), (pointer: coarse)');
 
@@ -83,13 +84,16 @@
     return label.split(' / ')[0];
   }
 
-  /** 是否有全屏 UI（物品栏 / 锅炉控制台 / 加燃料 / 弹药箱）。 */
+  /** 是否有全屏 UI（物品栏 / 列车地图 / 锅炉 / 加燃料 / 弹药箱 / 雷达 / 枢机）。 */
   function isUiOpen() {
     return (
       (window.LpInventory?.isOpen() ?? false) ||
+      (window.LpTrainMap?.isOpen() ?? false) ||
       (window.LpBoilerPanel?.isOpen() ?? false) ||
       (window.LpFuelFeed?.isOpen() ?? false) ||
-      (window.LpGuardCrateUi?.isOpen() ?? false)
+      (window.LpGuardCrateUi?.isOpen() ?? false) ||
+      (window.LpRadarScope?.isOpen() ?? false) ||
+      (window.LpAutoConsole?.isOpen() ?? false)
     );
   }
 
@@ -110,10 +114,11 @@
 
   let desktopFireHeld = false;
 
-  /** 同步准星显示与系统光标。 */
+  /** 同步准星显示与系统光标（双联时另跟对角线 2 号准星）。 */
   function syncAimCursor() {
     const aim = isAimCameraMode() && pointer.known;
     const turret = window.LpGuardTurret?.isManned?.() ?? false;
+    const dual = Boolean(turret && window.LpGuardTurret?.isSoloDual?.());
     document.body.classList.toggle('lp-aim-mode', !isCoarsePointer() && !isUiOpen());
     document.body.classList.toggle('lp-turret-mode', turret);
     if (!crosshairEl) return;
@@ -121,6 +126,13 @@
     if (aim) {
       crosshairEl.style.transform = `translate(${pointer.x}px, ${pointer.y}px)`;
       window.LpCombat?.syncCrosshairBloom?.();
+    }
+    if (crosshairAltEl) {
+      const showAlt = aim && dual;
+      crosshairAltEl.hidden = !showAlt;
+      if (showAlt) {
+        crosshairAltEl.style.transform = `translate(${pointer.x}px, ${pointer.y}px)`;
+      }
     }
   }
 
@@ -183,9 +195,13 @@
     return { x: local.x + facing * 160, y: avatar.y - 56 };
   }
 
-  /** 持枪/换弹用瞄准点（换弹时抬枪露顶匣）。 */
+  /** 持枪/换弹用瞄准点（换弹时抬枪露顶匣；调试面板可锁定瞄准角）。 */
   function getWeaponAimWorld() {
-    return window.LpReloadAction?.getAimOverride?.(avatar) || getAimWorld();
+    return (
+      window.LpHoldPoseDebug?.getAimWorld?.(avatar)
+      || window.LpReloadAction?.getAimOverride?.(avatar)
+      || getAimWorld()
+    );
   }
 
   /** 枪口世界坐标（持枪时沿瞄准方向；否则胸部占位）。 */
@@ -639,11 +655,21 @@
     window.LpTouchControls?.setStorageHint?.(inStorage);
   }
 
-  /** 绘制单节车厢（世界坐标）。 */
-  function drawCarriage(car) {
+  /**
+   * 绘制单节车厢贴图（世界坐标）。
+   * 颠簸仅经 LpCarriageBob 作用于本贴图；地板/碰撞/交互坐标不变。
+   */
+  function drawCarriage(car, carIndex) {
     const img = carImages.get(car.id);
     if (!img) return;
-    ctx.drawImage(img, car.worldX, 0, Spec.MODULE_W, Spec.MODULE_H);
+    const paint = () => {
+      ctx.drawImage(img, car.worldX, 0, Spec.MODULE_W, Spec.MODULE_H);
+    };
+    if (window.LpCarriageBob?.withCarDraw) {
+      window.LpCarriageBob.withCarDraw(ctx, car, carIndex, paint);
+    } else {
+      paint();
+    }
   }
 
   /** 单帧渲染。 */
@@ -663,20 +689,24 @@
       view.offsetX * dpr, view.offsetY * dpr
     );
 
-    /* 炮管在车厢贴图之下，白球/车身挡住炮尾 */
+    /* 炮管在车厢贴图之下，白球/车身挡住炮尾；火光/抛壳在贴图之上以免被甲板盖住 */
     window.LpGuardTurret?.draw?.(ctx);
-    for (const car of Spec.CARRIAGES) drawCarriage(car);
+    Spec.CARRIAGES.forEach((car, i) => drawCarriage(car, i));
+    window.LpGuardTurret?.drawFx?.(ctx);
     window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
     const heldItem = window.LpCombat?.getHeldWeaponItem?.();
-    const holdingGun = Boolean(heldItem) && !window.LpGuardTurret?.isManned?.();
-    /* 持枪层序：身/腿 → 后臂(扳机握把) → 枪 → 换弹匣 → 前臂(护木) */
-    Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipFrontArm: true, skipBackArm: true } : {});
+    /* 控制台/面板打开时仅隐藏持枪绘制与持枪层序，不卸装备；离席后自然恢复 */
+    const holdingGun =
+      Boolean(heldItem) &&
+      !window.LpGuardTurret?.isManned?.() &&
+      !isUiOpen();
+    /* 持枪层序（远→近）：后腿→前臂(橙/护木)→身→前腿→头→枪→换弹匣→后臂(红/握把) */
+    Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipBackArm: true } : {});
     if (holdingGun) {
       const weaponAim = getWeaponAimWorld();
-      Entity.drawBackArm?.(ctx, avatar);
       window.LpWeaponHold?.drawHeldWeapon?.(ctx, avatar, weaponAim, heldItem);
       window.LpReloadAction?.draw?.(ctx, avatar, weaponAim);
-      Entity.drawFrontArm?.(ctx, avatar);
+      Entity.drawBackArm?.(ctx, avatar);
     }
     window.LpGroundLoot?.draw?.(ctx);
     window.LpCombat?.draw(ctx);
@@ -699,6 +729,7 @@
     stepPhysics(dt);
     window.LiminalSession?.tickRemotes?.(dt, remoteStageY);
     window.LpTrainDrive?.tick(dt);
+    window.LpCarriageBob?.tick?.(dt);
     window.LpCombat?.tick(dt, {
       floorY: Spec.FLOOR_Y,
       moveSpeed: local.vx,
@@ -706,12 +737,14 @@
     window.LpImpactFx?.tick?.(dt);
     window.LpReloadAction?.tick?.(dt);
     window.LpGuardTurret?.tick?.(dt);
+    window.LpAutoSensors?.tick?.(dt);
     stepCamera(dt);
     syncAimCursor();
     updateLocalHeadLook(dt);
     window.LpBoilerPanel?.syncFromState?.();
     window.LpTrainAudio?.tick(dt);
     window.LpTrainMinimap?.syncFromWorldX?.(local.x);
+    window.LpTrainMap?.syncFromWorldX?.(local.x);
     drawFrame();
     requestAnimationFrame(frame);
   }
@@ -761,8 +794,12 @@
     window.addEventListener('keydown', unlockOnce);
   }
 
-  /** 关闭燃料/驾驶台/弹药箱操作台；若有关闭则返回 true。 */
+  /** 关闭燃料/驾驶台/弹药箱/雷达/列车地图等操作台；若有关闭则返回 true。 */
   function closeConsoleUi() {
+    if (window.LpTrainMap?.isOpen()) {
+      window.LpTrainMap.close();
+      return true;
+    }
     if (window.LpFuelFeed?.isOpen()) {
       window.LpFuelFeed.close();
       return true;
@@ -775,6 +812,14 @@
       window.LpBoilerPanel.close();
       return true;
     }
+    if (window.LpRadarScope?.isOpen()) {
+      window.LpRadarScope.close();
+      return true;
+    }
+    if (window.LpAutoConsole?.isOpen()) {
+      window.LpAutoConsole.close();
+      return true;
+    }
     return false;
   }
 
@@ -784,10 +829,30 @@
 
     if (window.LpInputBindings?.matchesKeyEvent('inventory', event)) {
       event.preventDefault();
+      if (window.LpTrainMap?.isOpen()) window.LpTrainMap.close();
       if (window.LpBoilerPanel?.isOpen()) window.LpBoilerPanel.close();
       if (window.LpFuelFeed?.isOpen()) window.LpFuelFeed.close();
       if (window.LpGuardCrateUi?.isOpen()) window.LpGuardCrateUi.close();
+      if (window.LpRadarScope?.isOpen()) window.LpRadarScope.close();
+      if (window.LpAutoConsole?.isOpen()) window.LpAutoConsole.close();
       window.LpInventory?.toggle(local.x);
+      return;
+    }
+
+    /* 列车地图：可与其它操作台互关；不与物品栏抢 Tab */
+    if (window.LpInputBindings?.matchesKeyEvent('trainMap', event)) {
+      event.preventDefault();
+      if (window.LpInventory?.isOpen()) return;
+      if (window.LpTrainMap?.isOpen()) {
+        window.LpTrainMap.close();
+        return;
+      }
+      if (window.LpBoilerPanel?.isOpen()) window.LpBoilerPanel.close();
+      if (window.LpFuelFeed?.isOpen()) window.LpFuelFeed.close();
+      if (window.LpGuardCrateUi?.isOpen()) window.LpGuardCrateUi.close();
+      if (window.LpRadarScope?.isOpen()) window.LpRadarScope.close();
+      if (window.LpAutoConsole?.isOpen()) window.LpAutoConsole.close();
+      window.LpTrainMap?.open?.(local.x);
       return;
     }
 
@@ -796,9 +861,10 @@
         if (!closeConsoleUi()) window.LpInventory?.close();
         return;
       }
-      // 操作台离席与交互键一致（默认 F）
+      // 操作台离席与交互键一致（默认 F）；地图仅 Esc / M / 点空白关闭
       if (
         window.LpInputBindings?.matchesKeyEvent('interact', event) &&
+        !window.LpTrainMap?.isOpen() &&
         closeConsoleUi()
       ) {
         event.preventDefault();
@@ -875,6 +941,8 @@
   window.LiminalSession?.start?.({ userId, nickname });
   window.LpGame = {
     getLocalAvatar: () => avatar,
+    /** 全屏 UI（物品栏/锅炉/燃料/弹药箱/雷达/枢机）是否打开；联机上报可据此隐藏持枪。 */
+    isUiOpen,
     /** 令本地角色朝向列车前进方向（屏幕右 / 世界 +X）。 */
     faceTrainForward() {
       const dir = Spec.TRAIN_FORWARD_X >= 0 ? 1 : -1;

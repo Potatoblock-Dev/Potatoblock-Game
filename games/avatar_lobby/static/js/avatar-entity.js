@@ -31,8 +31,10 @@
     return local * AVATAR_DRAW_SCALE * entity.heightScale * (1 - entity.squash);
   }
   const DEFAULT_HEIGHT_SCALE = 1.0;
-  const MOVE_SPEED = 260;
-  const RUN_SPEED = 420;
+  /** 步行目标水平速度（px/s）。 */
+  const MOVE_SPEED = 340;
+  /** 奔跑目标水平速度（px/s）。 */
+  const RUN_SPEED = 545;
 
   function createJoints() {
     return {
@@ -91,12 +93,16 @@
     entity[property] += entity[velocityProperty] * dt;
   }
 
+  /**
+   * 按速度推进步态相位与关节弹簧；cadence 随 MOVE/RUN_SPEED 同比放大，避免脚滑。
+   */
   function updateEntityMotion(entity, dt) {
     const gait = entity.gait === 'run' ? 'run' : 'walk';
     const refSpeed = gait === 'run' ? RUN_SPEED : MOVE_SPEED;
     const speedRatio = Math.min(Math.abs(entity.vx) / refSpeed, 1);
     if (speedRatio > 0.03 && entity.onGround) {
-      const cadence = gait === 'run' ? 7.2 + speedRatio * 9.5 : 5 + speedRatio * 7;
+      // 相对旧 260/420 约 ×1.3，保持满速步幅与提速前接近。
+      const cadence = gait === 'run' ? 9.4 + speedRatio * 12.4 : 6.5 + speedRatio * 9.1;
       entity.walkPhase += dt * cadence;
     }
     entity.idlePhase += dt * 1.7;
@@ -245,6 +251,7 @@
     if (showJoints) drawJoint(ctx, x, y);
   }
 
+  /** 绘制肢体/身/头；持枪 skipBackArm 时前臂提前到身下，后臂由外部叠在枪上。 */
   function drawAvatarBody(ctx, entity, atlas, options = {}) {
     const parts = window.UVLayout.resolveParts(atlas);
     const rig = window.UVLayout.RIG || { shoulderX: 14, shoulderY: -14, hipX: 7, hipY: 11 };
@@ -293,6 +300,10 @@
     if (!skipBackArm) {
       drawSegmentedLimb(ctx, style('backArmUpper', '#ef4444'), style('backArmLower', '#ef4444'),
         -rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.backShoulder.angle, joints.backElbow.angle);
+    } else if (!skipFrontArm) {
+      /* 持枪：后臂延后到枪上；前臂（橙/护木）提前到身躯下 */
+      drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
+        rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.frontShoulder.angle, joints.frontElbow.angle);
     }
     drawPartRect(
       ctx,
@@ -304,7 +315,7 @@
     );
     drawSegmentedLimb(ctx, style('frontLegUpper', '#8b5cf6'), style('frontLegLower', '#8b5cf6'),
       rig.hipX, rig.hipY + kneelOffset, frontLegUW, frontLegUL, frontLegLL, joints.frontHip.angle, joints.frontKnee.angle);
-    if (!skipFrontArm) {
+    if (!skipFrontArm && !skipBackArm) {
       drawSegmentedLimb(ctx, style('frontArmUpper', '#f97316'), style('frontArmLower', '#f97316'),
         rig.shoulderX, rig.shoulderY + kneelOffset, armUW, armUL, armLL, joints.frontShoulder.angle, joints.frontElbow.angle);
     }
@@ -357,9 +368,10 @@
   }
 
   /**
+   * 绘制整身；持枪时传 skipBackArm，前臂自动画在身下，后臂由 drawBackArm 叠在枪上。
    * @param {object} [options]
-   * @param {boolean} [options.skipFrontArm] 持枪时跳过前臂，稍后叠在枪上
-   * @param {boolean} [options.skipBackArm] 持枪时跳过后臂，稍后叠在枪下（护木手）
+   * @param {boolean} [options.skipFrontArm] 跳过前臂（与 skipBackArm 同用时可全外部叠臂）
+   * @param {boolean} [options.skipBackArm] 持枪：跳过后臂并提前画前臂（橙在身/头/枪下）
    */
   function drawAvatar(ctx, entity, view, dpr, options = {}) {
     withAvatarTransform(ctx, entity, () => {
@@ -379,7 +391,7 @@
     if (!options.skipNickname) drawNickname(ctx, entity, view, dpr);
   }
 
-  /** 仅绘制后臂（持枪时叠在枪械之下；默认规格下为扳机握把手）。 */
+  /** 仅绘制后臂（红/握把；持枪时叠在枪、身、头之上）。 */
   function drawBackArm(ctx, entity) {
     withAvatarTransform(ctx, entity, () => {
       const atlas = entity.uvAtlas || null;
@@ -388,7 +400,7 @@
     });
   }
 
-  /** 仅绘制前臂（持枪时叠在枪械之上；默认规格下为护木扶枪手）。 */
+  /** 仅绘制前臂（橙/护木；持枪时通常已由 skipBackArm 提前画在身下，少单独调用）。 */
   function drawFrontArm(ctx, entity) {
     withAvatarTransform(ctx, entity, () => {
       const atlas = entity.uvAtlas || null;
@@ -585,7 +597,7 @@
     };
   }
 
-  /** 前臂握枪掌心世界坐标（靠近指节，避免枪锚在掌心导致指尖穿模）。 */
+  /** 前臂掌心世界坐标（默认规格下为护木手；靠近指节）。 */
   function getFrontHandWorld(entity, alongLower = 0.88) {
     const rig = window.UVLayout?.RIG || { shoulderX: 11, shoulderY: -16 };
     const parts = entity.uvAtlas ? window.UVLayout.resolveParts(entity.uvAtlas) : null;
@@ -606,7 +618,7 @@
     return localPointToWorld(entity, palm.x, palm.y);
   }
 
-  /** 后臂手部世界坐标（护木/扶匣）。 */
+  /** 后臂手部世界坐标（默认规格下为扳机握把手）。 */
   function getBackHandWorld(entity, alongLower = 0.88) {
     const rig = window.UVLayout?.RIG || { shoulderX: 11, shoulderY: -16 };
     const parts = entity.uvAtlas ? window.UVLayout.resolveParts(entity.uvAtlas) : null;
@@ -642,15 +654,16 @@
   }
 
   /**
-   * 瞄准局部坐标（相对前肩，已按 facing 折到面向 +X）。
+   * 瞄准局部坐标（相对胸口，已按 facing 折到面向 +X）。
+   * 用胸原点而非前肩，避免近身瞄准时方向抖动；与持枪附着点同源。
    */
   function aimToLocal(entity, aimWorld) {
     const facing = entity.facing >= 0 ? 1 : -1;
-    const shoulder = getFrontShoulderWorld(entity);
+    const chest = localPointToWorld(entity, 0, -11);
     return {
       facing,
-      x: (aimWorld.x - shoulder.x) * facing,
-      y: aimWorld.y - shoulder.y,
+      x: (aimWorld.x - chest.x) * facing,
+      y: aimWorld.y - chest.y,
     };
   }
 
@@ -664,10 +677,13 @@
     const local = aimToLocal(entity, aimWorld);
     const attach = Motion.computeFirearmAttachLocals(local.x, local.y, holdSpec);
     const grip = localPointToWorld(entity, attach.grip.x, attach.grip.y);
+    const forend = localPointToWorld(entity, attach.forend.x, attach.forend.y);
     const angle = Math.atan2(aimWorld.y - grip.y, aimWorld.x - grip.x);
     return {
       gripX: grip.x,
       gripY: grip.y,
+      forendX: forend.x,
+      forendY: forend.y,
       angle,
       facing: local.facing,
       attach,

@@ -1,6 +1,6 @@
 /**
  * 车厢可交互节点规格（与贴图对齐，同一车厢可挂多个）。
- * 动力车：燃烧室 / 引擎控制台；卫兵防御车：炮塔 / 弹药箱 / 回收箱。
+ * 动力车：燃烧室 / 引擎控制台；卫兵防御车：炮塔 / 弹药箱 / 回收箱；绘轨：雷达；枢机：自动化。
  * centerX / promptAnchorY 为贴图像素，构建时经 Spec.scaleArt 进世界。
  */
 (() => {
@@ -31,9 +31,10 @@
     {
       id: 'guard-turret-left',
       carId: 'guard',
+      /** 左站红钮挂板（guard-car 质心）；非穹顶。 */
       label: '左侧炮塔',
-      centerX: 517,
-      promptAnchorY: 780,
+      centerX: 568,
+      promptAnchorY: 870,
       interactRadiusX: 130,
       action: 'enterTurretLeft',
       actionLabel: '进入左侧炮塔',
@@ -41,9 +42,10 @@
     {
       id: 'guard-turret-right',
       carId: 'guard',
+      /** 右站红钮挂板（与左侧对称）。 */
       label: '右侧炮塔',
-      centerX: 1728,
-      promptAnchorY: 780,
+      centerX: 1581,
+      promptAnchorY: 870,
       interactRadiusX: 130,
       action: 'enterTurretRight',
       actionLabel: '进入右侧炮塔',
@@ -67,6 +69,28 @@
       interactRadiusX: 90,
       action: 'guardRecycle',
       actionLabel: '存取弹壳',
+    },
+    {
+      id: 'huigui-radar',
+      carId: 'huigui',
+      label: '绘轨示波器',
+      /** 绿屏质心采样自 huigui-car.png */
+      centerX: 1125,
+      promptAnchorY: 850,
+      interactRadiusX: 150,
+      action: 'openRadarScope',
+      actionLabel: '打开雷达示波器',
+    },
+    {
+      id: 'shuji-console',
+      carId: 'shuji',
+      label: '枢机核心',
+      /** 中央亮核采样自 shuji-car.png */
+      centerX: 1125,
+      promptAnchorY: 840,
+      interactRadiusX: 160,
+      action: 'openAutoConsole',
+      actionLabel: '打开自动化控制台',
     },
   ];
 

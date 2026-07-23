@@ -85,7 +85,7 @@
     label.textContent = LABELS[index];
     label.hidden = !LABELS[index];
     if (!stack) {
-      icon.classList.remove('has-image');
+      icon.classList.remove('has-image', 'is-rotated');
       icon.style.removeProperty('--lp-item-icon');
       icon.style.backgroundImage = '';
       icon.textContent = '';
@@ -107,6 +107,7 @@
       icon.style.backgroundImage = '';
       icon.textContent = item.short;
     }
+    icon.classList.toggle('is-rotated', Number(stack.rot) === 90);
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
     } else {
@@ -117,11 +118,15 @@
   /** 刷新三槽。 */
   function render() {
     const hands = window.LpInventory?.getHandsInventory?.();
+    /* 全屏面板 / 入座机炮时隐藏，避免挡住左下移动摇杆拇指区 */
     const uiOpen =
       document.body.classList.contains('lp-inventory-open') ||
       document.body.classList.contains('lp-fuel-feed-open') ||
       document.body.classList.contains('lp-crate-feed-open') ||
-      document.body.classList.contains('lp-boiler-panel-open');
+      document.body.classList.contains('lp-boiler-panel-open') ||
+      document.body.classList.contains('lp-radar-panel-open') ||
+      document.body.classList.contains('lp-auto-console-open') ||
+      document.body.classList.contains('lp-turret-mode');
     root.hidden = !visible || uiOpen;
     root.setAttribute('aria-hidden', root.hidden ? 'true' : 'false');
     for (let i = 0; i < 3; i += 1) {

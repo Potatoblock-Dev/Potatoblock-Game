@@ -31,7 +31,7 @@
       type: 'fuel',
       /** 投入锅炉时每单位提供的燃料值；未来其它燃料同样声明此字段即可。 */
       boilerFuel: 18,
-      use: '投入锅炉燃烧，为列车提供动力。',
+      use: '从古至今，煤炭都是最要紧的能源之一——丢进锅炉，列车才肯往前走。',
       color: '#1f2937',
       accent: '#475569',
       maxStack: 100,
@@ -55,10 +55,10 @@
     },
     iron_ingot: {
       id: 'iron_ingot',
-      name: '铁锭',
+      name: '铁板',
       short: '铁',
       type: 'metal',
-      use: '锻造与加固用金属，可加工为零件。',
+      use: '压扁的铁板，厚实可靠——加固车厢、锻造零件都靠它。',
       color: '#475569',
       accent: '#94a3b8',
       maxStack: 50,
@@ -71,20 +71,21 @@
       name: '废料',
       short: '废',
       type: 'material',
-      use: '回收残骸，可拆解或熔炼再利用。',
+      use: '各种材料糅合在一起——也许会有人愿意回收它们。',
       color: '#334155',
       accent: '#64748b',
       maxStack: 50,
       w: 1,
       h: 1,
       canHoldInHand: true,
+      icon: '/static/games/liminal-platform/img/items/scrap-icon.png?v=1',
     },
     wrench: {
       id: 'wrench',
       name: '扳手',
       short: '扳',
       type: 'tool',
-      use: '检修车钩与锅炉管道的基础工具。',
+      use: '用于日常检修设备——不过真正的工程师，可不会只用它来修东西。',
       color: '#854d0e',
       accent: '#ca8a04',
       maxStack: 1,
@@ -94,36 +95,38 @@
     },
     turret_ammo: {
       id: 'turret_ammo',
-      name: '机炮子弹',
+      name: '机炮弹药',
       short: '弹',
       type: 'ammo',
-      use: '卫兵防御车厢双联机炮用弹，放入中间绿色弹药箱后开火消耗。',
+      use: '通用的机炮弹药，这种规格的弹药刚好足够把敌人撕碎。',
       color: '#14532d',
       accent: '#4ade80',
       maxStack: 100,
       w: 1,
-      h: 1,
+      h: 2,
       canHoldInHand: true,
+      icon: '/static/games/liminal-platform/img/items/turret-ammo-icon.png?v=1',
     },
     shell_casing: {
       id: 'shell_casing',
-      name: '弹壳',
+      name: '机炮弹壳',
       short: '壳',
       type: 'material',
-      use: '炮塔射击后的废壳，可从黄色回收箱取出再利用。',
+      use: '机炮开火后回收的弹壳，可以回收利用成新的弹药',
       color: '#a16207',
       accent: '#facc15',
       maxStack: 100,
       w: 1,
-      h: 1,
+      h: 2,
       canHoldInHand: true,
+      icon: '/static/games/liminal-platform/img/items/turret-casing-icon.png?v=1',
     },
     small_caliber_ammo: {
       id: 'small_caliber_ammo',
       name: '小口径子弹',
       short: '9mm',
       type: 'ammo',
-      use: '手枪与冲锋枪通用的小口径弹药，用于装填 GUR-65 等武器。',
+      use: '用于冲锋枪和手枪的弹药，威力勉强够用。主要用于GUR-65等武器上。',
       color: '#713f12',
       accent: '#fbbf24',
       maxStack: 90,
@@ -144,7 +147,7 @@
        */
       weaponClass: 'machine_gun',
       fullAuto: true,
-      use: '顶部供弹冲锋枪。弹匣 27 发，长按连发；后坐中等，移动时加剧。按 R 装填小口径子弹。',
+      use: '制式武器，采用 6.5mm 弹药与顶部供弹，小巧轻便——对刚登上列车的新人来说，性能再合适不过。',
       color: '#1f2937',
       accent: '#9ca3af',
       maxStack: 1,
@@ -157,20 +160,33 @@
       muzzleLength: 56,
       muzzleOffsetY: -4,
       ejectLocal: { x: 16, y: -11 },
-      /* 手持放大约 +36%（相对躯干更像冲锋枪） */
+      /* 手持放大约 +36%（相对躯干更像冲锋枪）；holdPose 由 ?debugHold=1 调参写回 */
       holdDrawW: 76,
-      holdDrawH: 32,
-      holdPivotX: 11,
+      holdDrawH: 30,
+      holdPivotX: 37,
       holdPivotY: 20,
-      /** 可复用持握规格：后臂握把、前臂护木、胸高 */
+      /** 双附着：握把 back/红（胸口布局）+ 护木 front/橙（相对握把沿枪管） */
       holdPose: {
-        chestX: 4,
+        chestX: -11.5,
         chestY: -12,
-        gripAlong: 3,
-        forendAlong: 22,
-        forendBelow: 3,
+        gripAlong: 25.5,
+        gripBelow: 3.5,
+        gunForendX: 19,
+        gunForendY: 2,
+        forendAlong: 16,
+        forendBelow: 6,
         gripLimb: 'back',
         forendLimb: 'front',
+        gripElbowSign: -1,
+        forendElbowSign: -1,
+        shoulderX: 11,
+        shoulderY: -13,
+        upperLen: 13,
+        lowerLen: 16.5,
+        shoulderMin: -2.9,
+        shoulderMax: 1.85,
+        elbowMin: -2.75,
+        elbowMax: 2.75,
       },
       magazineSize: 27,
       ammoId: 'small_caliber_ammo',
@@ -357,7 +373,7 @@
     return item.weaponClass === 'machine_gun';
   }
 
-  /** 测试阶段：燃料/弹药用后自动补满。正式上线前改为 false。 */
+  /** 测试阶段：燃料/弹药堆与仓储种子物资自动补满；炮塔箱同。不含手持弹匣。TEST_ONLY — remove after playtest。 */
   const TEST_AUTO_REFILL_CONSUMABLES = true;
 
   function isConsumableItem(itemOrId) {
@@ -370,6 +386,28 @@
     const item = getItem(itemId);
     if (!item || !isWeapon(itemId)) return null;
     return item.weaponId || item.id;
+  }
+
+  /**
+   * 弹药类型判定（catalog type === 'ammo'）。
+   * @param {string|object|null|undefined} itemOrId
+   */
+  function isAmmo(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && item.type === 'ammo');
+  }
+
+  /**
+   * 武器是否接受该弹药：须有 magazineSize，且 ammoId 与弹药 id 一致。
+   * 机炮弹等无 ammoId 武器返回 false（不走背包拖装填）。
+   */
+  function weaponAcceptsAmmo(weaponItemOrId, ammoItemId) {
+    const weapon =
+      typeof weaponItemOrId === 'string' ? getItem(weaponItemOrId) : weaponItemOrId;
+    if (!weapon || !ammoItemId) return false;
+    if (!isWeapon(weapon.id || weaponItemOrId)) return false;
+    if (weapon.magazineSize == null || !weapon.ammoId) return false;
+    return weapon.ammoId === ammoItemId;
   }
 
   window.LpItemCatalog = {
@@ -388,7 +426,9 @@
     getBoilerFuelValue,
     listBoilerFuels,
     isWeapon,
+    isAmmo,
     isFullAuto,
     getWeaponId,
+    weaponAcceptsAmmo,
   };
 })();

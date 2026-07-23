@@ -24,7 +24,24 @@
     return Array.from({ length: size }, () => null);
   }
 
-  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹）。 */
+  /** 读取堆叠朝向：仅 0° 与顺时针 90° 两态。 */
+  function stackRot(stack) {
+    return stack && Number(stack.rot) === 90 ? 90 : 0;
+  }
+
+  /** 按朝向返回占格宽高（90° 时交换 w/h）。 */
+  function orientedSize(itemId, rot = 0) {
+    const base = Catalog.getItemSize(itemId);
+    if (Number(rot) === 90) return { w: base.h, h: base.w };
+    return { w: base.w, h: base.h };
+  }
+
+  /** 在 0° / 90° 之间切换朝向。 */
+  function toggledRot(rot) {
+    return Number(rot) === 90 ? 0 : 90;
+  }
+
+  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；保留 rot）。 */
   function normalizeStack(stack) {
     if (!stack?.itemId || !stack.qty) return null;
     if (stack.occupiedBy != null) return null;
@@ -36,6 +53,7 @@
       const magRaw = stack.mag != null ? Number(stack.mag) : item.magazineSize;
       out.mag = Math.max(0, Math.min(item.magazineSize, Math.floor(magRaw)));
     }
+    if (stackRot(stack) === 90) out.rot = 90;
     return out;
   }
 
@@ -71,24 +89,24 @@
       return this.slots.length;
     }
 
-    /** 该库存中物品占用的宽高。 */
-    sizeFor(itemId) {
+    /** 该库存中物品占用的宽高（可按 rot 交换）。 */
+    sizeFor(itemId, rot = 0) {
       if (this.ignoreItemSize) return { w: 1, h: 1 };
-      return Catalog.getItemSize(itemId);
+      return orientedSize(itemId, rot);
     }
 
-    /** 是否允许放入此库存；装备栏需指定槽位下标。 */
+    /** 是否允许放入此库存；装备栏需指定槽位下标。手部 0/1 仅武器，快捷槽禁止武器。 */
     acceptsItem(itemId, index = null) {
       if (!Catalog.getItem(itemId)) return false;
       if (this.id === 'hands') {
         if (!Catalog.canHoldInHand(itemId)) return false;
-        if (
-          index === HANDS_UTILITY_INDEX &&
-          Catalog.isWeapon?.(itemId)
-        ) {
-          return false;
+        const isWeapon = Boolean(Catalog.isWeapon?.(itemId));
+        if (index == null) {
+          // 未指定槽：武器可进 0/1，其它可进快捷槽；具体格由 canPlaceAt 判定。
+          return true;
         }
-        return true;
+        if (index === HANDS_UTILITY_INDEX) return !isWeapon;
+        return isWeapon;
       }
       if (this.slotKeys) {
         if (index == null) {
@@ -116,9 +134,9 @@
       };
     }
 
-    /** 以 origin 为左上角，物品覆盖的全部下标。 */
-    footprint(origin, itemId) {
-      const { w, h } = this.sizeFor(itemId);
+    /** 以 origin 为左上角，物品覆盖的全部下标（rot 影响足迹）。 */
+    footprint(origin, itemId, rot = 0) {
+      const { w, h } = this.sizeFor(itemId, rot);
       const { col, row } = this.coordsOf(origin);
       const cells = [];
       for (let dy = 0; dy < h; dy += 1) {
@@ -170,13 +188,13 @@
     spanAt(index) {
       const stack = this.getSlot(index);
       if (!stack || this.originIndex(index) !== index) return { w: 1, h: 1 };
-      return this.sizeFor(stack.itemId);
+      return this.sizeFor(stack.itemId, stackRot(stack));
     }
 
-    /** 检查能否以 origin 放置（可忽略某原点占用的格）。 */
-    canPlaceAt(origin, itemId, ignoreOrigin = -1) {
+    /** 检查能否以 origin 放置（可忽略某原点占用的格；rot 影响足迹）。 */
+    canPlaceAt(origin, itemId, ignoreOrigin = -1, rot = 0) {
       if (!this.acceptsItem(itemId, origin)) return false;
-      const cells = this.footprint(origin, itemId);
+      const cells = this.footprint(origin, itemId, rot);
       if (!cells) return false;
       for (const idx of cells) {
         const raw = this.slots[idx];
@@ -195,7 +213,7 @@
         this.slots[origin] = null;
         return;
       }
-      const cells = this.footprint(origin, raw.itemId) || [origin];
+      const cells = this.footprint(origin, raw.itemId, stackRot(raw)) || [origin];
       for (const idx of cells) this.slots[idx] = null;
     }
 
@@ -203,17 +221,34 @@
     placeStack(origin, stack, ignoreOrigin = -1) {
       const normalized = normalizeStack(stack);
       if (!normalized) return false;
-      if (!this.canPlaceAt(origin, normalized.itemId, ignoreOrigin)) return false;
+      if (!this.canPlaceAt(origin, normalized.itemId, ignoreOrigin, stackRot(normalized))) {
+        return false;
+      }
       if (ignoreOrigin >= 0) this.clearFootprint(ignoreOrigin);
       else this.clearFootprint(origin);
 
-      const cells = this.footprint(origin, normalized.itemId);
+      const cells = this.footprint(origin, normalized.itemId, stackRot(normalized));
       this.slots[origin] = normalized;
       for (const idx of cells) {
         if (idx === origin) continue;
         this.slots[idx] = { occupiedBy: origin };
       }
       return true;
+    }
+
+    /**
+     * 切换原点堆叠朝向（0↔90）；新足迹放不下则拒绝并保持原状。
+     * @returns {boolean} 是否已旋转
+     */
+    toggleRotation(origin) {
+      const stack = this.getSlot(origin);
+      if (!stack || this.originIndex(origin) !== origin) return false;
+      const nextRot = toggledRot(stackRot(stack));
+      if (!this.canPlaceAt(origin, stack.itemId, origin, nextRot)) return false;
+      const next = { ...stack, rot: nextRot };
+      if (nextRot === 0) delete next.rot;
+      this.clearFootprint(origin);
+      return this.placeStack(origin, next);
     }
 
     /** 写入槽位（单格兼容 API；多格物品需空足足迹）。 */
@@ -242,12 +277,12 @@
       const stackB = this.getSlot(ob);
       this.clearFootprint(oa);
       this.clearFootprint(ob);
-      if (stackB && !this.canPlaceAt(oa, stackB.itemId)) {
+      if (stackB && !this.canPlaceAt(oa, stackB.itemId, -1, stackRot(stackB))) {
         if (stackA) this.placeStack(oa, stackA);
         if (stackB) this.placeStack(ob, stackB);
         return;
       }
-      if (stackA && !this.canPlaceAt(ob, stackA.itemId)) {
+      if (stackA && !this.canPlaceAt(ob, stackA.itemId, -1, stackRot(stackA))) {
         if (stackA) this.placeStack(oa, stackA);
         if (stackB) this.placeStack(ob, stackB);
         return;
@@ -256,10 +291,10 @@
       if (stackA) this.placeStack(ob, stackA);
     }
 
-    /** 寻找可放置 origin。 */
-    findPlaceIndex(itemId) {
+    /** 寻找可放置 origin（可指定朝向）。 */
+    findPlaceIndex(itemId, rot = 0) {
       for (let i = 0; i < this.slots.length; i += 1) {
-        if (this.canPlaceAt(i, itemId)) return i;
+        if (this.canPlaceAt(i, itemId, -1, rot)) return i;
       }
       return -1;
     }
@@ -332,6 +367,7 @@
           if (!slot || isOccupancyMarker(slot)) return null;
           const out = { itemId: slot.itemId, qty: slot.qty };
           if (slot.mag != null) out.mag = slot.mag;
+          if (stackRot(slot) === 90) out.rot = 90;
           return out;
         }),
       };
@@ -364,8 +400,8 @@
     { index: 0, stack: { itemId: 'work_satchel', qty: 1 } },
     { index: 2, stack: { itemId: 'coal', qty: 16 } },
     { index: 3, stack: { itemId: 'scrap', qty: 4 } },
-    { index: 6, stack: { itemId: 'turret_ammo', qty: 24 } },
-    { index: 7, stack: { itemId: 'small_caliber_ammo', qty: 54 } },
+    /* turret_ammo 现为 1×2，基础 4×2 装不下 → PLAYER_OVERFLOW_SEED */
+    { index: 6, stack: { itemId: 'small_caliber_ammo', qty: 54 } },
   ];
 
   /** 开局放不下进背包的物品（生成时丢到脚边地面）。 */
@@ -375,6 +411,7 @@
     { itemId: 'work_cap', qty: 1 },
     { itemId: 'work_vest', qty: 1 },
     { itemId: 'work_pants', qty: 1 },
+    { itemId: 'turret_ammo', qty: 24 },
   ];
 
   const STORAGE_SEED = [
@@ -433,7 +470,7 @@
     for (const stack of stacks) {
       let placed = false;
       for (let i = 0; i < inventory.size(); i += 1) {
-        if (inventory.canPlaceAt(i, stack.itemId)) {
+        if (inventory.canPlaceAt(i, stack.itemId, -1, stackRot(stack))) {
           inventory.placeStack(i, stack);
           placed = true;
           break;
@@ -444,12 +481,15 @@
         if (leftover > 0) {
           const drop = { itemId: stack.itemId, qty: leftover };
           if (stack.mag != null) drop.mag = stack.mag;
+          if (stackRot(stack) === 90) drop.rot = 90;
           overflow.push(drop);
-        } else if (stack.mag != null) {
+        } else if (stack.mag != null || stackRot(stack) === 90) {
           for (let i = 0; i < inventory.size(); i += 1) {
             const raw = inventory.slots[i];
             if (raw && !isOccupancyMarker(raw) && raw.itemId === stack.itemId) {
-              raw.mag = stack.mag;
+              if (stack.mag != null) raw.mag = stack.mag;
+              if (stackRot(stack) === 90) raw.rot = 90;
+              else delete raw.rot;
               break;
             }
           }
@@ -475,6 +515,30 @@
     return new Inventory('storage', 8, 8, STORAGE_SEED);
   }
 
+  /**
+   * TEST_ONLY — remove after playtest：仓储种子物资补到 maxStack（或缺省 qty），取用不尽。
+   * 与服务端 refill_storage_infinite 对齐；不碰玩家存入的非种子格。
+   */
+  function restoreTestInfiniteStorage(storage) {
+    if (!storage || !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) return;
+    for (const entry of STORAGE_SEED) {
+      const itemId = entry.stack.itemId;
+      const item = Catalog.getItem(itemId);
+      const want = item?.maxStack || entry.stack.qty || 1;
+      const have = storage.countItem(itemId) || 0;
+      if (have >= want) continue;
+      storage.addItem(itemId, want - have);
+      const magSize = item?.magazineSize;
+      if (magSize == null) continue;
+      for (let i = 0; i < storage.size(); i += 1) {
+        if (storage.isCovered(i)) continue;
+        const st = storage.slots[i];
+        if (!st || st.itemId !== itemId) continue;
+        if (st.mag == null) st.mag = magSize;
+      }
+    }
+  }
+
   /** 新建手部三槽（左/右主手 + 快捷）；默认右手持 GUR-65。 */
   function createDefaultHands() {
     return new Inventory(
@@ -486,13 +550,13 @@
     );
   }
 
-  /** 把堆叠退回背包（尽量保留武器弹匣）。 */
+  /** 把堆叠退回背包（尽量保留武器弹匣与朝向）。 */
   function dumpStackToPlayer(player, stack) {
     if (!player || !stack) return;
     for (let i = 0; i < player.size(); i += 1) {
       if (player.isCovered(i)) continue;
       if (player.getSlot(i)) continue;
-      if (player.canPlaceAt(i, stack.itemId)) {
+      if (player.canPlaceAt(i, stack.itemId, -1, stackRot(stack))) {
         player.placeStack(i, stack);
         return;
       }
@@ -500,7 +564,7 @@
     player.addItem(stack.itemId, stack.qty);
   }
 
-  /** 将旧双手槽扩展为三槽，并清出快捷槽上的枪械。 */
+  /** 将旧双手槽扩展为三槽；武器槽清出非武器，快捷槽清出枪械。 */
   function ensureHandsShape(hands, player) {
     let next = hands;
     if (hands.cols !== HANDS_COLS || hands.rows !== HANDS_ROWS || hands.size() !== HANDS_COLS) {
@@ -513,11 +577,21 @@
           dumpStackToPlayer(player, stack);
           continue;
         }
-        if (next.canPlaceAt(i, stack.itemId)) next.placeStack(i, stack);
+        if (i !== HANDS_UTILITY_INDEX && !Catalog.isWeapon?.(stack.itemId)) {
+          dumpStackToPlayer(player, stack);
+          continue;
+        }
+        if (next.canPlaceAt(i, stack.itemId, -1, stackRot(stack))) next.placeStack(i, stack);
         else dumpStackToPlayer(player, stack);
       }
     }
 
+    for (let i = 0; i < HANDS_UTILITY_INDEX; i += 1) {
+      const stack = next.getSlot(i);
+      if (stack && !Catalog.isWeapon?.(stack.itemId)) {
+        dumpStackToPlayer(player, next.takeSlot(i));
+      }
+    }
     const util = next.getSlot(HANDS_UTILITY_INDEX);
     if (util && Catalog.isWeapon?.(util.itemId)) {
       const taken = next.takeSlot(HANDS_UTILITY_INDEX);
@@ -655,6 +729,60 @@
     );
   }
 
+  /**
+   * 判断「弹药堆 → 武器格」是否为装填意图（目标是带弹匣的武器）。
+   * 兼容与否另用 Catalog.weaponAcceptsAmmo；此处只识别交互类型。
+   */
+  function isAmmoOntoWeaponIntent(ammoStack, weaponStack) {
+    if (!ammoStack || !weaponStack) return false;
+    const ammoItem = Catalog.getItem(ammoStack.itemId);
+    const weaponItem = Catalog.getItem(weaponStack.itemId);
+    if (!ammoItem || !weaponItem) return false;
+    if (ammoItem.type !== 'ammo') return false;
+    return Boolean(
+      Catalog.isWeapon(weaponStack.itemId) && weaponItem.magazineSize != null
+    );
+  }
+
+  /**
+   * 用弹药堆装填武器格弹匣；不交换槽位。
+   * @returns {{ ok: boolean, loaded: number, leftover: object|null }}
+   *   ok=false：不匹配或非武器意图，leftover 为原弹药堆（调用方原位放回）。
+   *   ok=true：已写入 mag；leftover 为剩余弹药（null=用尽）。
+   */
+  function tryLoadAmmoOntoWeapon(weaponInv, weaponIndex, ammoStack) {
+    const incoming = normalizeStack(ammoStack);
+    if (!incoming || !weaponInv) {
+      return { ok: false, loaded: 0, leftover: ammoStack || null };
+    }
+    const origin = weaponInv.originIndex(weaponIndex);
+    const weaponStack = weaponInv.getSlot(origin);
+    if (!isAmmoOntoWeaponIntent(incoming, weaponStack)) {
+      return { ok: false, loaded: 0, leftover: incoming };
+    }
+    const weaponItem = Catalog.getItem(weaponStack.itemId);
+    if (!Catalog.weaponAcceptsAmmo(weaponItem, incoming.itemId)) {
+      return { ok: false, loaded: 0, leftover: incoming };
+    }
+    const magSize = Number(weaponItem.magazineSize) || 0;
+    const need = magSize - (weaponStack.mag ?? 0);
+    if (need <= 0) {
+      return { ok: true, loaded: 0, leftover: incoming };
+    }
+    const take = Math.min(need, incoming.qty);
+    if (take <= 0) {
+      return { ok: true, loaded: 0, leftover: incoming };
+    }
+    weaponInv.updateSlot(origin, { mag: (weaponStack.mag ?? 0) + take });
+    const leftQty = incoming.qty - take;
+    if (leftQty <= 0) return { ok: true, loaded: take, leftover: null };
+    return {
+      ok: true,
+      loaded: take,
+      leftover: { itemId: incoming.itemId, qty: leftQty },
+    };
+  }
+
   /** 将堆叠放入槽位，返回未能放入的部分（或交换出的堆叠）。 */
   function placeOnSlot(inventory, index, stack) {
     const incoming = normalizeStack(stack);
@@ -676,7 +804,11 @@
       const moved = Math.min(space, incoming.qty);
       inventory.slots[origin].qty = current.qty + moved;
       const leftoverQty = incoming.qty - moved;
-      return leftoverQty > 0 ? { itemId: incoming.itemId, qty: leftoverQty } : null;
+      if (leftoverQty <= 0) return null;
+      const leftover = { itemId: incoming.itemId, qty: leftoverQty };
+      if (incoming.mag != null) leftover.mag = incoming.mag;
+      if (stackRot(incoming) === 90) leftover.rot = 90;
+      return leftover;
     }
 
     // 交换：先拿走目标，再尝试放入；失败则还原
@@ -695,8 +827,8 @@
     if (!stack) return;
     if (!targetInv.acceptsItem(stack.itemId)) return;
     const item = Catalog.getItem(stack.itemId);
-    if (item?.type === 'weapon' || stack.mag != null) {
-      const dest = targetInv.findPlaceIndex(stack.itemId);
+    if (item?.type === 'weapon' || stack.mag != null || stackRot(stack) === 90) {
+      const dest = targetInv.findPlaceIndex(stack.itemId, stackRot(stack));
       if (dest < 0) return;
       if (!targetInv.placeStack(dest, stack)) return;
       sourceInv.takeSlot(origin);
@@ -722,10 +854,16 @@
     placeOnSlot,
     quickTransfer,
     normalizeStack,
+    stackRot,
+    orientedSize,
+    toggledRot,
     resolvePlayerBagSize,
     syncPlayerBagToEquip,
     resizeInventory,
     collectStacks,
     getEquippedBackpack,
+    isAmmoOntoWeaponIntent,
+    tryLoadAmmoOntoWeapon,
+    restoreTestInfiniteStorage,
   };
 })();

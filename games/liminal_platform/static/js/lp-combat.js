@@ -23,6 +23,8 @@
   const CROSSHAIR_MIN_GAP_PX = 7;
   /** 机炮塔准星最小空隙（像素）；大于手持，匹配炮口散布观感。 */
   const TURRET_CROSSHAIR_MIN_GAP_PX = 14;
+  /** 机炮塔满 bloom 时额外张开（像素）；刻意封顶，避免准星过大。 */
+  const TURRET_BLOOM_GAP_PX = 10;
   /** spreadBaseDeg → 准星基础空隙的像素换算。 */
   const SPREAD_DEG_TO_GAP_PX = 4;
   /** 后坐满时额外张开（像素）。 */
@@ -47,7 +49,9 @@
       tip: '#f5d0a0',
       body: '#c4a35a',
       band: '#8a6a2a',
-      flashR: 4,
+      flashR: 11,
+      /** 枪口环境照亮半径（世界像素，additive 软晕）。 */
+      flashLightR: 56,
       /** 命中车底 / 轨道时播尘土；scale 控制喷溅大小。 */
       impactDust: true,
       impactDustScale: 1,
@@ -56,17 +60,22 @@
       kind: 'shell',
       speed: PROJECTILE_SPEED_SHELL,
       maxRange: 9600,
-      bodyLen: 18,
+      /* 绘制长度（仅外观）；机炮弹体再拉长一点 */
+      bodyLen: 30,
       bodyH: 5.5,
-      tipLen: 5,
+      tipLen: 8,
       tip: '#f8fafc',
       body: '#d97706',
       band: '#92400e',
-      flashR: 14,
+      flashR: 26,
+      flashLightR: 118,
       impactDust: true,
       impactDustScale: 1.75,
     },
   };
+
+  /** 手持开火枪口火光寿命（秒）。 */
+  const MUZZLE_FLASH_LIFE = 0.11;
 
   const state = {
     cooldown: 0,
@@ -148,11 +157,13 @@
 
   /**
    * 计算准星中心空隙（像素）。
-   * 手持：max(全局最小, spreadBaseDeg 换算) + 后坐张开；机炮塔：更大的固定最小空隙。
+   * 手持：max(全局最小, spreadBaseDeg 换算) + 后坐张开；
+   * 机炮塔：基础空隙 + 入座塔连射 bloom（封顶 TURRET_BLOOM_GAP_PX）。
    */
   function getCrosshairGapPx() {
     if (document.body.classList.contains('lp-turret-mode')) {
-      return TURRET_CROSSHAIR_MIN_GAP_PX;
+      const bloom = window.LpGuardTurret?.getFireBloom?.('primary') ?? 0;
+      return TURRET_CROSSHAIR_MIN_GAP_PX + bloom * TURRET_BLOOM_GAP_PX;
     }
     const item = getHeldWeaponItem();
     const baseDeg = item?.spreadBaseDeg ?? 0.8;
@@ -161,11 +172,37 @@
     return baseGap + state.recoil * RECOIL_GAP_PX;
   }
 
-  /** 同步准星张开尺寸到 --lp-aim-gap（覆盖 CSS，含机炮塔模式）。 */
+  /**
+   * 双联 2 号塔对角线准星空隙（像素）；非双联时返回 null。
+   */
+  function getSecondaryTurretCrosshairGapPx() {
+    if (!document.body.classList.contains('lp-turret-mode')) return null;
+    if (!window.LpGuardTurret?.isSoloDual?.()) return null;
+    const bloom = window.LpGuardTurret?.getFireBloom?.('secondary') ?? 0;
+    return TURRET_CROSSHAIR_MIN_GAP_PX + bloom * TURRET_BLOOM_GAP_PX;
+  }
+
+  /**
+   * 同步准星张开尺寸到 --lp-aim-gap（覆盖 CSS）。
+   * 机炮双联时另写对角线准星（#lpCrosshairAlt）的空隙。
+   */
   function syncCrosshairBloom() {
     const gap = getCrosshairGapPx();
     const el = document.getElementById('lpCrosshair');
     if (el) el.style.setProperty('--lp-aim-gap', `${gap.toFixed(1)}px`);
+
+    const alt = document.getElementById('lpCrosshairAlt');
+    if (!alt) return;
+    const altGap = getSecondaryTurretCrosshairGapPx();
+    if (altGap == null) {
+      alt.hidden = true;
+      return;
+    }
+    alt.style.setProperty('--lp-aim-gap', `${altGap.toFixed(1)}px`);
+    /* 显隐由 liminal-platform syncAimCursor 与 pointer 一并控制；此处只保证尺寸。 */
+    if (document.body.classList.contains('lp-turret-mode')) {
+      alt.hidden = Boolean(el?.hidden);
+    }
   }
 
   /** 抛出地上弹壳（从抛壳口飞出，速度相对枪口朝向）。 */
@@ -211,7 +248,9 @@
         state.cooldown = 0.25;
         return null;
       }
-      if (!online && !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
+      // 单机立即扣弹匣；联机由服务端权威扣减后快照回写。
+      // 注意：TEST_AUTO_REFILL_CONSUMABLES 只管仓库/弹药堆，不得跳过弹匣消耗。
+      if (!online) {
         const next = held.hands.updateSlot?.(held.index, { mag: mag - 1 });
         if (next) held.stack = next;
         else stack.mag = mag - 1;
@@ -387,7 +426,9 @@
       weaponId,
       style: styleKey,
       muzzleFlash: Boolean(options.flash),
-      muzzleFlashLife: options.flash ? 0.07 : 0,
+      muzzleFlashLife: options.flash ? MUZZLE_FLASH_LIFE : 0,
+      muzzleFlashMax: options.flash ? MUZZLE_FLASH_LIFE : 0,
+      muzzleJitter: Math.random() * Math.PI,
       originX,
       originY,
     };
@@ -490,6 +531,81 @@
     }
   }
 
+  /**
+   * 绘制枪口火光：短促 additive 环境照亮 + 橙晕星爆 + 白核焰舌（约三拍）。
+   * opts.t 为剩余寿命比例 1→0；lightR 照亮周围半径；flashR 星爆尺度。
+   */
+  function drawMuzzleFlash(ctx, opts) {
+    const t = Math.max(0, Math.min(1, Number(opts.t) || 0));
+    if (t <= 0.001) return;
+    const age = 1 - t;
+    const scale = opts.scale ?? 1;
+    const lightR = (opts.lightR ?? 72) * scale;
+    const flashR = (opts.flashR ?? 16) * scale;
+    const punch = Math.max(0, 1 - age / 0.3);
+    const ambient = Math.pow(t, 0.5) * (0.55 + 0.45 * Math.min(1, punch + 0.35));
+    const tongue = Math.pow(t, 0.8);
+    const coreFade = punch * 0.55 + t * t * 0.45;
+    const jitter = opts.jitter || 0;
+
+    ctx.save();
+    ctx.translate(opts.x, opts.y);
+    ctx.globalCompositeOperation = 'lighter';
+
+    /* 拍 1–2：大半径暖光软晕，短暂照亮甲板 / 炮管 / 附近精灵 */
+    const glowR = lightR * (0.9 + 0.22 * (1 - punch));
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
+    glow.addColorStop(0, `rgba(255, 236, 190, ${0.52 * ambient})`);
+    glow.addColorStop(0.2, `rgba(255, 175, 70, ${0.34 * ambient})`);
+    glow.addColorStop(0.48, `rgba(210, 90, 25, ${0.15 * ambient})`);
+    glow.addColorStop(1, 'rgba(40, 10, 0, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, glowR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.rotate(opts.angle || 0);
+    const r = flashR * (0.72 + 0.42 * punch + 0.22 * t);
+
+    /* 拍 2：沿枪口轴向的橙晕星爆 */
+    const bloom = ctx.createRadialGradient(r * 0.15, 0, 0, r * 0.15, 0, r * 1.45);
+    bloom.addColorStop(0, `rgba(255, 252, 235, ${0.95 * coreFade})`);
+    bloom.addColorStop(0.28, `rgba(255, 190, 70, ${0.82 * tongue})`);
+    bloom.addColorStop(0.58, `rgba(251, 110, 28, ${0.48 * tongue})`);
+    bloom.addColorStop(1, 'rgba(160, 30, 0, 0)');
+    ctx.fillStyle = bloom;
+    ctx.beginPath();
+    ctx.ellipse(r * 0.28, 0, r * 1.5, r * 0.92, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    /* 拍 3：前伸焰舌 + 上下叉 */
+    ctx.rotate(jitter * 0.1);
+    ctx.fillStyle = `rgba(255, 245, 200, ${0.92 * tongue})`;
+    ctx.beginPath();
+    ctx.moveTo(-2, 0);
+    ctx.lineTo(r * 1.65, -r * 0.24);
+    ctx.lineTo(r * 1.2, 0);
+    ctx.lineTo(r * 1.65, r * 0.24);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(255, 175, 55, ${0.78 * tongue})`;
+    ctx.beginPath();
+    ctx.moveTo(0, -2);
+    ctx.lineTo(r * 0.58, -r * 1.05);
+    ctx.lineTo(r * 0.38, 0);
+    ctx.lineTo(r * 0.58, r * 1.05);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(255, 255, 248, ${0.98 * coreFade})`;
+    ctx.beginPath();
+    ctx.ellipse(3, 0, 5.5 + 7 * punch + 2.5 * t, 3.8 + 3.2 * punch, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
   /** 绘制离散弹头实体（非激光线）。 */
   function drawProjectile(ctx, shot) {
     const style = PROJECTILE_STYLE[shot.style] || PROJECTILE_STYLE.bullet;
@@ -529,20 +645,16 @@
     ctx.restore();
 
     if (shot.muzzleFlash && shot.muzzleFlashLife > 0) {
-      const t = shot.muzzleFlashLife / 0.07;
-      ctx.save();
-      ctx.translate(shot.originX, shot.originY);
-      ctx.rotate(ang);
-      const r = style.flashR * (0.6 + 0.4 * t);
-      const flash = ctx.createRadialGradient(0, 0, 0, r * 0.4, 0, r);
-      flash.addColorStop(0, `rgba(255, 250, 220, ${0.95 * t})`);
-      flash.addColorStop(0.4, `rgba(251, 146, 60, ${0.8 * t})`);
-      flash.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = flash;
-      ctx.beginPath();
-      ctx.ellipse(r * 0.35, 0, r * 1.1, r * 0.65, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      const maxLife = shot.muzzleFlashMax || MUZZLE_FLASH_LIFE;
+      drawMuzzleFlash(ctx, {
+        x: shot.originX,
+        y: shot.originY,
+        angle: ang,
+        t: shot.muzzleFlashLife / maxLife,
+        lightR: style.flashLightR ?? 56,
+        flashR: style.flashR,
+        jitter: shot.muzzleJitter || 0,
+      });
     }
   }
 
@@ -616,7 +728,9 @@
     getRecoil: () => state.recoil,
     getCrosshairGapPx,
     syncCrosshairBloom,
+    getSecondaryTurretCrosshairGapPx,
     getWeaponId: () => state.weaponId,
+    drawMuzzleFlash,
     PROJECTILE_STYLE,
   };
 })();

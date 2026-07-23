@@ -2,8 +2,9 @@
  * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑；支持自动奔跑。
  */
 (() => {
-  const STORAGE_KEY = 'liminal-platform-input-bindings-v5';
+  const STORAGE_KEY = 'liminal-platform-input-bindings-v6';
   const LEGACY_STORAGE_KEYS = [
+    'liminal-platform-input-bindings-v5',
     'liminal-platform-input-bindings-v4',
     'liminal-platform-input-bindings-v3',
     'liminal-platform-input-bindings-v2',
@@ -12,6 +13,7 @@
   const SETTINGS_KEY = 'liminal-platform-game-settings-v1';
   const DEFAULT_BINDINGS = {
     inventory: [['Tab'], []],
+    trainMap: [['KeyM'], []],
     interact: [['KeyF'], []],
     fire: [['KeyJ'], []],
     reload: [['KeyR'], []],
@@ -20,6 +22,7 @@
   };
   const ACTION_NAMES = {
     inventory: '物品栏',
+    trainMap: '列车地图',
     interact: '交互',
     fire: '开火',
     reload: '装填',
@@ -224,7 +227,7 @@
         ? `${formatAction('sprint') || 'Shift'} 行走`
         : `${formatAction('sprint') || 'Shift'} 奔跑`;
       status.textContent =
-        `${formatAction('inventory')} 物品栏 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${sprintHint}`;
+        `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${sprintHint}`;
     }
     const hint = document.getElementById('lpInventoryHint');
     if (hint) {

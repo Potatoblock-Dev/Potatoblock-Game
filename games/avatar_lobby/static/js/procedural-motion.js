@@ -106,6 +106,10 @@
     };
   }
 
+  /**
+   * 走路/奔跑手臂摆动与肘弯（不含持枪 IK）。
+   * 前臂（橙）肘外展离开躯干；后臂（红）肘折向躯干。
+   */
   function computeArmPose(state) {
     const running = state.gait === 'run';
     const move = smoothstep(0.02, 0.2, state.speedRatio);
@@ -125,10 +129,15 @@
     const frontAirTarget = -0.55 * rising + 0.18 * falling;
     const backAirTarget = 0.4 * rising - 0.12 * falling;
 
+    /* 肘弯非对称：前臂负弯外展；后臂负弯折进躯干（红臂朝胸口） */
     const elbowBase = running ? 0.72 : 0.16;
     const elbowAmp = running ? 0.24 : 0.1;
     const elbowPulse = Math.sin(armPhase) * state.speedRatio * elbowAmp;
     const runReach = running ? -0.1 * state.speedRatio : 0;
+    const frontElbowMag =
+      elbowBase + elbowPulse + idleElbow + airborne * (0.1 + rising * 0.2);
+    const backElbowMag =
+      elbowBase + elbowPulse * 0.9 + idleElbow + airborne * (0.1 + rising * 0.18);
 
     const frontShoulder =
       lerp(swing + runReach + idleSway, frontAirTarget, airborne) + state.kneel * 0.12;
@@ -138,8 +147,8 @@
     return {
       frontShoulder,
       backShoulder,
-      frontElbow: elbowBase + elbowPulse + idleElbow + airborne * (0.1 + rising * 0.2),
-      backElbow: -(elbowBase + elbowPulse * 0.9) - idleElbow - airborne * (0.1 + rising * 0.18),
+      frontElbow: -frontElbowMag,
+      backElbow: -backElbowMag,
     };
   }
 
@@ -165,23 +174,36 @@
 
   /**
    * 默认火器持握（角色局部：面向 +X，+Y 向下）。
-   * gripLimb=back / forendLimb=front：肩宽内几何上后臂够得着握把、前臂够得着护木，
-   * 避免旧方案「前臂握把+后臂护木」把两手挤到同一点或肘角过度折叠。
+   *
+   * 两个附着点（缺一不可）：
+   * 1) grip —— 扳机握把：相对胸口的布局点（chest + along/below）
+   * 2) forend —— 护木：相对握把、沿枪管局部的第二插槽（gunForendX/Y），落在枪身贴图上
+   *
+   * 姿态：back（左红）→ 握把；front（右橙）→ 护木；elbowSign<0 → 肘在枪下。
    */
   const FIREARM_HOLD_DEFAULTS = {
-    chestX: 4,
-    chestY: -12,
-    gripAlong: 3,
-    forendAlong: 22,
-    forendBelow: 3,
+    chestX: 0,
+    chestY: -11,
+    gripAlong: 8,
+    gripBelow: 5,
+    /** @deprecated 旧「相对胸口」护木距；若未设 gunForend* 则用 forendAlong-gripAlong */
+    forendAlong: 16,
+    forendBelow: 6,
+    /** 护木插槽：相对握把、沿枪管 +X / 管下 +Y（角色局部，与绘制 holdForendLocal 一致） */
+    gunForendX: 26,
+    gunForendY: 4,
     gripLimb: 'back',
     forendLimb: 'front',
-    gripElbowSign: 1,
-    forendElbowSign: 1,
+    gripElbowSign: -1,
+    forendElbowSign: -1,
     shoulderX: 11,
     shoulderY: -16,
     upperLen: 15,
     lowerLen: 16,
+    shoulderMin: -2.9,
+    shoulderMax: 1.85,
+    elbowMin: -2.75,
+    elbowMax: 2.75,
   };
 
   /** 合并火器持握规格（物品 holdPose 可覆盖默认）。 */
@@ -190,26 +212,51 @@
   }
 
   /**
-   * 由瞄准方向算出握把/护木两个局部附着点（可复用；不绑死某一把枪）。
+   * 沿瞄准方向 + 垂直「下方」偏移，得到局部附着点。
+   * below>0 时手在枪管下侧（+Y 下：perp = (-dir.y, dir.x)）。
+   */
+  function offsetAlongAim(rootX, rootY, dirX, dirY, along, below) {
+    return {
+      x: rootX + dirX * along + (-dirY) * below,
+      y: rootY + dirY * along + dirX * below,
+    };
+  }
+
+  /**
+   * 握把 + 护木两个局部附着点。
+   * 握把：胸口布局；护木：从握把沿枪管再偏 gunForend（第二插槽，必须在枪身上）。
    * @returns {{ grip:{x,y}, forend:{x,y}, dir:{x,y}, angle:number, spec:object }}
    */
   function computeFirearmAttachLocals(localAimX, localAimY, spec) {
     const h = resolveFirearmHoldSpec(spec);
     const aimLen = Math.hypot(localAimX, localAimY) || 1;
     const dir = { x: localAimX / aimLen, y: localAimY / aimLen };
-    const grip = {
-      x: h.chestX + dir.x * h.gripAlong,
-      y: h.chestY + dir.y * h.gripAlong,
-    };
-    const forend = {
-      x: h.chestX + dir.x * h.forendAlong,
-      y: h.chestY + dir.y * h.forendAlong + h.forendBelow,
-    };
+    const grip = offsetAlongAim(h.chestX, h.chestY, dir.x, dir.y, h.gripAlong, h.gripBelow ?? 0);
+    const hasGunForend =
+      Number.isFinite(spec?.gunForendX) ||
+      Number.isFinite(spec?.gunForendY) ||
+      Number.isFinite(h.gunForendX);
+    const forendAlongGun = hasGunForend
+      ? (Number.isFinite(h.gunForendX) ? h.gunForendX : (h.forendAlong - h.gripAlong))
+      : (h.forendAlong - h.gripAlong);
+    const forendBelowGun = hasGunForend
+      ? (Number.isFinite(h.gunForendY) ? h.gunForendY : h.forendBelow)
+      : h.forendBelow;
+    const forend = offsetAlongAim(grip.x, grip.y, dir.x, dir.y, forendAlongGun, forendBelowGun);
     return { grip, forend, dir, angle: Math.atan2(dir.y, dir.x), spec: h };
   }
 
-  /** 单臂两骨 IK 到局部目标点。 */
-  function computeArmIkToLocal(shoulderX, shoulderY, targetX, targetY, upperLen, lowerLen, elbowSign) {
+  /** 单臂两骨 IK 到局部目标点（夹角范围可由 hold 规格放宽，避免握把解被裁掉）。 */
+  function computeArmIkToLocal(
+    shoulderX,
+    shoulderY,
+    targetX,
+    targetY,
+    upperLen,
+    lowerLen,
+    elbowSign,
+    angleLimits
+  ) {
     const solved = solveTwoBone(
       targetX - shoulderX,
       targetY - shoulderY,
@@ -217,30 +264,40 @@
       lowerLen,
       elbowSign
     );
+    const shMin = angleLimits?.shoulderMin ?? -2.55;
+    const shMax = angleLimits?.shoulderMax ?? 1.05;
+    const elMin = angleLimits?.elbowMin ?? -2.15;
+    const elMax = angleLimits?.elbowMax ?? 2.15;
     return {
-      shoulder: clamp(solved.upper, -2.55, 1.05),
-      elbow: clamp(solved.bend, -2.15, 2.15),
+      shoulder: clamp(solved.upper, shMin, shMax),
+      elbow: clamp(solved.bend, elMin, elMax),
     };
   }
 
   /**
-   * 持枪双臂：按附着点 IK（大厅/月台/任意火器共用）。
-   * localAim：面向右时 +X 向前、+Y 向下；spec 见 FIREARM_HOLD_DEFAULTS。
+   * 持枪双臂：握把/护木附着点 → two-bone IK（大厅/月台/任意火器共用）。
+   * 默认右撇子：back→握把、front→护木；elbowSign<0；localAim 面向右 +X 前、+Y 下。
    */
   function computeAimArmPose(localAimX, localAimY, spec) {
     const attach = computeFirearmAttachLocals(localAimX, localAimY, spec);
     const h = attach.spec;
     const sx = h.shoulderX;
     const sy = h.shoulderY;
+    const limits = {
+      shoulderMin: h.shoulderMin,
+      shoulderMax: h.shoulderMax,
+      elbowMin: h.elbowMin,
+      elbowMax: h.elbowMax,
+    };
     const gripShoulderX = h.gripLimb === 'front' ? sx : -sx;
     const forendShoulderX = h.forendLimb === 'front' ? sx : -sx;
     const gripIk = computeArmIkToLocal(
       gripShoulderX, sy, attach.grip.x, attach.grip.y,
-      h.upperLen, h.lowerLen, h.gripElbowSign
+      h.upperLen, h.lowerLen, h.gripElbowSign, limits
     );
     const forendIk = computeArmIkToLocal(
       forendShoulderX, sy, attach.forend.x, attach.forend.y,
-      h.upperLen, h.lowerLen, h.forendElbowSign
+      h.upperLen, h.lowerLen, h.forendElbowSign, limits
     );
     const frontIk = h.gripLimb === 'front' ? gripIk : forendIk;
     const backIk = h.gripLimb === 'back' ? gripIk : forendIk;

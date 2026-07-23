@@ -1,7 +1,8 @@
 /**
  * 手持武器姿态：枪械绘制、枪口与抛壳点（随瞄准方向）。
- * 握把锚优先用 AvatarEntity.getFirearmHoldWorld（程序化附着点），与臂 IK 同源。
- * 过中垂线（枪口朝左）时纵向镜像，与卫兵防御炮塔一致；可用 item.autoMirror: false 关闭。
+ * 双附着点：握把（绘制枢轴）+ 护木（gunForend，臂 IK 第二目标）；与 ProceduralMotion 同源。
+ * 默认右撇子：后臂(左)扳机握把、前臂(右)护木；朝向由 facing 折到局部 +X。
+ * 过中垂线（枪口朝左）时纵向镜像；可用 item.autoMirror: false 关闭。
  */
 (() => {
   const Catalog = window.LpItemCatalog;
@@ -33,6 +34,27 @@
   }
 
   /**
+   * 有效 holdPose（合并 LpHoldPoseDebug 覆盖，无调试时原样返回）。
+   * @param {object} [item]
+   */
+  function resolveHoldPose(item) {
+    const base = item?.holdPose || null;
+    const dbg = window.LpHoldPoseDebug;
+    if (!dbg?.isActive?.()) return base;
+    return dbg.mergeHoldPose(item?.id, base);
+  }
+
+  /**
+   * 有效绘制尺寸（合并调试覆盖）。
+   * @param {object} [item]
+   */
+  function resolveDraw(item) {
+    const dbg = window.LpHoldPoseDebug;
+    if (!dbg?.isActive?.()) return item || null;
+    return dbg.mergeDraw(item?.id, item);
+  }
+
+  /**
    * 枪管朝左时纵向镜像（贴图默认朝右）。
    * @param {number} angle 枪管世界角
    * @param {object} [item]
@@ -61,7 +83,7 @@
    */
   function getHoldPose(avatar, aim, item) {
     const facing = avatar.facing >= 0 ? 1 : -1;
-    const hold = Entity?.getFirearmHoldWorld?.(avatar, aim, item?.holdPose);
+    const hold = Entity?.getFirearmHoldWorld?.(avatar, aim, resolveHoldPose(item));
     const gripX = hold?.gripX;
     const gripY = hold?.gripY;
     const hand = (Number.isFinite(gripX) && Number.isFinite(gripY))
@@ -109,17 +131,18 @@
   }
 
   /**
-   * 绘制手持枪械（在 avatar 之后、曳光之前调用）。
+   * 绘制手持枪械（叠在身/双臂之上，保证侧视枪形可读）。
    * @returns {object|null} hold pose
    */
   function drawHeldWeapon(ctx, avatar, aim, item) {
     if (!item || !Catalog?.isWeapon?.(item.id)) return null;
     const pose = getHoldPose(avatar, aim, item);
     const img = getSprite(item);
-    const drawW = item.holdDrawW ?? 46;
-    const drawH = item.holdDrawH ?? 20;
-    const pivotX = item.holdPivotX ?? 10;
-    const pivotY = item.holdPivotY ?? drawH * 0.55;
+    const draw = resolveDraw(item) || item;
+    const drawW = draw.holdDrawW ?? 46;
+    const drawH = draw.holdDrawH ?? 20;
+    const pivotX = draw.holdPivotX ?? 10;
+    const pivotY = draw.holdPivotY ?? drawH * 0.55;
 
     ctx.save();
     ctx.translate(pose.gripX, pose.gripY);
@@ -140,7 +163,7 @@
 
   /** 持枪：双臂 IK 到物品 holdPose 附着点（可复用默认规格）。 */
   function applyAimArmPose(avatar, aim, item) {
-    Entity?.applyAimArmPose?.(avatar, aim, item?.holdPose);
+    Entity?.applyAimArmPose?.(avatar, aim, resolveHoldPose(item));
   }
 
   window.LpWeaponHold = {
@@ -149,6 +172,8 @@
     getEjectWorld,
     drawHeldWeapon,
     applyAimArmPose,
+    resolveHoldPose,
+    resolveDraw,
     getSprite,
     shouldMirrorY,
     localToWorld,

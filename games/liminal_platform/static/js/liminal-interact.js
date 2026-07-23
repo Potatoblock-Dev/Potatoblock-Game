@@ -157,6 +157,12 @@
         return window.LpGuardTurret?.interactAmmoBox?.() ?? false;
       case 'guardRecycle':
         return window.LpGuardTurret?.interactRecycleBox?.() ?? false;
+      case 'openRadarScope':
+        window.LpRadarScope?.open();
+        return Boolean(window.LpRadarScope);
+      case 'openAutoConsole':
+        window.LpAutoConsole?.open();
+        return Boolean(window.LpAutoConsole);
       default:
         console.warn('[liminal] unknown interact action', spot.action, spot.id);
         return false;
@@ -186,7 +192,7 @@
     );
   }
 
-  /** 在屏幕坐标绘制浮动提示条。 */
+  /** 在屏幕坐标绘制浮动提示条（世界物体旁「按 F …」等）。 */
   function drawFloatingLabel(ctx, dpr, screenX, screenY, line) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.font = '600 14px system-ui, sans-serif';
@@ -203,6 +209,17 @@
 
     ctx.fillStyle = '#fef3c7';
     ctx.fillText(line, screenX, screenY);
+  }
+
+  /**
+   * 模式状态描述条：屏幕下方居中（炮塔操控等；非世界锚点交互提示）。
+   * Canvas 绘制，无可选中 DOM 文本。移动端抬高，避开摇杆/开火键拇指区。
+   */
+  function drawStatusBanner(ctx, dpr, line, options = {}) {
+    const { mobile = false } = options;
+    const h = window.innerHeight || 600;
+    const bottom = mobile ? 168 : 52;
+    drawFloatingLabel(ctx, dpr, viewWCenter(), h - bottom, line);
   }
 
   /**
@@ -257,39 +274,43 @@
     };
   }
 
-  /** 绘制燃料条与操作反馈。 */
+  /** 绘制燃料条与操作反馈；炮塔操控时跳过顶栏画布 HUD，仍可显示 toast。 */
   function drawHud(ctx, view, dpr) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const { barX, barY } = hudAnchor();
-    const barW = 120;
-    const barH = 8;
-    const ratio = fuel.level / fuel.max;
+    const hideTopChrome = document.body.classList.contains('lp-turret-mode');
 
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-    ctx.fillRect(barX - 2, barY - 18, barW + 4, 30);
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = '600 11px system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText('锅炉燃料', barX, barY - 16);
-    ctx.fillStyle = 'rgba(51, 65, 85, 0.9)';
-    ctx.fillRect(barX, barY, barW, barH);
-    ctx.fillStyle = ratio > 0.25 ? '#f59e0b' : '#ef4444';
-    ctx.fillRect(barX, barY, barW * ratio, barH);
+    if (!hideTopChrome) {
+      const barW = 120;
+      const barH = 8;
+      const ratio = fuel.level / fuel.max;
 
-    const drive = window.LpTrainDrive?.getState?.();
-    if (drive) {
       ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-      ctx.fillRect(barX - 2, barY + 16, barW + 4, 34);
+      ctx.fillRect(barX - 2, barY - 18, barW + 4, 30);
       ctx.fillStyle = '#94a3b8';
-      ctx.fillText('列车', barX, barY + 18);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '600 12px system-ui, sans-serif';
-      const speedText =
-        Math.abs(drive.speed) < 0.08
-          ? '静止'
-          : `${drive.speed > 0 ? '→' : '←'}${Math.abs(drive.speed).toFixed(1)} · ${drive.throttleLabel}`;
-      ctx.fillText(speedText, barX, barY + 32);
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('锅炉燃料', barX, barY - 16);
+      ctx.fillStyle = 'rgba(51, 65, 85, 0.9)';
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = ratio > 0.25 ? '#f59e0b' : '#ef4444';
+      ctx.fillRect(barX, barY, barW * ratio, barH);
+
+      const drive = window.LpTrainDrive?.getState?.();
+      if (drive) {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+        ctx.fillRect(barX - 2, barY + 16, barW + 4, 34);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('列车', barX, barY + 18);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '600 12px system-ui, sans-serif';
+        const speedText =
+          Math.abs(drive.speed) < 0.08
+            ? '静止'
+            : `${drive.speed > 0 ? '→' : '←'}${Math.abs(drive.speed).toFixed(1)} · ${drive.throttleLabel}`;
+        ctx.fillText(speedText, barX, barY + 32);
+      }
     }
 
     if (performance.now() < toastUntil && toastText) {
@@ -314,15 +335,13 @@
   function drawActivePrompt(ctx, local, view, dpr, keyLabel, options = {}) {
     const { showPrompt = true, inventoryKeyLabel = 'Tab', mobile = false } = options;
     if (window.LpGuardTurret?.isManned?.()) {
-      if (showPrompt) {
+      /* 移动端仍须显示弹药/离开提示（桌面交互浮标在触控上会关掉 showPrompt） */
+      if (showPrompt || mobile) {
         const ammo = window.LpGuardTurret.ammoCount?.() ?? 0;
-        drawFloatingLabel(
-          ctx,
-          dpr,
-          viewWCenter(),
-          (window.innerHeight || 600) * 0.12,
-          `炮塔中 · 弹药 ${ammo} · 按 ${keyLabel} 离开 · 左键开火`
-        );
+        const line = mobile
+          ? `炮塔中 · 弹药 ${ammo} · 点交互离开 · 开火键射击`
+          : `炮塔中 · 弹药 ${ammo} · 按 ${keyLabel} 离开 · 左键开火`;
+        drawStatusBanner(ctx, dpr, line, { mobile });
       }
       drawHud(ctx, view, dpr);
       return;

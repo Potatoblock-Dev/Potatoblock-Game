@@ -1,12 +1,16 @@
 /**
  * 汽笛三段式音效：引入 → 循环 → 引出。
- * Web Audio 调度 intro 结束时刻无缝开 loop；松手停 loop 播 outro；关面板硬停。
+ * intro 结束时刻开 loop；loop 用双源重叠 crossfade 消除 AAC 接缝；松手播 outro；关面板硬停。
  */
 (() => {
   const INTRO_SRC = '/static/games/liminal-platform/audio/train-whistle-intro.m4a?v=1';
   const LOOP_SRC = '/static/games/liminal-platform/audio/train-whistle-loop.m4a?v=1';
   const OUTRO_SRC = '/static/games/liminal-platform/audio/train-whistle-outro.m4a?v=1';
   const VOLUME = 0.72;
+  /** loop→loop 重叠 crossfade（秒）；盖住 AAC 编解码接缝。 */
+  const LOOP_CROSSFADE_SEC = 0.07;
+  const LOOP_LOOKAHEAD_SEC = 1.25;
+  const FADE_CURVE_STEPS = 32;
 
   /** @type {'idle'|'intro'|'loop'|'outro'} */
   let phase = 'idle';
@@ -22,21 +26,48 @@
   /** @type {AudioBufferSourceNode|null} */
   let introSrc = null;
   /** @type {AudioBufferSourceNode|null} */
-  let loopSrc = null;
-  /** @type {AudioBufferSourceNode|null} */
   let outroSrc = null;
+  /** @type {{ src: AudioBufferSourceNode, gain: GainNode }[]} */
+  let loopParts = [];
   /** @type {number|null} */
   let loopStartAt = null;
+  /** @type {number|null} */
+  let loopNextAt = null;
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let loopPumpTimer = null;
+  let loopEpoch = 0;
+  let loopFirstSegment = true;
   let holdWanted = false;
   /** @type {Promise<void>|null} */
   let loadPromise = null;
   let startInFlight = false;
+
+  /** @type {Float32Array|null} */
+  let fadeInCurve = null;
+  /** @type {Float32Array|null} */
+  let fadeOutCurve = null;
+
+  /** 构建等功率淡入/淡出曲线（复用，避免每段分配）。 */
+  function ensureFadeCurves() {
+    if (fadeInCurve && fadeOutCurve) return;
+    fadeInCurve = new Float32Array(FADE_CURVE_STEPS);
+    fadeOutCurve = new Float32Array(FADE_CURVE_STEPS);
+    for (let i = 0; i < FADE_CURVE_STEPS; i++) {
+      const t = i / (FADE_CURVE_STEPS - 1);
+      fadeInCurve[i] = Math.sin(t * Math.PI * 0.5);
+      fadeOutCurve[i] = Math.cos(t * Math.PI * 0.5);
+    }
+  }
 
   /** 停止并断开单个 BufferSource（忽略已停错误）。 */
   function killSource(src) {
     if (!src) return;
     try {
       src.onended = null;
+    } catch (_) {
+      /* noop */
+    }
+    try {
       src.stop(0);
     } catch (_) {
       /* already stopped */
@@ -48,13 +79,32 @@
     }
   }
 
+  /** 取消 loop 前瞻调度并停掉所有 loop 分段源。 */
+  function clearLoopChain() {
+    loopEpoch += 1;
+    if (loopPumpTimer != null) {
+      clearTimeout(loopPumpTimer);
+      loopPumpTimer = null;
+    }
+    loopNextAt = null;
+    loopFirstSegment = true;
+    for (const part of loopParts) {
+      killSource(part.src);
+      try {
+        part.gain.disconnect();
+      } catch (_) {
+        /* already disconnected */
+      }
+    }
+    loopParts = [];
+  }
+
   /** 停掉所有正在播 / 已调度的汽笛源。 */
   function killAllSources() {
     killSource(introSrc);
-    killSource(loopSrc);
+    clearLoopChain();
     killSource(outroSrc);
     introSrc = null;
-    loopSrc = null;
     outroSrc = null;
     loopStartAt = null;
   }
@@ -66,6 +116,7 @@
       gain = ctx.createGain();
       gain.gain.value = VOLUME;
       gain.connect(ctx.destination);
+      ensureFadeCurves();
     }
     if (ctx.state === 'suspended') await ctx.resume();
     if (!loadPromise) {
@@ -96,17 +147,89 @@
     await loadPromise;
   }
 
-  /** 创建已接好增益的 BufferSource。 */
-  function makeSource(buffer, loop) {
+  /** 创建已接好增益的 BufferSource（非 loop 链用）。 */
+  function makeSource(buffer) {
     const src = ctx.createBufferSource();
     src.buffer = buffer;
-    src.loop = Boolean(loop);
+    src.loop = false;
     src.connect(gain);
     return src;
   }
 
+  /** 当前 loop 重叠时长与周期（秒）。 */
+  function loopTiming() {
+    const dur = loopBuf.duration;
+    const xfade = Math.min(LOOP_CROSSFADE_SEC, dur * 0.35);
+    return { dur, xfade, period: dur - xfade };
+  }
+
   /**
-   * 下拉过阈值：播 intro，并在其结束时刻调度无缝 loop（仍按住时）。
+   * 调度一段非循环 loop buffer；fadeIn 时与上一段等功率交叉。
+   * @param {number} when AudioContext 时间
+   * @param {boolean} fadeIn 是否淡入（首段接 intro 时为 false）
+   */
+  function spawnLoopSegment(when, fadeIn) {
+    const { dur, xfade } = loopTiming();
+    const src = ctx.createBufferSource();
+    src.buffer = loopBuf;
+    src.loop = false;
+    const g = ctx.createGain();
+    g.connect(gain);
+    src.connect(g);
+
+    if (fadeIn) {
+      g.gain.setValueCurveAtTime(fadeInCurve, when, xfade);
+    } else {
+      g.gain.setValueAtTime(1, when);
+    }
+    const fadeOutAt = when + dur - xfade;
+    g.gain.setValueCurveAtTime(fadeOutCurve, fadeOutAt, xfade);
+
+    src.start(when);
+    src.stop(when + dur + 0.02);
+
+    const part = { src, gain: g };
+    loopParts.push(part);
+    src.onended = () => {
+      const idx = loopParts.indexOf(part);
+      if (idx >= 0) loopParts.splice(idx, 1);
+      try {
+        g.disconnect();
+      } catch (_) {
+        /* noop */
+      }
+    };
+  }
+
+  /** 前瞻调度 loop 分段，用重叠 crossfade 代替 BufferSource.loop。 */
+  function startLoopChain(startAt) {
+    clearLoopChain();
+    const epoch = loopEpoch;
+    const { xfade, period } = loopTiming();
+    loopNextAt = startAt;
+    loopFirstSegment = true;
+
+    function pump() {
+      if (epoch !== loopEpoch || !holdWanted || !loopBuf) return;
+      const now = ctx.currentTime;
+      const horizon = now + LOOP_LOOKAHEAD_SEC;
+      while (loopNextAt != null && loopNextAt <= horizon) {
+        spawnLoopSegment(loopNextAt, !loopFirstSegment);
+        loopFirstSegment = false;
+        loopNextAt += period;
+      }
+      const delayMs = Math.max(
+        40,
+        Math.min(350, (loopNextAt - xfade - now) * 1000 - 180),
+      );
+      loopPumpTimer = setTimeout(pump, delayMs);
+    }
+
+    pump();
+  }
+
+  /**
+   * 下拉过阈值：播 intro，并在其结束时刻调度无缝 loop 链（仍按住时）。
    * 重复调用在已发声时忽略。
    */
   async function start() {
@@ -123,11 +246,10 @@
       }
       killAllSources();
       const t0 = ctx.currentTime;
-      introSrc = makeSource(introBuf, false);
-      loopSrc = makeSource(loopBuf, true);
+      introSrc = makeSource(introBuf);
       loopStartAt = t0 + introBuf.duration;
       introSrc.start(t0);
-      loopSrc.start(loopStartAt);
+      startLoopChain(loopStartAt);
       phase = 'intro';
       introSrc.onended = () => {
         if (!holdWanted) return;
@@ -151,12 +273,11 @@
     }
     const now = ctx.currentTime;
     killSource(introSrc);
-    killSource(loopSrc);
+    clearLoopChain();
     introSrc = null;
-    loopSrc = null;
     loopStartAt = null;
     killSource(outroSrc);
-    outroSrc = makeSource(outroBuf, false);
+    outroSrc = makeSource(outroBuf);
     outroSrc.onended = () => {
       if (outroSrc) {
         try {

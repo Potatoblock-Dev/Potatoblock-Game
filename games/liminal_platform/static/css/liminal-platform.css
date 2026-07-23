@@ -39,6 +39,7 @@
 
 .lp-page.lp-aim-mode .lp-hud-actions,
 .lp-page.lp-aim-mode .lp-hud-actions a,
+.lp-page.lp-aim-mode .lp-hud-actions button,
 .lp-page.lp-aim-mode .lp-train-minimap,
 .lp-page.lp-aim-mode .mp-bar,
 .lp-page.lp-aim-mode .mp-bar button,
@@ -56,19 +57,34 @@ body.lp-inventory-open .lp-crosshair {
 }
 
 body.lp-boiler-panel-open .lp-stage,
-body.lp-boiler-panel-open #lpCanvas {
+body.lp-boiler-panel-open #lpCanvas,
+body.lp-radar-panel-open .lp-stage,
+body.lp-radar-panel-open #lpCanvas,
+body.lp-auto-console-open .lp-stage,
+body.lp-auto-console-open #lpCanvas {
   cursor: auto;
 }
 
 body.lp-boiler-panel-open .lp-crosshair,
 body.lp-boiler-panel-open .lp-mobile-controls,
 body.lp-boiler-panel-open .lp-hud-top,
+body.lp-radar-panel-open .lp-crosshair,
+body.lp-radar-panel-open .lp-mobile-controls,
+body.lp-radar-panel-open .lp-hud-top,
+body.lp-auto-console-open .lp-crosshair,
+body.lp-auto-console-open .lp-mobile-controls,
+body.lp-auto-console-open .lp-hud-top,
 body.lp-fuel-feed-open .lp-crosshair,
 body.lp-fuel-feed-open .lp-mobile-controls,
 body.lp-fuel-feed-open .lp-hud-top,
 body.lp-crate-feed-open .lp-crosshair,
 body.lp-crate-feed-open .lp-mobile-controls,
-body.lp-crate-feed-open .lp-hud-top {
+body.lp-crate-feed-open .lp-hud-top,
+body.lp-train-map-open .lp-crosshair,
+body.lp-train-map-open .lp-mobile-controls,
+body.lp-train-map-open .lp-hud-top,
+/* 炮塔操控：只收顶栏（含编组条），保留准星与底部炮塔横幅 */
+body.lp-turret-mode .lp-hud-top {
   display: none !important;
 }
 
@@ -84,6 +100,15 @@ body.lp-crate-feed-open {
   inset: 0;
   z-index: 23;
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 面板内若有输入控件仍需可选中以便编辑 */
+.lp-fuel-feed-root input,
+.lp-fuel-feed-root textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .lp-fuel-feed-root[hidden] {
@@ -372,15 +397,22 @@ body.lp-crate-feed-open {
   display: none;
 }
 
-/* ---- 卫兵防御弹药箱 / 回收箱：复用燃料架布局 ---- */
+/* ---- 卫兵防御弹药箱 / 回收箱：库存格占地（与主物品栏 footprint 一致） ---- */
 
 .lp-guard-crate-zone {
   gap: 10px;
+  width: auto;
+  min-width: min(220px, 46vw);
+  height: auto;
+  min-height: 0;
+  padding: 12px 14px 14px;
+  overflow: visible;
   border-color: #6b7280;
   background:
     radial-gradient(circle at 50% 70%, rgb(163 163 163 / 0.22), transparent 62%),
     linear-gradient(180deg, #1f1f1f, #0f0f0f);
   color: #d4d4d4;
+  pointer-events: auto;
 }
 
 .lp-guard-crate-zone.is-ammo {
@@ -399,11 +431,6 @@ body.lp-crate-feed-open {
   color: #d9f99d;
 }
 
-.lp-guard-crate-zone .lp-fuel-item-slot {
-  pointer-events: auto;
-  z-index: 1;
-}
-
 .lp-guard-crate-zone.is-hot.is-ammo {
   border-color: #facc15;
   background:
@@ -416,6 +443,46 @@ body.lp-crate-feed-open {
   background:
     radial-gradient(circle at 50% 70%, rgb(163 230 53 / 0.38), transparent 68%),
     rgb(38 38 38 / 0.72);
+}
+
+.lp-guard-crate-rack {
+  min-width: 0;
+  align-items: center;
+}
+
+.lp-guard-crate-rack.is-hot,
+.lp-guard-crate-grid.is-hot {
+  outline: 2px solid rgb(251 191 36 / 0.75);
+  outline-offset: 2px;
+}
+
+.lp-guard-crate-root .lp-guard-crate-grid {
+  --lp-crate-cell: 44px;
+  --cols: 4;
+  --rows: 2;
+  position: relative;
+  z-index: 1;
+  aspect-ratio: auto;
+  width: calc(var(--cols) * var(--lp-crate-cell));
+  height: calc(var(--rows) * var(--lp-crate-cell));
+  max-width: none;
+  pointer-events: auto;
+  border-color: rgb(163 163 163 / 0.45);
+  background: rgb(12 12 12 / 0.45);
+}
+
+.lp-guard-crate-root .lp-guard-crate-grid .lp-inventory-slot {
+  touch-action: none;
+  cursor: grab;
+}
+
+.lp-guard-crate-root .lp-guard-crate-grid .lp-inventory-slot:not(.has-item) {
+  cursor: default;
+}
+
+.lp-guard-crate-root .lp-guard-crate-grid .lp-inventory-slot.has-item:active,
+.lp-guard-crate-root .lp-guard-crate-grid .lp-inventory-slot.is-dragging {
+  cursor: grabbing;
 }
 
 .lp-fuel-item-slot.is-hot {
@@ -814,25 +881,25 @@ body.lp-crate-feed-open {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-  padding-right: 40px;
 }
 
-/* ---- 汽笛绳（驾驶台右上角下垂） ---- */
+/* ---- 汽笛绳（视口右上角 HUD；仅驾驶台打开时随 root 显示） ---- */
 .lp-whistle-hang {
-  position: absolute;
-  top: 58px;
-  right: 10px;
-  z-index: 6;
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top));
+  /* 再左移，仍贴视口右上，不进驾驶台柜 */
+  right: calc(26px + env(safe-area-inset-right));
+  z-index: 24;
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 46px;
+  width: 54px;
   pointer-events: none;
 }
 
 .lp-whistle-ceiling {
-  width: 28px;
-  height: 8px;
+  width: 32px;
+  height: 9px;
   border: 1px solid #8a7d63;
   border-radius: 1px 1px 0 0;
   background:
@@ -844,13 +911,15 @@ body.lp-crate-feed-open {
 
 .lp-whistle-rope {
   position: relative;
-  width: 46px;
-  height: calc(168px + var(--lp-whistle-pull));
+  width: 54px;
+  height: calc(248px + var(--lp-whistle-pull));
   margin-top: -1px;
   pointer-events: auto;
   touch-action: none;
   cursor: grab;
   user-select: none;
+  transform-origin: 50% 0;
+  will-change: transform;
   --lp-whistle-pull: 0px;
 }
 
@@ -863,9 +932,9 @@ body.lp-crate-feed-open {
   position: absolute;
   left: 50%;
   top: 0;
-  width: 14px;
-  height: 12px;
-  margin-left: -7px;
+  width: 16px;
+  height: 13px;
+  margin-left: -8px;
   border: 1px solid #8a7d63;
   border-radius: 0 0 3px 3px;
   background:
@@ -879,9 +948,9 @@ body.lp-crate-feed-open {
   position: absolute;
   left: 50%;
   bottom: -3px;
-  width: 6px;
-  height: 6px;
-  margin-left: -3px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
   border: 1.5px solid #6b6356;
   border-radius: 50%;
   background: #2a2722;
@@ -891,37 +960,33 @@ body.lp-crate-feed-open {
 .lp-whistle-cord {
   position: absolute;
   left: 50%;
-  top: 10px;
-  width: 6px;
-  height: calc(118px + var(--lp-whistle-pull));
-  margin-left: -3px;
-  border-radius: 3px;
+  top: 11px;
+  width: 10px;
+  height: calc(190px + var(--lp-whistle-pull));
+  margin-left: -5px;
+  border-radius: 5px;
   background:
     repeating-linear-gradient(
       180deg,
-      #6b4e32 0 3px,
-      #8a6540 3px 5px,
-      #4a3420 5px 7px
+      #6b4e32 0 4px,
+      #8a6540 4px 7px,
+      #4a3420 7px 10px
     );
   box-shadow:
-    inset 1px 0 0 rgb(255 220 170 / 0.18),
-    inset -1px 0 0 rgb(0 0 0 / 0.35),
-    1px 0 0 rgb(0 0 0 / 0.25);
-  transition: height 0.22s cubic-bezier(0.22, 1.4, 0.36, 1);
+    inset 2px 0 0 rgb(255 220 170 / 0.2),
+    inset -2px 0 0 rgb(0 0 0 / 0.38),
+    1px 0 0 rgb(0 0 0 / 0.28);
+  /* 伸长 / 回弹由 JS 弹簧驱动，避免与 CSS transition 抢手感 */
   z-index: 1;
-}
-
-.lp-whistle-rope.is-pulling .lp-whistle-cord {
-  transition: none;
 }
 
 .lp-whistle-handle {
   position: absolute;
   left: 50%;
-  top: calc(122px + var(--lp-whistle-pull));
-  width: 34px;
-  height: 26px;
-  margin-left: -17px;
+  top: calc(194px + var(--lp-whistle-pull));
+  width: 36px;
+  height: 28px;
+  margin-left: -18px;
   margin-top: -2px;
   border: 2px solid #cfc6b4;
   border-radius: 3px;
@@ -930,12 +995,7 @@ body.lp-crate-feed-open {
   box-shadow:
     0 4px 0 rgb(0 0 0 / 0.45),
     inset 0 1px 0 rgb(255 255 255 / 0.28);
-  transition: top 0.22s cubic-bezier(0.22, 1.4, 0.36, 1);
   z-index: 2;
-}
-
-.lp-whistle-rope.is-pulling .lp-whistle-handle {
-  transition: none;
 }
 
 .lp-whistle-handle::before {
@@ -1147,20 +1207,20 @@ body.lp-crate-feed-open {
   }
 
   .lp-whistle-hang {
-    top: 54px;
-    right: 6px;
+    top: calc(10px + env(safe-area-inset-top));
+    right: calc(14px + env(safe-area-inset-right));
   }
 
   .lp-whistle-rope {
-    height: calc(140px + var(--lp-whistle-pull));
+    height: calc(210px + var(--lp-whistle-pull));
   }
 
   .lp-whistle-cord {
-    height: calc(96px + var(--lp-whistle-pull));
+    height: calc(158px + var(--lp-whistle-pull));
   }
 
   .lp-whistle-handle {
-    top: calc(100px + var(--lp-whistle-pull));
+    top: calc(162px + var(--lp-whistle-pull));
   }
 
   .lp-lever-stage {
@@ -1259,6 +1319,32 @@ body.lp-turret-mode .lp-crosshair-dot {
   background: #fde047;
 }
 
+/* 单人双联：2 号塔对角线准星（旋转 45° 成 X），略淡以区分主准星 */
+.lp-crosshair-alt {
+  z-index: 11;
+}
+
+.lp-crosshair-alt-rot {
+  position: absolute;
+  inset: 0;
+  transform: rotate(45deg);
+}
+
+.lp-crosshair-alt .lp-crosshair-arm {
+  background: rgb(253 224 71 / 0.72);
+  box-shadow: 0 0 0 1px rgb(28 28 28 / 0.4);
+}
+
+body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-n,
+body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-s {
+  height: 12px;
+}
+
+body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-w,
+body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
+  width: 12px;
+}
+
 /* 浮层 UI：对齐 avatar 大厅 stage-ui，仅控件接收指针 */
 .lp-stage-ui {
   position: absolute;
@@ -1299,6 +1385,15 @@ body.lp-turret-mode .lp-crosshair-dot {
     10px
     calc(16px + env(safe-area-inset-left));
   background: linear-gradient(rgb(12 12 12 / 0.72), transparent);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 房间码等输入仍需可选中以便编辑 */
+.lp-hud-top input,
+.lp-hud-top textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .lp-hud-main {
@@ -1439,12 +1534,15 @@ body.lp-turret-mode .lp-crosshair-dot {
 .lp-train-minimap {
   min-width: 168px;
   max-width: 100%;
-  padding: 8px 10px 7px;
-  border: 1px solid var(--lp-line);
-  background: var(--lp-chip);
-  box-shadow: var(--lp-frame);
+  width: min(100%, 280px);
+  padding: 4px 0 2px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
   pointer-events: auto;
   user-select: none;
+  overflow: visible;
+  cursor: pointer;
 }
 
 .lp-train-minimap-head {
@@ -1475,13 +1573,24 @@ body.lp-turret-mode .lp-crosshair-dot {
 .lp-train-minimap-cars {
   display: flex;
   align-items: stretch;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 0;
   margin: 0;
-  padding: 0;
+  padding: 0 0 8px;
   list-style: none;
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
-  scrollbar-width: thin;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+}
+
+.lp-train-minimap-cars::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .lp-train-minimap-coupler {
@@ -1593,7 +1702,8 @@ body.lp-turret-mode .lp-crosshair-dot {
 }
 
 .lp-skin-link,
-.lp-back {
+.lp-back,
+.lp-fullscreen-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1610,13 +1720,28 @@ body.lp-turret-mode .lp-crosshair-dot {
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
 }
 
+.lp-fullscreen-btn {
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.lp-fullscreen-btn.is-fullscreen {
+  border-color: rgb(96 165 250 / 0.55);
+  background: rgb(37 99 235 / 0.22);
+  color: #dbeafe;
+}
+
 .lp-skin-link {
   border-color: rgb(82 82 82 / 0.45);
   background: rgb(82 82 82 / 0.18);
 }
 
 .lp-skin-link:active,
-.lp-back:active {
+.lp-back:active,
+.lp-fullscreen-btn:active {
   transform: scale(0.97);
 }
 
@@ -1698,6 +1823,10 @@ body.lp-turret-mode .lp-crosshair-dot {
   color: transparent;
 }
 
+.lp-hands-hud-icon.is-rotated {
+  transform: rotate(90deg);
+}
+
 .lp-hands-hud-qty {
   position: absolute;
   right: 3px;
@@ -1749,13 +1878,25 @@ body.lp-inventory-open .lp-hud-top {
   position: fixed;
   inset: 0;
   z-index: 20;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(12px, 1.6vw, 18px);
   padding:
     calc(12px + env(safe-area-inset-top))
     calc(12px + env(safe-area-inset-right))
     calc(12px + env(safe-area-inset-bottom))
     calc(12px + env(safe-area-inset-left));
+  overflow: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 面板内若有输入控件仍需可选中以便编辑 */
+.lp-inventory-root input,
+.lp-inventory-root textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .lp-inventory-root[hidden] {
@@ -1803,10 +1944,11 @@ body.lp-inventory-open .lp-hud-top {
 .lp-inventory-shell {
   position: relative;
   z-index: 1;
-  width: min(920px, calc(100vw - 24px));
+  flex: 0 1 auto;
+  width: min(1080px, calc(100vw - 24px));
   max-width: 100%;
   height: fit-content;
-  max-height: min(90dvh, 860px);
+  max-height: min(90dvh, 880px);
   display: flex;
   flex-direction: column;
   border: 2px solid rgb(163 163 163 / 0.58);
@@ -1815,6 +1957,12 @@ body.lp-inventory-open .lp-hud-top {
   box-shadow: var(--lp-frame), 0 18px 48px rgb(0 0 0 / 0.55);
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/* 有右侧附近弹窗时：主背包略收，为右栏留空 */
+.lp-inventory-root.is-side-loot .lp-inventory-shell {
+  width: min(1000px, calc(100vw - 24px - min(420px, 34vw) - 16px));
+  order: 0;
 }
 
 .lp-inventory-header,
@@ -2035,7 +2183,7 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-body {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
   gap: 12px;
   padding: 14px;
   overflow-x: hidden;
@@ -2045,59 +2193,79 @@ body.lp-inventory-open .lp-hud-top {
   min-height: 0;
 }
 
-/* 旅人 + 背包 + 附近（地面 / 仓库）侧栏 */
-.lp-inventory-root.is-side-loot .lp-inventory-body {
-  grid-template-columns:
-    minmax(0, 0.9fr)
-    minmax(0, 1.1fr)
-    minmax(0, 0.85fr);
-}
-
-.lp-side-loot-panel {
-  min-width: 0;
-  min-height: 0;
+/* 右侧独立弹窗：地面 / 仓库（DOM 在 shell 前；桌面主背包在左、右栏用 order） */
+.lp-side-loot-floats {
+  position: relative;
+  z-index: 2;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
-  padding: 0;
+  gap: 12px;
+  order: 1;
+  width: min(440px, 34vw);
+  min-width: min(280px, 100%);
+  max-height: min(90dvh, 880px);
   overflow: hidden;
-  border-color: rgb(163 163 163 / 0.35);
 }
 
-.lp-side-loot-scroll {
+.lp-side-loot-floats[hidden] {
+  display: none;
+}
+
+.lp-inventory-float {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: 100%;
+  border: 2px solid rgb(163 163 163 / 0.58);
+  border-radius: var(--lp-radius);
+  background: var(--lp-panel);
+  box-shadow: var(--lp-frame), 0 18px 48px rgb(0 0 0 / 0.55);
+  overflow: hidden;
+}
+
+.lp-inventory-float[hidden] {
+  display: none;
+}
+
+.lp-inventory-float-header {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgb(163 163 163 / 0.16);
+}
+
+.lp-inventory-float-header .lp-inventory-panel-title {
+  margin: 0;
+}
+
+.lp-inventory-float-ground .lp-inventory-panel-title {
+  color: #fbbf24;
+}
+
+.lp-inventory-float-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  padding: 12px;
 }
 
-.lp-side-loot-section {
-  min-width: 0;
+.lp-inventory-root.is-side-loot:not(.is-mobile-inv) {
+  justify-content: center;
+  align-items: center;
 }
 
-.lp-side-loot-section.is-ground .lp-inventory-panel-title {
-  color: #fbbf24;
+.lp-inventory-root.is-side-loot:not(.is-mobile-inv) .lp-side-loot-floats {
+  margin: 0;
+  order: 1;
 }
 
-.lp-side-loot-divider {
-  flex: 0 0 auto;
-  height: 1px;
-  margin: 12px 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgb(163 163 163 / 0.55) 12%,
-    rgb(163 163 163 / 0.55) 88%,
-    transparent
-  );
-}
-
-.lp-side-loot-divider[hidden] {
-  display: none;
+.lp-inventory-root.is-side-loot:not(.is-mobile-inv) .lp-inventory-shell {
+  margin: 0;
+  order: 0;
 }
 
 .lp-gear-panel {
@@ -2168,6 +2336,12 @@ body.lp-inventory-open .lp-hud-top {
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.45);
 }
 
+/* 旅人装备栏 / 手部：悬停时物品贴图更透明（不影响拖拽幽灵与 reload 高亮框） */
+.lp-equip-slot-host .lp-inventory-slot:hover:not(.is-dragging) .lp-inventory-item-icon,
+.lp-hands-slot-host .lp-inventory-slot:hover:not(.is-dragging) .lp-inventory-item-icon {
+  opacity: 0.55;
+}
+
 /* 左列：头 / 胸 / 腿；右列：配件 / 背包 —— 中间留给皮套 */
 .lp-equip-head {
   grid-column: 1;
@@ -2217,11 +2391,12 @@ body.lp-inventory-open .lp-hud-top {
   width: 100%;
 }
 
+/* 物品详情：挂在 inventory root 下，须高于 shell(1) / 侧栏(2) / 持物幽灵(30) */
 .lp-inventory-detail {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 28;
+  z-index: 40;
   width: min(260px, 72vw);
   min-width: 0;
   min-height: 0;
@@ -2356,6 +2531,29 @@ body.lp-inventory-open .lp-hud-top {
   z-index: 4;
   background: rgb(56 189 248 / 0.28);
   box-shadow: inset 0 0 0 2px rgb(125 211 252 / 0.95);
+}
+
+/* 弹药拖到武器：匹配绿 / 不匹配红（框 + 图标底边填充） */
+.lp-inventory-slot.reload-ok {
+  z-index: 4;
+  background: rgb(34 197 94 / 0.22);
+  box-shadow: inset 0 0 0 2px rgb(74 222 128 / 0.95);
+}
+
+.lp-inventory-slot.reload-ok .lp-inventory-item-icon {
+  border-color: rgb(74 222 128 / 0.95);
+  box-shadow: inset 0 -3px 0 rgb(74 222 128 / 0.95);
+}
+
+.lp-inventory-slot.reload-bad {
+  z-index: 4;
+  background: rgb(239 68 68 / 0.22);
+  box-shadow: inset 0 0 0 2px rgb(248 113 113 / 0.95);
+}
+
+.lp-inventory-slot.reload-bad .lp-inventory-item-icon {
+  border-color: rgb(248 113 113 / 0.95);
+  box-shadow: inset 0 -3px 0 rgb(248 113 113 / 0.95);
 }
 
 .lp-inventory-panel-title {
@@ -2529,6 +2727,10 @@ body.lp-inventory-open .lp-hud-top {
   box-shadow: none;
 }
 
+.lp-inventory-item-icon.is-rotated {
+  transform: rotate(90deg);
+}
+
 .lp-inventory-item-qty {
   position: absolute;
   right: 4px;
@@ -2545,13 +2747,14 @@ body.lp-inventory-open .lp-hud-top {
   color: #a3a3a3;
 }
 
+/* 持物幽灵：固定紧凑方块（小于旅人装备格 48px；JS 再按装备格 ×0.78 覆盖） */
 .lp-inventory-cursor-slot {
   position: fixed;
   left: 0;
   top: 0;
-  width: 48px;
-  height: 48px;
-  margin: -24px 0 0 -24px;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
   border: 1px solid rgb(245 158 11 / 0.85);
   border-radius: var(--lp-radius);
   background: rgb(28 28 28 / 0.95);
@@ -2567,10 +2770,10 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-inventory-cursor-slot .lp-inventory-item-icon {
-  width: calc(100% - 6px);
-  height: calc(100% - 6px);
-  margin: 3px;
-  font-size: clamp(12px, 2.2vw, 16px);
+  width: calc(100% - 4px);
+  height: calc(100% - 4px);
+  margin: 2px;
+  font-size: clamp(10px, 42%, 13px);
 }
 
 /* ---- 移动端触控（复用 avatar 大厅左右分区 + 圆形动作键布局） ---- */
@@ -2603,17 +2806,20 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-skin-link .lp-label-long,
-  .lp-back .lp-label-long {
+  .lp-back .lp-label-long,
+  .lp-fullscreen-btn .lp-label-long {
     display: none;
   }
 
   .lp-skin-link .lp-label-short,
-  .lp-back .lp-label-short {
+  .lp-back .lp-label-short,
+  .lp-fullscreen-btn .lp-label-short {
     display: inline;
   }
 
   .lp-skin-link,
-  .lp-back {
+  .lp-back,
+  .lp-fullscreen-btn {
     min-width: 48px;
     min-height: 44px;
     padding: 8px 14px;
@@ -2639,7 +2845,8 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-train-minimap {
     min-width: 0;
-    padding: 6px 8px 5px;
+    width: min(100%, 200px);
+    padding: 2px 0;
   }
 
   .lp-train-minimap-car {
@@ -2803,6 +3010,7 @@ body.lp-inventory-open .lp-hud-top {
   .lp-mobile-jump-button,
   .lp-mobile-fire-button,
   .lp-mobile-inventory-button,
+  .lp-mobile-map-button,
   .lp-mobile-sprint-button {
     display: inline-flex;
     align-items: center;
@@ -2832,6 +3040,10 @@ body.lp-inventory-open .lp-hud-top {
     width: clamp(58px, 15vw, 74px);
   }
 
+  .lp-mobile-map-button {
+    width: clamp(48px, 12vw, 60px);
+  }
+
   .lp-mobile-sprint-button {
     width: 48px;
     height: 48px;
@@ -2849,6 +3061,11 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-mobile-inventory-button .lp-mc-icon {
     background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-menu.png");
+  }
+
+  .lp-mobile-map-button .lp-mc-icon {
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-menu.png");
+    filter: hue-rotate(160deg) saturate(1.2);
   }
 
   .lp-mobile-sprint-button .lp-mc-icon {
@@ -2869,6 +3086,7 @@ body.lp-inventory-open .lp-hud-top {
   .lp-mobile-jump-button.is-active,
   .lp-mobile-fire-button.is-active,
   .lp-mobile-inventory-button.is-active,
+  .lp-mobile-map-button.is-active,
   .lp-mobile-sprint-button.is-active {
     filter: brightness(1.35);
     transform: scale(0.94);
@@ -2912,10 +3130,39 @@ body.lp-inventory-open .lp-hud-top {
   }
 }
 
+@media (max-width: 1100px) {
+  .lp-inventory-root.is-side-loot:not(.is-mobile-inv) {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .lp-inventory-root.is-side-loot:not(.is-mobile-inv) .lp-side-loot-floats {
+    width: min(100%, 560px);
+    min-width: 0;
+    max-height: min(42dvh, 420px);
+    align-self: stretch;
+    order: 1;
+  }
+
+  .lp-inventory-root.is-side-loot:not(.is-mobile-inv) .lp-inventory-shell {
+    width: min(1080px, calc(100vw - 24px));
+    margin: 0;
+    align-self: stretch;
+    order: 0;
+  }
+}
+
 @media (max-width: 720px) {
-  .lp-inventory-shell {
+  .lp-inventory-shell,
+  .lp-inventory-root.is-side-loot .lp-inventory-shell {
     width: 100%;
     max-height: 92dvh;
+  }
+
+  .lp-side-loot-floats {
+    width: 100%;
+    min-width: 0;
   }
 }
 
@@ -2923,7 +3170,10 @@ body.lp-inventory-open .lp-hud-top {
 @media (hover: none), (pointer: coarse) {
   .lp-inventory-root.is-mobile-inv {
     padding: 0;
-    place-items: stretch;
+    align-items: stretch;
+    justify-content: stretch;
+    gap: 0;
+    overflow: hidden;
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-shell {
@@ -2933,6 +3183,28 @@ body.lp-inventory-open .lp-hud-top {
     max-height: none;
     border-width: 0;
     border-radius: 0;
+    flex: 1 1 auto;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-side-loot-floats {
+    display: none;
+    width: auto;
+    min-width: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    gap: 10px;
+    padding:
+      10px
+      calc(12px + env(safe-area-inset-right))
+      10px
+      calc(12px + env(safe-area-inset-left));
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-float {
+    flex: 0 0 auto;
+    max-height: none;
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-tabs:not([hidden]) {
@@ -2990,8 +3262,7 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="bag"],
-  .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="gear"],
-  .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="nearby"] {
+  .lp-inventory-root.is-mobile-inv .lp-inventory-body > [data-lp-inv-pane="gear"] {
     display: none;
     flex: 1 1 auto;
     min-height: 0;
@@ -2999,15 +3270,9 @@ body.lp-inventory-open .lp-hud-top {
     -webkit-overflow-scrolling: touch;
   }
 
-  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="bag"] .lp-inventory-body > [data-lp-inv-pane="bag"],
-  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-inventory-body > [data-lp-inv-pane="nearby"] {
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="bag"] .lp-inventory-body > [data-lp-inv-pane="bag"] {
     display: flex;
     flex-direction: column;
-  }
-
-  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-side-loot-scroll {
-    flex: 1;
-    min-height: 0;
   }
 
   .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="gear"] .lp-inventory-body > [data-lp-inv-pane="gear"] {
@@ -3016,13 +3281,41 @@ body.lp-inventory-open .lp-hud-top {
     gap: 12px;
   }
 
-  /* 与顶栏 Tab 重复的面板标题在移动端隐藏（附近侧栏保留分区标题） */
+  /* 附近 Tab：主壳只留顶栏，浮窗作主内容 */
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-inventory-body {
+    display: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] {
+    flex-direction: column;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-inventory-shell {
+    flex: 0 0 auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    order: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-inventory-shell .lp-inventory-footer {
+    display: none;
+  }
+
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-side-loot-floats:not([hidden]) {
+    display: flex;
+    order: 1;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  /* 与顶栏 Tab 重复的面板标题在移动端隐藏（附近弹窗保留分区标题） */
   .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="bag"] .lp-inventory-panel-title,
   .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="gear"] .lp-inventory-panel-title {
     display: none;
   }
 
-  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-side-loot-section .lp-inventory-panel-title {
+  .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-inventory-float .lp-inventory-panel-title {
     display: block;
   }
 
@@ -3195,6 +3488,18 @@ body.lp-inventory-open .lp-hud-top {
     height: min(220px, 42vh);
   }
 
+  .lp-guard-crate-zone {
+    width: auto;
+    min-width: 0;
+    height: auto;
+    max-width: min(92vw, 360px);
+    padding: 10px 12px 12px;
+  }
+
+  .lp-guard-crate-root .lp-guard-crate-grid {
+    --lp-crate-cell: min(40px, 18vw);
+  }
+
   .lp-fuel-item-slot,
   .lp-fuel-coal-slot {
     width: 68px;
@@ -3327,5 +3632,1677 @@ body.lp-inventory-open .lp-hud-top {
   .mp-count {
     font-size: 11px;
     min-height: 24px;
+  }
+}
+
+/* —— Hold Pose Debug（LOCAL/DEBUG ONLY：?debugHold=1，生产勿开）—— */
+.lp-hold-pose-debug {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 80;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  padding: 10px 12px 12px;
+  background: var(--lp-panel);
+  color: #e5e5e5;
+  border: 1px solid rgb(163 163 163 / 0.35);
+  box-shadow: var(--lp-frame);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+
+.lp-hold-pose-debug[hidden] {
+  display: none !important;
+}
+
+.lp-hpd-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.lp-hpd-head strong {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.lp-hpd-hint {
+  flex: 1;
+  color: var(--lp-text-muted);
+  font-size: 10px;
+}
+
+.lp-hpd-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  background: var(--lp-panel-inset);
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.lp-hpd-status {
+  margin: 0 0 8px;
+  color: #fbbf24;
+  font-size: 11px;
+}
+
+.lp-hpd-section {
+  margin: 0 0 10px;
+  padding: 8px;
+  background: var(--lp-panel-inset);
+  border: 1px solid rgb(163 163 163 / 0.2);
+}
+
+.lp-hpd-section h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--lp-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* 红=back/握把，橙=front/护木（与程序化肢体色一致） */
+.lp-hpd-section--grip {
+  border-color: rgb(239 68 68 / 0.55);
+}
+
+.lp-hpd-section--grip h3 {
+  color: #fca5a5;
+}
+
+.lp-hpd-section--grip input[type="range"] {
+  accent-color: #ef4444;
+}
+
+.lp-hpd-section--forend {
+  border-color: rgb(249 115 22 / 0.55);
+}
+
+.lp-hpd-section--forend h3 {
+  color: #fdba74;
+}
+
+.lp-hpd-section--forend input[type="range"] {
+  accent-color: #f97316;
+}
+
+.lp-hpd-row {
+  display: grid;
+  grid-template-columns: 88px 1fr 52px;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.lp-hpd-row:has(select),
+.lp-hpd-row:has(input[type="checkbox"]) {
+  grid-template-columns: 88px 1fr;
+}
+
+.lp-hpd-label {
+  color: #d4d4d4;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+}
+
+.lp-hold-pose-debug input[type="range"] {
+  width: 100%;
+  accent-color: #a3a3a3;
+}
+
+.lp-hold-pose-debug input.lp-hpd-num,
+.lp-hold-pose-debug select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  border: 1px solid rgb(163 163 163 / 0.35);
+  background: #0a0a0a;
+  color: inherit;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+}
+
+.lp-hpd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lp-hpd-actions button {
+  flex: 1 1 auto;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  background: #171717;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.lp-hpd-actions button:hover:not(:disabled) {
+  background: #262626;
+}
+
+.lp-hpd-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lp-page.lp-aim-mode .lp-hold-pose-debug,
+.lp-page.lp-aim-mode .lp-hold-pose-debug * {
+  cursor: auto;
+}
+
+/* ---- 绘轨车厢 · 雷达示波器（战斗机 PPI） ---- */
+
+.lp-radar-scope-root {
+  position: fixed;
+  inset: 0;
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.lp-radar-scope-root[hidden] {
+  display: none;
+}
+
+.lp-radar-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at center, rgb(0 20 8 / 0.55), rgb(0 0 0 / 0.82));
+}
+
+.lp-radar-shell {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  width: min(760px, calc(100vw - 28px));
+  max-width: 96vw;
+  padding: 18px 22px 16px;
+  background:
+    linear-gradient(160deg, #1a1f1a 0%, #0c0e0c 55%, #080908 100%);
+  border: 4px solid #2e4032;
+  box-shadow:
+    0 0 0 1px rgb(140 180 130 / 0.28),
+    0 0 0 6px #121812,
+    0 0 0 8px #3a5040,
+    0 22px 52px rgb(0 0 0 / 0.62),
+    inset 0 1px 0 rgb(200 230 190 / 0.1),
+    inset 0 0 0 2px rgb(0 0 0 / 0.55);
+  color: #c8f0d0;
+}
+
+.lp-radar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.lp-radar-eyebrow {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #7aab86;
+  text-transform: uppercase;
+}
+
+.lp-radar-title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #e2ffe8;
+}
+
+.lp-radar-close {
+  appearance: none;
+  border: 2px solid rgb(180 60 50 / 0.9);
+  background: rgb(140 36 28 / 0.92);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+}
+
+.lp-radar-close:hover {
+  background: rgb(170 45 35);
+}
+
+.lp-radar-bezel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 16px 18px;
+  background: #050805;
+  border: 3px solid #3a5540;
+  box-shadow:
+    inset 0 0 0 1px rgb(90 150 100 / 0.22),
+    inset 0 0 36px rgb(0 40 10 / 0.85),
+    0 0 0 1px #0a100a;
+}
+
+/* PPI 左中 + 量程档拉杆右侧（紧凑原视图） */
+.lp-radar-scope-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+#lpRadarScopeCanvas {
+  display: block;
+  flex: 0 1 auto;
+  width: min(560px, calc(100% - 88px));
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 4px #1a281c,
+    0 0 0 1px rgb(100 160 110 / 0.35),
+    0 0 32px rgb(40 180 80 / 0.28);
+  background: #020602;
+}
+
+.lp-radar-readouts {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #8fd99c;
+}
+
+.lp-radar-range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lp-radar-range-btns {
+  display: none;
+  gap: 6px;
+}
+
+.lp-radar-range-btn {
+  appearance: none;
+  min-width: 40px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid rgb(90 180 110 / 0.55);
+  background: rgb(20 50 28 / 0.92);
+  color: #c8f0d0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-radar-range-btn:active {
+  background: rgb(40 90 50 / 0.95);
+}
+
+/* 量程档位拉杆：右侧竖条，仅关键数字刻度 */
+.lp-radar-gear {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 80px;
+  min-width: 74px;
+  max-width: 88px;
+  align-self: stretch;
+  padding: 6px 5px 8px;
+  border: 2px solid #2a322a;
+  background:
+    linear-gradient(180deg, #1c221c 0%, #101410 100%);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.04),
+    inset 0 10px 18px rgb(0 0 0 / 0.4);
+}
+
+.lp-radar-gear-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px dashed rgb(120 160 130 / 0.35);
+}
+
+.lp-radar-gear-title {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #b8d8c0;
+}
+
+.lp-radar-gear-cap {
+  font-size: 9px;
+  color: #7a9a82;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.lp-radar-gear-stage {
+  display: grid;
+  grid-template-columns: minmax(34px, 1fr) 36px;
+  gap: 4px;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lp-radar-gear-notches {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0;
+}
+
+.lp-radar-gear-notches button {
+  position: relative;
+  appearance: none;
+  flex: 1 1 0;
+  min-height: 0;
+  border: none;
+  background: transparent;
+  color: #a8c8b0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: right;
+  padding: 0 12px 0 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-radar-gear-notches button::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  left: auto;
+  width: 6px;
+  height: 1px;
+  margin-top: -0.5px;
+  border-radius: 0;
+  background: #6a8a72;
+  box-shadow: none;
+}
+
+.lp-radar-gear-notches button:not(.is-tick-only)::before {
+  width: 10px;
+  height: 2px;
+  margin-top: -1px;
+  background: #8ab894;
+}
+
+.lp-radar-gear-notches button.is-tick-only {
+  color: transparent;
+  font-size: 0;
+}
+
+.lp-radar-gear-notches button.is-active {
+  color: #e2ffe8;
+}
+
+.lp-radar-gear-notches button.is-active::before,
+.lp-radar-gear-notches button.is-tick-only.is-active::before {
+  background: #b8ffc8;
+  box-shadow: 0 0 4px rgb(120 255 150 / 0.45);
+}
+
+.lp-radar-gear-notches button:hover {
+  color: #e2ffe8;
+}
+
+.lp-radar-gear-notches button.is-tick-only:hover {
+  color: transparent;
+}
+
+.lp-radar-gear-notches button:hover::before {
+  background: #b8ffc8;
+}
+
+.lp-radar-gear-track {
+  position: relative;
+  border: 2px solid #3a453a;
+  background:
+    linear-gradient(90deg, rgb(0 0 0 / 0.4), transparent 30%, transparent 70%, rgb(0 0 0 / 0.4)),
+    linear-gradient(180deg, #3a4538, #141814);
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.55),
+    inset 0 8px 14px rgb(0 0 0 / 0.4);
+}
+
+.lp-radar-gear-track:active {
+  cursor: grabbing;
+}
+
+.lp-radar-gear-slot {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, #4a7a52, #303830 45%, #2a4a32);
+  opacity: 0.75;
+  box-shadow:
+    inset 0 0 0 1px rgb(140 180 150 / 0.22),
+    0 0 0 1px rgb(0 0 0 / 0.35);
+}
+
+.lp-radar-gear-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 32px;
+  height: 22px;
+  margin-top: -11px;
+  margin-left: -16px;
+  border: 2px solid #c8d4c8;
+  background:
+    linear-gradient(180deg, #a8b4a8 0%, #6a7468 40%, #3a4238 100%);
+  box-shadow:
+    0 3px 0 rgb(0 0 0 / 0.5),
+    inset 0 1px 0 rgb(255 255 255 / 0.28);
+  pointer-events: none;
+}
+
+.lp-radar-gear-knob::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  background: rgb(20 28 20 / 0.45);
+}
+
+.lp-radar-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #6a8f72;
+  text-align: center;
+}
+
+/* 锁定雷达瞄准摇杆：触控设备显示（桌面用鼠标） */
+.lp-radar-aim-wrap {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.lp-radar-aim-stick {
+  position: relative;
+  width: clamp(72px, 18vw, 96px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 2px solid rgb(90 180 110 / 0.55);
+  background:
+    radial-gradient(circle at center, rgb(20 50 28 / 0.9), rgb(6 14 8 / 0.95));
+  box-shadow:
+    inset 0 0 0 1px rgb(120 255 150 / 0.18),
+    0 0 12px rgb(40 160 80 / 0.2);
+  touch-action: none;
+  user-select: none;
+}
+
+.lp-radar-aim-stick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28%;
+  aspect-ratio: 1;
+  border: 1px solid rgb(140 255 170 / 0.35);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.lp-radar-aim-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid rgb(180 255 200 / 0.65);
+  background: radial-gradient(circle at 35% 30%, #9dffb8, #2a6a3a 70%);
+  box-shadow: 0 0 8px rgb(80 220 120 / 0.35);
+  transform: translate(0, 0);
+  translate: -50% -50%;
+  pointer-events: none;
+}
+
+.lp-radar-aim-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: #7ab886;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .lp-radar-aim-wrap {
+    display: flex;
+  }
+
+  .lp-radar-range-btns {
+    display: flex;
+  }
+
+  .lp-radar-range-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .lp-radar-gear {
+    width: 84px;
+    min-width: 78px;
+  }
+
+  .lp-radar-gear-stage {
+    grid-template-columns: minmax(36px, 1fr) 40px;
+  }
+
+  .lp-radar-gear-notches button:not(.is-tick-only) {
+    font-size: 10px;
+  }
+
+  .lp-radar-gear-knob {
+    width: 36px;
+    height: 26px;
+    margin-top: -13px;
+    margin-left: -18px;
+  }
+
+  .lp-radar-close {
+    min-height: 44px;
+    padding: 0.55rem 1rem;
+  }
+
+  .lp-radar-shell {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .lp-radar-hint.lp-mobile-only {
+    display: block !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .lp-radar-shell {
+    width: calc(100vw - 16px);
+    max-width: none;
+    padding: 14px 14px 12px;
+    border-width: 3px;
+    box-shadow:
+      0 0 0 1px rgb(140 180 130 / 0.22),
+      0 0 0 4px #121812,
+      0 0 0 6px #3a5040,
+      0 16px 36px rgb(0 0 0 / 0.58),
+      inset 0 1px 0 rgb(200 230 190 / 0.08),
+      inset 0 0 0 2px rgb(0 0 0 / 0.5);
+  }
+
+  .lp-radar-bezel {
+    padding: 12px;
+  }
+
+  .lp-radar-title {
+    font-size: 17px;
+  }
+
+  .lp-radar-aim-wrap {
+    display: flex;
+  }
+}
+
+/* ---- 枢机车厢 · 自动化全屏控制台 ---- */
+
+.lp-auto-console-root {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.lp-auto-console-root[hidden] {
+  display: none;
+}
+
+.lp-auto-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: rgb(0 0 0 / 0.72);
+}
+
+.lp-auto-shell {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 100vw);
+  height: min(100dvh, 100%);
+  margin: 0 auto;
+  background: #121418;
+  color: #e8eaed;
+  border-left: 1px solid #2a2f38;
+  border-right: 1px solid #2a2f38;
+  box-shadow: 0 0 40px rgb(0 0 0 / 0.6);
+}
+
+.lp-auto-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid #2a2f38;
+  flex-shrink: 0;
+}
+
+.lp-auto-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #8b93a7;
+  text-transform: uppercase;
+}
+
+.lp-auto-title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.lp-auto-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lp-auto-undo-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid #3d4a2a;
+  background: #1a2414;
+  color: #d8e8b8;
+  font-size: 13px;
+}
+
+.lp-auto-undo-banner[hidden] {
+  display: none !important;
+}
+
+.lp-auto-undo-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.lp-auto-undo-banner .lp-auto-btn {
+  flex-shrink: 0;
+}
+
+.lp-auto-btn {
+  appearance: none;
+  border: 1px solid #3d4454;
+  background: #1c212b;
+  color: #e8eaed;
+  font: inherit;
+  font-size: 13px;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+}
+
+.lp-auto-btn.primary {
+  background: #3b5bdb;
+  border-color: #4c6ef5;
+}
+
+.lp-auto-btn.danger {
+  background: #a61e1e;
+  border-color: #c92a2a;
+}
+
+.lp-auto-btn.ghost {
+  background: transparent;
+}
+
+.lp-auto-train-wrap {
+  flex-shrink: 0;
+  overflow-x: auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2f38;
+  background: #0d0f14;
+}
+
+.lp-auto-train-strip {
+  display: flex;
+  gap: 10px;
+  width: max-content;
+  padding-bottom: 4px;
+}
+
+.lp-auto-car-card {
+  appearance: none;
+  width: 132px;
+  padding: 8px;
+  border: 1px solid #343b4a;
+  background: #181c24;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.lp-auto-car-card.is-selected {
+  border-color: #748ffc;
+  box-shadow: 0 0 0 1px #748ffc;
+  background: #1e2430;
+}
+
+.lp-auto-car-icon {
+  width: 112px;
+  height: 42px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.lp-auto-car-name {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.lp-auto-car-full {
+  font-size: 10px;
+  color: #8b93a7;
+}
+
+.lp-auto-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 0;
+}
+
+.lp-auto-side {
+  padding: 12px 14px;
+  border-right: 1px solid #2a2f38;
+  overflow: auto;
+  background: #10131a;
+}
+
+.lp-auto-side h3,
+.lp-auto-editor-head h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.lp-auto-vars-block {
+  margin-bottom: 14px;
+}
+
+.lp-auto-vars-block h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a8b0c0;
+  letter-spacing: 0.02em;
+}
+
+.lp-auto-vars-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.lp-auto-var-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.lp-auto-var-row input {
+  width: 72px;
+  background: #1c212b;
+  border: 1px solid #3d4454;
+  color: #e8eaed;
+  padding: 4px 6px;
+  font-size: 16px;
+}
+
+.lp-auto-var-row.is-readonly input {
+  opacity: 0.85;
+  color: #b8c0d0;
+  border-style: dashed;
+  cursor: default;
+}
+
+.lp-auto-side-hint {
+  margin-top: 14px;
+  font-size: 11px;
+  color: #8b93a7;
+  line-height: 1.4;
+}
+
+.lp-auto-editor {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.lp-auto-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2a2f38;
+  flex-shrink: 0;
+}
+
+.lp-auto-rules {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 14px 20px;
+}
+
+.lp-auto-rule-section {
+  margin-bottom: 16px;
+}
+
+.lp-auto-rule-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #2a2f38;
+}
+
+.lp-auto-rule-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #c5cad6;
+}
+
+.lp-auto-rule-section-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #8b93a7;
+  line-height: 1.35;
+}
+
+.lp-auto-rule-section.is-cosmetic .lp-auto-rule-section-title {
+  color: #a8b0c0;
+}
+
+.lp-auto-empty {
+  color: #8b93a7;
+  font-size: 13px;
+}
+
+.lp-auto-rule-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #181c24;
+  border: 1px solid #2a2f38;
+}
+
+.lp-auto-prio {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: #91a7ff;
+}
+
+.lp-auto-prio.is-cosmetic {
+  color: #5c6578;
+  text-align: center;
+}
+
+.lp-auto-rule-summary {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #e8eaed;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+  padding: 0;
+}
+
+.lp-auto-rule-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.lp-auto-rule-tools button {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #3d4454;
+  background: #1c212b;
+  color: #e8eaed;
+  cursor: pointer;
+}
+
+.lp-auto-wizard {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 0.55);
+  padding: 16px;
+}
+
+.lp-auto-wizard[hidden] {
+  display: none !important;
+}
+
+.lp-auto-wizard-card {
+  width: min(480px, 100%);
+  max-height: min(80dvh, 640px);
+  overflow: auto;
+  background: #161a22;
+  border: 1px solid #3d4454;
+  padding: 14px 16px;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.45);
+}
+
+.lp-auto-wizard-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.lp-auto-wizard-top h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.lp-auto-steps {
+  display: flex;
+  gap: 4px;
+}
+
+.lp-auto-step-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #3d4454;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #8b93a7;
+}
+
+.lp-auto-step-dot.is-on {
+  background: #3b5bdb;
+  border-color: #748ffc;
+  color: #fff;
+}
+
+.lp-auto-choice {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  margin-bottom: 6px;
+  border: 1px solid #2a2f38;
+  background: #12151c;
+  cursor: pointer;
+}
+
+.lp-auto-choice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.lp-auto-choice strong {
+  display: block;
+  font-size: 13px;
+}
+
+.lp-auto-choice small {
+  display: block;
+  color: #8b93a7;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* 条件/行为选项行：全部参数并排内联（比较符 + 数值 / 变量 + …） */
+.lp-auto-choice-params {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  max-width: 64%;
+}
+
+.lp-auto-choice-inline {
+  flex: 0 1 auto;
+  min-width: 4.5rem;
+  max-width: 9.5rem;
+}
+
+.lp-auto-choice-params .lp-auto-select {
+  width: 100%;
+  min-width: 4.5rem;
+}
+
+.lp-auto-choice-params .lp-auto-select-trigger {
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.lp-auto-choice-num,
+.lp-auto-choice-text-input {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  background: #1c212b;
+  border: 1px solid #3d4454;
+  color: #e8eaed;
+  font: inherit;
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-auto-choice-num {
+  width: 4.75rem;
+  text-align: right;
+}
+
+.lp-auto-choice-text-input {
+  width: 7.25rem;
+  max-width: 42vw;
+  text-align: left;
+}
+
+.lp-auto-choice-num:focus,
+.lp-auto-choice-text-input:focus {
+  border-color: #748ffc;
+  outline: none;
+}
+
+.lp-auto-choice.has-inline-params {
+  flex-wrap: wrap;
+}
+
+.lp-auto-param {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.lp-auto-param input {
+  background: #1c212b;
+  border: 1px solid #3d4454;
+  color: #e8eaed;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 16px;
+}
+
+/* 内置下拉：替代原生 select，对齐 auto-console 深色面板 */
+.lp-auto-select {
+  position: relative;
+  width: 100%;
+}
+
+.lp-auto-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  background: #1c212b;
+  border: 1px solid #3d4454;
+  color: #e8eaed;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-auto-select-trigger:hover,
+.lp-auto-select.is-open .lp-auto-select-trigger {
+  border-color: #5c6578;
+}
+
+.lp-auto-select-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-auto-select-chevron {
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #8b93a7;
+}
+
+.lp-auto-select.is-open .lp-auto-select-chevron {
+  border-top: 0;
+  border-bottom: 5px solid #8b93a7;
+}
+
+.lp-auto-select-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: 8;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: min(220px, 40vh);
+  overflow-y: auto;
+  background: #151920;
+  border: 1px solid #3d4454;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+
+.lp-auto-select-menu[hidden] {
+  display: none !important;
+}
+
+.lp-auto-select-option {
+  padding: 8px 10px;
+  color: #e8eaed;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-auto-select-option:hover,
+.lp-auto-select-option:focus {
+  background: #243044;
+  outline: none;
+}
+
+.lp-auto-select-option.is-selected {
+  background: #2a3a55;
+  color: #fff;
+}
+
+.lp-auto-paste-dialog {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.lp-auto-paste-dialog[hidden] {
+  display: none !important;
+}
+
+.lp-auto-paste-card {
+  width: min(560px, 100%);
+  max-height: min(80vh, 640px);
+  overflow: auto;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: #1a222c;
+  color: #e8eef5;
+}
+
+.lp-auto-paste-card h4 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+
+.lp-auto-paste-text {
+  width: 100%;
+  margin-top: 0.6rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: #10161d;
+  color: #e8eef5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.lp-auto-paste-error {
+  min-height: 1.2em;
+  margin: 0.45rem 0 0;
+  color: #ff8f8f;
+  font-size: 0.82rem;
+}
+
+.lp-auto-wizard-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+@media (max-width: 720px) {
+  .lp-auto-main {
+    grid-template-columns: 1fr;
+  }
+
+  .lp-auto-side {
+    border-right: 0;
+    border-bottom: 1px solid #2a2f38;
+    max-height: 160px;
+  }
+
+  .lp-auto-header {
+    padding:
+      calc(12px + env(safe-area-inset-top))
+      calc(14px + env(safe-area-inset-right))
+      10px
+      calc(14px + env(safe-area-inset-left));
+    flex-wrap: wrap;
+  }
+
+  .lp-auto-header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .lp-auto-btn {
+    min-height: 40px;
+  }
+
+  .lp-auto-shell {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .lp-auto-select-trigger {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+
+/* ---- 列车完整地图（M） ---- */
+
+.lp-train-map-root {
+  position: fixed;
+  inset: 0;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.lp-train-map-root[hidden] {
+  display: none;
+}
+
+.lp-train-map-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at center, rgb(12 18 28 / 0.55), rgb(0 0 0 / 0.78));
+}
+
+.lp-train-map-shell {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  width: min(920px, calc(100vw - 28px));
+  max-width: 96vw;
+  padding: 18px 22px 14px;
+  background:
+    linear-gradient(165deg, #1a2230 0%, #0c1018 55%, #080a0e 100%);
+  border: 3px solid #3a4a62;
+  box-shadow:
+    0 0 0 1px rgb(140 170 210 / 0.22),
+    0 22px 52px rgb(0 0 0 / 0.62),
+    inset 0 1px 0 rgb(200 220 255 / 0.08);
+  color: #dbe7f5;
+}
+
+.lp-train-map-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.lp-train-map-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7f93b0;
+}
+
+.lp-train-map-title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #eef5ff;
+}
+
+.lp-train-map-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lp-train-map-active {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fbbf24;
+  white-space: nowrap;
+}
+
+.lp-train-map-close {
+  appearance: none;
+  border: 2px solid rgb(180 60 50 / 0.9);
+  background: rgb(140 36 28 / 0.92);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+}
+
+.lp-train-map-close:hover {
+  background: rgb(170 45 35);
+}
+
+.lp-train-map-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 28px 18px 16px;
+  background: #070a10;
+  border: 2px solid #2a3648;
+  box-shadow: inset 0 0 40px rgb(0 10 30 / 0.65);
+  overflow: hidden;
+}
+
+.lp-train-map-raid {
+  position: absolute;
+  inset: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.lp-train-map-raid-sector {
+  --lp-raid-deg: 0deg;
+  --lp-raid-intensity: 0.55;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  margin: 0;
+  transform: translate(-50%, -50%) rotate(var(--lp-raid-deg)) translateY(-42%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.28;
+}
+
+.lp-train-map-raid-sector.is-active {
+  opacity: calc(0.45 + var(--lp-raid-intensity) * 0.55);
+}
+
+.lp-train-map-raid-mark {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid rgb(248 113 113 / 0.55);
+  background: transparent;
+  transform: rotate(45deg);
+}
+
+.lp-train-map-raid-sector.is-active .lp-train-map-raid-mark {
+  border-color: rgb(248 113 113 / 0.95);
+  background: color-mix(in srgb, #ef4444 calc(var(--lp-raid-intensity) * 100%), transparent);
+  box-shadow: 0 0 10px rgb(239 68 68 / 0.45);
+}
+
+.lp-train-map-raid-label {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: rgb(248 180 180 / 0.55);
+  transform: rotate(calc(var(--lp-raid-deg) * -1));
+  white-space: nowrap;
+}
+
+.lp-train-map-raid-sector.is-active .lp-train-map-raid-label {
+  color: #fecaca;
+  font-weight: 700;
+}
+
+.lp-train-map-cars {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0;
+  padding: 8px 4px;
+  list-style: none;
+  max-width: 100%;
+}
+
+.lp-train-map-coupler {
+  flex: 0 0 14px;
+  align-self: center;
+  height: 3px;
+  margin: 0 2px;
+  background: rgb(148 163 184 / 0.55);
+}
+
+.lp-train-map-car {
+  --lp-map-tone: #94a3b8;
+  position: relative;
+  flex: 0 0 auto;
+  min-width: 72px;
+  max-width: 110px;
+}
+
+.lp-train-map-car-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--lp-map-tone) 55%, #64748b);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--lp-map-tone) 28%, #0f172a) 0%,
+      #0b1220 100%
+    );
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+.lp-train-map-car-body.has-icon {
+  padding-top: 6px;
+}
+
+.lp-train-map-car-icon {
+  width: 36px;
+  height: 28px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.lp-train-map-car-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.lp-train-map-car-name {
+  font-size: 9px;
+  color: #94a3b8;
+  text-align: center;
+  line-height: 1.2;
+  max-width: 9em;
+}
+
+.lp-map-car--engine .lp-train-map-car-body,
+.lp-map-car--defense .lp-train-map-car-body,
+.lp-map-car--sensor .lp-train-map-car-body,
+.lp-map-car--compute .lp-train-map-car-body {
+  border-color: color-mix(in srgb, var(--lp-map-tone) 70%, #94a3b8);
+}
+
+.lp-train-map-pip {
+  display: block;
+  width: 6px;
+  height: 6px;
+  margin: 6px auto 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgb(148 163 184 / 0.35);
+}
+
+.lp-train-map-car.is-active .lp-train-map-car-body {
+  border-color: #fbbf24;
+  box-shadow:
+    0 0 0 1px rgb(251 191 36 / 0.45),
+    inset 0 0 18px rgb(251 191 36 / 0.12);
+}
+
+.lp-train-map-car.is-active .lp-train-map-pip {
+  background: #fbbf24;
+  box-shadow: 0 0 8px rgb(251 191 36 / 0.7);
+}
+
+.lp-train-map-forward {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #64748b;
+  align-self: flex-end;
+}
+
+.lp-train-map-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #8aa0bc;
+}
+
+.lp-page.lp-aim-mode .lp-train-map-root,
+.lp-page.lp-aim-mode .lp-train-map-root * {
+  cursor: auto;
+}
+
+@media (max-width: 720px) {
+  .lp-train-map-shell {
+    width: calc(100vw - 16px);
+    padding: 14px 12px 12px;
+  }
+
+  .lp-train-map-car {
+    min-width: 58px;
+    max-width: 84px;
+  }
+
+  .lp-train-map-car-body {
+    min-height: 64px;
+    padding: 6px 6px;
+  }
+
+  .lp-train-map-car-name {
+    display: none;
+  }
+
+  .lp-train-map-raid-sector {
+    transform: translate(-50%, -50%) rotate(var(--lp-raid-deg)) translateY(-38%);
   }
 }

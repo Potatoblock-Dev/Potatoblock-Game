@@ -8,9 +8,21 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
-# 测试阶段：燃料/弹药消耗后自动补满（含弹匣、弹药箱）。正式上线前改为 False。
+# TEST_ONLY — remove after playtest：燃料/弹药堆与仓储种子物资自动补满；炮塔箱同。
+# 不含手持武器弹匣（开火必须扣弹）。正式上线前改为 False。
 TEST_AUTO_REFILL_CONSUMABLES = True
 CONSUMABLE_TYPES = frozenset({"fuel", "ammo"})
+
+# 与 create_default_storage 对齐；无限仓储按此种子补到 maxStack（或缺省 qty）。
+STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
+    (0, {"itemId": "coal", "qty": 100}),
+    (1, {"itemId": "lumber", "qty": 64}),
+    (2, {"itemId": "iron_ingot", "qty": 40}),
+    (3, {"itemId": "scrap", "qty": 20}),
+    (4, {"itemId": "turret_ammo", "qty": 80}),
+    (5, {"itemId": "small_caliber_ammo", "qty": 90}),
+    (16, {"itemId": "gur65", "qty": 1, "mag": 27}),
+]
 
 # 与 lp-item-catalog.js 关键字段对齐（校验用）
 ITEMS: Dict[str, Dict[str, Any]] = {
@@ -19,8 +31,8 @@ ITEMS: Dict[str, Dict[str, Any]] = {
     "iron_ingot": {"maxStack": 50, "w": 1, "h": 1, "type": "metal", "canHold": True},
     "scrap": {"maxStack": 50, "w": 1, "h": 1, "type": "material", "canHold": True},
     "wrench": {"maxStack": 1, "w": 2, "h": 1, "type": "tool", "canHold": True},
-    "turret_ammo": {"maxStack": 100, "w": 1, "h": 1, "type": "ammo", "canHold": True},
-    "shell_casing": {"maxStack": 100, "w": 1, "h": 1, "type": "material", "canHold": True},
+    "turret_ammo": {"maxStack": 100, "w": 1, "h": 2, "type": "ammo", "canHold": True},
+    "shell_casing": {"maxStack": 100, "w": 1, "h": 2, "type": "material", "canHold": True},
     "small_caliber_ammo": {"maxStack": 90, "w": 1, "h": 1, "type": "ammo", "canHold": True},
     "gur65": {
         "maxStack": 1,
@@ -58,6 +70,38 @@ ITEMS: Dict[str, Dict[str, Any]] = {
 EQUIP_SLOT_KEYS = ["head", "chest", "legs", "accessory", "accessory", "backpack"]
 PLAYER_BASE = (4, 2)
 HANDS_UTILITY = 2
+HANDS_WEAPON_SLOTS = (0, 1)
+
+
+def _is_weapon(item_id: str) -> bool:
+    """与客户端 Catalog.isWeapon 对齐：type==weapon 或声明 weaponId。"""
+    item = ITEMS.get(item_id) or {}
+    return item.get("type") == "weapon" or bool(item.get("weaponId"))
+
+
+def _stack_rot(stack: Optional[Dict[str, Any]]) -> int:
+    """读取堆叠朝向：仅 0 与顺时针 90。"""
+    if not stack:
+        return 0
+    try:
+        return 90 if int(stack.get("rot") or 0) == 90 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _toggled_rot(rot: int) -> int:
+    """在 0° / 90° 之间切换。"""
+    return 0 if int(rot) == 90 else 90
+
+
+def _oriented_size(item_id: str, rot: int = 0) -> Tuple[int, int]:
+    """按朝向返回占格宽高（90° 时交换 w/h）。"""
+    item = ITEMS.get(item_id) or {}
+    w = int(item.get("w", 1))
+    h = int(item.get("h", 1))
+    if int(rot) == 90:
+        return h, w
+    return w, h
 
 
 def _norm_stack(stack: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -78,6 +122,8 @@ def _norm_stack(stack: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         except (TypeError, ValueError):
             mag = int(mag_size)
         out["mag"] = max(0, min(int(mag_size), mag))
+    if _stack_rot(stack) == 90:
+        out["rot"] = 90
     return out
 
 
@@ -103,22 +149,26 @@ class Inventory:
     def size(self) -> int:
         return len(self.slots)
 
-    def size_for(self, item_id: str) -> Tuple[int, int]:
+    def size_for(self, item_id: str, rot: int = 0) -> Tuple[int, int]:
         if self.ignore_item_size:
             return 1, 1
-        item = ITEMS.get(item_id) or {}
-        return int(item.get("w", 1)), int(item.get("h", 1))
+        return _oriented_size(item_id, rot)
 
     def accepts(self, item_id: str, index: Optional[int] = None) -> bool:
+        """手部 0/1 仅武器；快捷槽禁止武器；装备栏按 slot_keys。"""
         item = ITEMS.get(item_id)
         if not item:
             return False
         if self.id == "hands" or self.id.startswith("hands"):
             if not item.get("canHold", True):
                 return False
-            if index == HANDS_UTILITY and item.get("type") == "weapon":
-                return False
-            return True
+            is_weapon = _is_weapon(item_id)
+            if index is None:
+                # 未指定槽：武器可进 0/1，其它可进快捷槽；具体格由 can_place_at 判定。
+                return True
+            if index == HANDS_UTILITY:
+                return not is_weapon
+            return is_weapon
         if self.slot_keys:
             if index is None:
                 return any(
@@ -138,8 +188,8 @@ class Inventory:
     def coords_of(self, index: int) -> Tuple[int, int]:
         return index % self.cols, index // self.cols
 
-    def footprint(self, origin: int, item_id: str) -> Optional[List[int]]:
-        w, h = self.size_for(item_id)
+    def footprint(self, origin: int, item_id: str, rot: int = 0) -> Optional[List[int]]:
+        w, h = self.size_for(item_id, rot)
         col, row = self.coords_of(origin)
         cells: List[int] = []
         for dy in range(h):
@@ -167,10 +217,12 @@ class Inventory:
         raw = self.slots[index] if 0 <= index < self.size() else None
         return bool(raw and raw.get("occupiedBy") is not None)
 
-    def can_place_at(self, origin: int, item_id: str, ignore_origin: int = -1) -> bool:
+    def can_place_at(
+        self, origin: int, item_id: str, ignore_origin: int = -1, rot: int = 0
+    ) -> bool:
         if not self.accepts(item_id, origin):
             return False
-        cells = self.footprint(origin, item_id)
+        cells = self.footprint(origin, item_id, rot)
         if cells is None:
             return False
         for idx in cells:
@@ -189,7 +241,7 @@ class Inventory:
             if 0 <= origin < self.size():
                 self.slots[origin] = None
             return
-        cells = self.footprint(origin, str(raw["itemId"])) or [origin]
+        cells = self.footprint(origin, str(raw["itemId"]), _stack_rot(raw)) or [origin]
         for idx in cells:
             self.slots[idx] = None
 
@@ -197,13 +249,17 @@ class Inventory:
         normalized = _norm_stack(stack)
         if not normalized:
             return False
-        if not self.can_place_at(origin, normalized["itemId"], ignore_origin):
+        if not self.can_place_at(
+            origin, normalized["itemId"], ignore_origin, _stack_rot(normalized)
+        ):
             return False
         if ignore_origin >= 0:
             self.clear_footprint(ignore_origin)
         else:
             self.clear_footprint(origin)
-        cells = self.footprint(origin, normalized["itemId"]) or [origin]
+        cells = self.footprint(
+            origin, normalized["itemId"], _stack_rot(normalized)
+        ) or [origin]
         self.slots[origin] = normalized
         for idx in cells:
             if idx == origin:
@@ -219,9 +275,25 @@ class Inventory:
         self.clear_footprint(origin)
         return stack
 
-    def find_place_index(self, item_id: str) -> int:
+    def toggle_rotation(self, origin: int) -> bool:
+        """切换原点堆叠朝向；新足迹放不下则拒绝。"""
+        stack = self.get_slot(origin)
+        if not stack or self.origin_index(origin) != origin:
+            return False
+        next_rot = _toggled_rot(_stack_rot(stack))
+        if not self.can_place_at(origin, stack["itemId"], origin, next_rot):
+            return False
+        next_stack = dict(stack)
+        if next_rot == 90:
+            next_stack["rot"] = 90
+        else:
+            next_stack.pop("rot", None)
+        self.clear_footprint(origin)
+        return self.place_stack(origin, next_stack)
+
+    def find_place_index(self, item_id: str, rot: int = 0) -> int:
         for i in range(self.size()):
-            if self.can_place_at(i, item_id):
+            if self.can_place_at(i, item_id, -1, rot):
                 return i
         return -1
 
@@ -304,6 +376,8 @@ class Inventory:
                 out = {"itemId": slot["itemId"], "qty": slot["qty"]}
                 if slot.get("mag") is not None:
                     out["mag"] = slot["mag"]
+                if _stack_rot(slot) == 90:
+                    out["rot"] = 90
                 slots.append(out)
         data: Dict[str, Any] = {
             "id": self.id,
@@ -359,7 +433,14 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
         moved = min(space, incoming["qty"])
         inventory.slots[origin]["qty"] = int(current["qty"]) + moved
         leftover = incoming["qty"] - moved
-        return {"itemId": incoming["itemId"], "qty": leftover} if leftover > 0 else None
+        if leftover <= 0:
+            return None
+        left: Dict[str, Any] = {"itemId": incoming["itemId"], "qty": leftover}
+        if incoming.get("mag") is not None:
+            left["mag"] = incoming["mag"]
+        if _stack_rot(incoming) == 90:
+            left["rot"] = 90
+        return left
     removed = inventory.take_slot(origin)
     if not inventory.place_stack(origin, incoming):
         if removed:
@@ -368,14 +449,78 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
     return removed
 
 
+def weapon_accepts_ammo(weapon_item_id: str, ammo_item_id: str) -> bool:
+    """武器是否接受该弹药：须有 magazineSize，且 ammoId 与弹药 id 一致。"""
+    weapon = ITEMS.get(str(weapon_item_id) or "") or {}
+    ammo_id = str(ammo_item_id or "").strip()
+    if not weapon or not ammo_id:
+        return False
+    if weapon.get("type") != "weapon" and not weapon.get("weaponId"):
+        return False
+    mag_size = weapon.get("magazineSize")
+    accepts = weapon.get("ammoId")
+    if mag_size is None or not accepts:
+        return False
+    return str(accepts) == ammo_id
+
+
+def is_ammo_onto_weapon_intent(
+    ammo_stack: Optional[Dict[str, Any]], weapon_stack: Optional[Dict[str, Any]]
+) -> bool:
+    """弹药堆拖到带弹匣武器上时视为装填意图（兼容与否另判）。"""
+    if not ammo_stack or not weapon_stack:
+        return False
+    ammo_item = ITEMS.get(str(ammo_stack.get("itemId") or "")) or {}
+    weapon_item = ITEMS.get(str(weapon_stack.get("itemId") or "")) or {}
+    if ammo_item.get("type") != "ammo":
+        return False
+    if weapon_item.get("magazineSize") is None:
+        return False
+    return weapon_item.get("type") == "weapon" or bool(weapon_item.get("weaponId"))
+
+
+def try_load_ammo_onto_weapon(
+    weapon_inv: Inventory, weapon_index: int, ammo_stack: Dict[str, Any]
+) -> Tuple[bool, int, Optional[Dict[str, Any]]]:
+    """用弹药堆装填武器格弹匣。
+
+    返回 (ok, loaded, leftover)：
+    - ok=False：不匹配，leftover 为原弹药堆（调用方原位放回）
+    - ok=True：已写入 mag；leftover 为剩余弹药（None=用尽）
+    """
+    incoming = _norm_stack(ammo_stack)
+    if not incoming:
+        return False, 0, ammo_stack
+    origin = weapon_inv.origin_index(weapon_index)
+    weapon_stack = weapon_inv.get_slot(origin)
+    if not is_ammo_onto_weapon_intent(incoming, weapon_stack):
+        return False, 0, incoming
+    assert weapon_stack is not None
+    if not weapon_accepts_ammo(str(weapon_stack["itemId"]), str(incoming["itemId"])):
+        return False, 0, incoming
+    weapon_item = ITEMS.get(str(weapon_stack["itemId"])) or {}
+    mag_size = int(weapon_item.get("magazineSize") or 0)
+    need = mag_size - int(weapon_stack.get("mag") or 0)
+    if need <= 0:
+        return True, 0, incoming
+    take = min(need, int(incoming["qty"]))
+    if take <= 0:
+        return True, 0, incoming
+    weapon_inv.update_slot(origin, {"mag": int(weapon_stack.get("mag") or 0) + take})
+    left_qty = int(incoming["qty"]) - take
+    if left_qty <= 0:
+        return True, take, None
+    return True, take, {"itemId": incoming["itemId"], "qty": left_qty}
+
+
 def quick_transfer(source: Inventory, source_index: int, target: Inventory) -> bool:
     origin = source.origin_index(source_index)
     stack = source.get_slot(origin)
     if not stack or not target.accepts(stack["itemId"]):
         return False
     item = ITEMS.get(stack["itemId"]) or {}
-    if item.get("type") == "weapon" or stack.get("mag") is not None:
-        dest = target.find_place_index(stack["itemId"])
+    if item.get("type") == "weapon" or stack.get("mag") is not None or _stack_rot(stack) == 90:
+        dest = target.find_place_index(stack["itemId"], _stack_rot(stack))
         if dest < 0:
             return False
         if not target.place_stack(dest, stack):
@@ -395,15 +540,15 @@ def quick_transfer(source: Inventory, source_index: int, target: Inventory) -> b
 def create_default_player() -> Inventory:
     """开局背包：与 lp-inventory-core.js PLAYER_SEED 对齐。
 
-    work_satchel 为 2×2，占 0/1/4/5；其余种子落在 2/3/6/7，避免足迹冲突。
+    work_satchel 为 2×2，占 0/1/4/5；其余种子落在 2/3/6。
+    turret_ammo 现为 1×2，基础 4×2 装不下，由客户端 PLAYER_OVERFLOW_SEED 丢到脚边。
     """
     inv = Inventory("player", PLAYER_BASE[0], PLAYER_BASE[1])
     seeds = [
         (0, {"itemId": "work_satchel", "qty": 1}),
         (2, {"itemId": "coal", "qty": 16}),
         (3, {"itemId": "scrap", "qty": 4}),
-        (6, {"itemId": "turret_ammo", "qty": 24}),
-        (7, {"itemId": "small_caliber_ammo", "qty": 54}),
+        (6, {"itemId": "small_caliber_ammo", "qty": 54}),
     ]
     for index, stack in seeds:
         if not inv.place_stack(index, stack):
@@ -414,18 +559,41 @@ def create_default_player() -> Inventory:
 def create_default_storage() -> Inventory:
     """开局仓库：与客户端 STORAGE_SEED 大致对齐（数量取服务端权威默认）。"""
     inv = Inventory("storage", 8, 8)
-    for index, stack in [
-        (0, {"itemId": "coal", "qty": 100}),
-        (1, {"itemId": "lumber", "qty": 64}),
-        (2, {"itemId": "iron_ingot", "qty": 40}),
-        (3, {"itemId": "scrap", "qty": 20}),
-        (4, {"itemId": "turret_ammo", "qty": 80}),
-        (5, {"itemId": "small_caliber_ammo", "qty": 90}),
-        (16, {"itemId": "gur65", "qty": 1, "mag": 27}),
-    ]:
-        if not inv.place_stack(index, stack):
+    for index, stack in STORAGE_SEED:
+        if not inv.place_stack(index, dict(stack)):
             inv.add_item(stack["itemId"], int(stack["qty"]))
     return inv
+
+
+def _dump_stack_to_player(player: Inventory, stack: Dict[str, Any]) -> None:
+    """把堆叠退回背包（尽量保留弹匣与朝向）。"""
+    if not stack:
+        return
+    rot = _stack_rot(stack)
+    for i in range(player.size()):
+        if player.is_covered(i):
+            continue
+        if player.get_slot(i):
+            continue
+        if player.can_place_at(i, stack["itemId"], -1, rot):
+            player.place_stack(i, stack)
+            return
+    player.add_item(stack["itemId"], int(stack["qty"]))
+
+
+def sanitize_hands(hands: Inventory, player: Inventory) -> None:
+    """手部武器槽清出非武器，快捷槽清出枪械；非法物品退回背包。"""
+    for index in HANDS_WEAPON_SLOTS:
+        stack = hands.get_slot(index)
+        if stack and not _is_weapon(stack["itemId"]):
+            taken = hands.take_slot(index)
+            if taken:
+                _dump_stack_to_player(player, taken)
+    util = hands.get_slot(HANDS_UTILITY)
+    if util and _is_weapon(util["itemId"]):
+        taken = hands.take_slot(HANDS_UTILITY)
+        if taken:
+            _dump_stack_to_player(player, taken)
 
 
 def create_default_hands() -> Inventory:
@@ -472,7 +640,7 @@ def sync_player_to_equip(player: Inventory, equip: Inventory) -> List[Dict[str, 
     for stack in stacks:
         placed = False
         for i in range(player.size()):
-            if player.can_place_at(i, stack["itemId"]):
+            if player.can_place_at(i, stack["itemId"], -1, _stack_rot(stack)):
                 player.place_stack(i, stack)
                 placed = True
                 break
@@ -482,6 +650,8 @@ def sync_player_to_equip(player: Inventory, equip: Inventory) -> List[Dict[str, 
                 drop = {"itemId": stack["itemId"], "qty": leftover}
                 if stack.get("mag") is not None:
                     drop["mag"] = stack["mag"]
+                if _stack_rot(stack) == 90:
+                    drop["rot"] = 90
                 overflow.append(drop)
     return overflow
 
@@ -503,12 +673,14 @@ class PlayerInventories:
         }
 
     def apply_personal(self, data: Dict[str, Any]) -> None:
+        """套用客户端/存档私有库存，并校正手部槽合法性。"""
         if data.get("equip"):
             self.equip = Inventory.from_json(data["equip"], ignore_item_size=True, slot_keys=EQUIP_SLOT_KEYS)
         if data.get("player"):
             self.player = Inventory.from_json(data["player"])
         if data.get("hands"):
             self.hands = Inventory.from_json(data["hands"], ignore_item_size=True)
+        sanitize_hands(self.hands, self.player)
         sync_player_to_equip(self.player, self.equip)
 
 
@@ -599,13 +771,12 @@ class RoomInventories:
 
 
 def held_weapon_id(personal: PlayerInventories) -> Optional[str]:
-    """右手优先，再左手。"""
-    for index in (1, 0):
+    """右手优先，再左手（仅武器槽 0/1）。"""
+    for index in HANDS_WEAPON_SLOTS[::-1]:
         stack = personal.hands.get_slot(index)
         if not stack:
             continue
-        item = ITEMS.get(stack["itemId"]) or {}
-        if item.get("type") == "weapon":
+        if _is_weapon(stack["itemId"]):
             return stack["itemId"]
     return None
 
@@ -617,7 +788,7 @@ def item_is_consumable(item_id: str) -> bool:
 
 
 def refill_consumable_stacks(inv: Inventory) -> None:
-    """把库存中燃料/弹药堆叠补到 maxStack，武器弹匣补满。"""
+    """把库存中燃料/弹药堆叠补到 maxStack（不补武器弹匣）。"""
     for index in range(inv.size()):
         if inv.is_covered(index):
             continue
@@ -627,21 +798,43 @@ def refill_consumable_stacks(inv: Inventory) -> None:
         item = ITEMS.get(str(stack["itemId"])) or {}
         if item.get("type") in CONSUMABLE_TYPES:
             inv.slots[index]["qty"] = int(item["maxStack"])
+
+
+def refill_storage_infinite(storage: Inventory) -> None:
+    """TEST_ONLY — remove after playtest：仓储种子物资补到 maxStack（或种子 qty），取用不尽。"""
+    for _index, seed in STORAGE_SEED:
+        item_id = str(seed["itemId"])
+        item = ITEMS.get(item_id) or {}
+        want = int(item.get("maxStack") or seed.get("qty") or 1)
+        have = storage.count_item(item_id)
+        if have >= want:
+            continue
+        need = want - have
+        leftover = storage.add_item(item_id, need)
+        # 武器等带弹匣：若刚补进，把缺 mag 的堆设为满匣
         mag_size = item.get("magazineSize")
-        if mag_size is not None:
-            inv.slots[index]["mag"] = int(mag_size)
+        if mag_size is None or leftover >= need:
+            continue
+        for i in range(storage.size()):
+            if storage.is_covered(i):
+                continue
+            st = storage.slots[i]
+            if not st or st.get("itemId") != item_id:
+                continue
+            if st.get("mag") is None:
+                storage.slots[i]["mag"] = int(mag_size)
 
 
 def refill_player_consumables(personal: PlayerInventories) -> None:
-    """补满玩家背包/手部/装备里的消耗品与弹匣。"""
+    """补满玩家背包/手部/装备里的燃料与弹药堆（不补弹匣）。"""
     refill_consumable_stacks(personal.player)
     refill_consumable_stacks(personal.hands)
     refill_consumable_stacks(personal.equip)
 
 
 def refill_room_consumables(room_inv: RoomInventories) -> None:
-    """补满仓库、炮塔箱、地面堆中的消耗品。"""
-    refill_consumable_stacks(room_inv.storage)
+    """TEST_ONLY：无限仓储 + 炮塔箱/地面消耗品堆补满。"""
+    refill_storage_infinite(room_inv.storage)
     for crate in room_inv.crates.values():
         refill_consumable_stacks(crate)
     for pile in room_inv.ground:
