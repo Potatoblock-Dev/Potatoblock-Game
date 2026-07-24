@@ -258,7 +258,7 @@ class MCSMClient:
             # 保留原端口，host 从面板地址取
             panel_host_no_port = panel_host.split(":")[0]
             host_port = f"{panel_host_no_port}:{daemon_port}" if daemon_port else panel_host_no_port
-            print(f"   🔧 daemon addr 是 {addr}，已替换为 {host_port}")
+            print(f"   🔧 daemon addr 是 {addr}，已替换为面板的 IP:PORT")
 
         upload_url = f"{protocol}://{host_port}/upload/{password}"
 
@@ -415,9 +415,6 @@ def build_archive() -> tuple[Path, list[str]]:
 
 def main() -> None:
     print(f"🚀 Potatoblock CD 部署")
-    print(f"   面板: {PANEL_URL}")
-    print(f"   目标: daemon={DAEMON_ID[:8]}… instance={INSTANCE_UUID[:8]}…")
-    print(f"   目录: {UPLOAD_DIR}")
     if DRY_RUN:
         print(f"   ⚠️  试运行模式 —— 不会实际部署")
 
