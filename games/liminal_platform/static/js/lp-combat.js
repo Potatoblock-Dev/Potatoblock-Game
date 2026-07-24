@@ -2,6 +2,7 @@
  * 阈限月台战斗层：手持武器开火、后坐散布、弹匣、地上弹壳。
  * 约定：弹药/炮弹均为飞行实体（离散弹头）；禁止激光线。
  * 武装车厢 T（曳光）可带短绿色拖尾，弹体消失后尾迹再滞空渐隐；AP 无亮绿拖尾。
+ * 卫士 T 的「下一发精准」由 LpGuardTurret.accuracyBuffPending 驱动散布/准星，本文件只做准星提示同步。
  */
 (() => {
   const Catalog = window.LpItemCatalog;
@@ -60,6 +61,8 @@
       /** 命中车底 / 轨道时播尘土；scale 控制喷溅大小。 */
       impactDust: true,
       impactDustScale: 1,
+      /** 默认对小怪伤害（地面 hp18 / 空中 hp10）。 */
+      damage: 6,
     },
     shell: {
       kind: 'shell',
@@ -76,6 +79,8 @@
       flashLightR: 118,
       impactDust: true,
       impactDustScale: 1.75,
+      /** 机炮塔炮弹对小怪伤害。 */
+      damage: 14,
     },
   };
 
@@ -168,12 +173,21 @@
   /**
    * 计算准星中心空隙（像素）。
    * 手持：max(全局最小, spreadBaseDeg 换算) + 后坐张开；
-   * 机炮塔：基础空隙 + 入座塔连射 bloom（封顶 TURRET_BLOOM_GAP_PX）。
+   * 机炮塔：基础空隙 + 入座塔连射 bloom（封顶 TURRET_BLOOM_GAP_PX）；
+   * T 精准电荷待用时按 ACCURACY_BUFF_SPREAD_SCALE 收窄空隙作提示。
    */
   function getCrosshairGapPx() {
     if (document.body.classList.contains('lp-turret-mode')) {
       const bloom = window.LpGuardTurret?.getFireBloom?.('primary') ?? 0;
-      return TURRET_CROSSHAIR_MIN_GAP_PX + bloom * TURRET_BLOOM_GAP_PX;
+      let gap = TURRET_CROSSHAIR_MIN_GAP_PX + bloom * TURRET_BLOOM_GAP_PX;
+      if (window.LpGuardTurret?.isAccuracyBuffPending?.()) {
+        const scale =
+          window.LpGuardTurret?.ACCURACY_BUFF_SPREAD_SCALE ?? 0.4;
+        gap =
+          TURRET_CROSSHAIR_MIN_GAP_PX * 0.72 +
+          bloom * TURRET_BLOOM_GAP_PX * scale;
+      }
+      return gap;
     }
     const item = getHeldWeaponItem();
     const baseDeg = item?.spreadBaseDeg ?? 0.8;
@@ -184,35 +198,86 @@
 
   /**
    * 双联 2 号塔对角线准星空隙（像素）；非双联时返回 null。
+   * T 精准电荷时与主准星同样收窄。
    */
   function getSecondaryTurretCrosshairGapPx() {
     if (!document.body.classList.contains('lp-turret-mode')) return null;
     if (!window.LpGuardTurret?.isSoloDual?.()) return null;
     const bloom = window.LpGuardTurret?.getFireBloom?.('secondary') ?? 0;
-    return TURRET_CROSSHAIR_MIN_GAP_PX + bloom * TURRET_BLOOM_GAP_PX;
+    let gap = TURRET_CROSSHAIR_MIN_GAP_PX + bloom * TURRET_BLOOM_GAP_PX;
+    if (window.LpGuardTurret?.isAccuracyBuffPending?.()) {
+      const scale = window.LpGuardTurret?.ACCURACY_BUFF_SPREAD_SCALE ?? 0.4;
+      gap =
+        TURRET_CROSSHAIR_MIN_GAP_PX * 0.72 +
+        bloom * TURRET_BLOOM_GAP_PX * scale;
+    }
+    return gap;
+  }
+
+  /**
+   * 双联时按与 tryFire 相同的 canTurretFire 给主/+ 与斜向/X 准星上门控灰态。
+   * 仅视觉；不改射界几何。非双联或尚无瞄准点时清除灰态。
+   */
+  function syncTurretCrosshairGate(primaryEl, altEl) {
+    const GT = window.LpGuardTurret;
+    const dual =
+      document.body.classList.contains('lp-turret-mode') &&
+      Boolean(GT?.isSoloDual?.());
+    if (!dual) {
+      primaryEl?.classList.remove('lp-crosshair-gated');
+      altEl?.classList.remove('lp-crosshair-gated');
+      return;
+    }
+    const manned = GT.getMannedId?.();
+    const aim = GT.getLastAim?.();
+    if (!manned || !aim?.valid) {
+      primaryEl?.classList.remove('lp-crosshair-gated');
+      altEl?.classList.remove('lp-crosshair-gated');
+      return;
+    }
+    const secondaryId = manned === 'left' ? 'right' : 'left';
+    const primaryOk = Boolean(GT.canTurretFire?.(aim.x, aim.y, manned));
+    const secondaryOk = Boolean(GT.canTurretFire?.(aim.x, aim.y, secondaryId));
+    primaryEl?.classList.toggle('lp-crosshair-gated', !primaryOk);
+    altEl?.classList.toggle('lp-crosshair-gated', !secondaryOk);
   }
 
   /**
    * 同步准星张开尺寸到 --lp-aim-gap（覆盖 CSS）。
-   * 机炮双联时另写对角线准星（#lpCrosshairAlt）的空隙。
+   * 机炮双联时另写对角线准星（#lpCrosshairAlt）的空隙，并按门控着色。
+   * T 精准电荷待用时加 lp-crosshair-accuracy-buff（浅绿提示）。
    */
   function syncCrosshairBloom() {
     const gap = getCrosshairGapPx();
     const el = document.getElementById('lpCrosshair');
-    if (el) el.style.setProperty('--lp-aim-gap', `${gap.toFixed(1)}px`);
+    const buffOn = Boolean(
+      document.body.classList.contains('lp-turret-mode') &&
+        window.LpGuardTurret?.isAccuracyBuffPending?.()
+    );
+    if (el) {
+      el.style.setProperty('--lp-aim-gap', `${gap.toFixed(1)}px`);
+      el.classList.toggle('lp-crosshair-accuracy-buff', buffOn);
+    }
 
     const alt = document.getElementById('lpCrosshairAlt');
-    if (!alt) return;
+    if (!alt) {
+      syncTurretCrosshairGate(el, null);
+      return;
+    }
     const altGap = getSecondaryTurretCrosshairGapPx();
     if (altGap == null) {
       alt.hidden = true;
+      alt.classList.remove('lp-crosshair-accuracy-buff');
+      syncTurretCrosshairGate(el, alt);
       return;
     }
     alt.style.setProperty('--lp-aim-gap', `${altGap.toFixed(1)}px`);
+    alt.classList.toggle('lp-crosshair-accuracy-buff', buffOn);
     /* 显隐由 liminal-platform syncAimCursor 与 pointer 一并控制；此处只保证尺寸。 */
     if (document.body.classList.contains('lp-turret-mode')) {
       alt.hidden = Boolean(el?.hidden);
     }
+    syncTurretCrosshairGate(el, alt);
   }
 
   /**
@@ -238,6 +303,47 @@
       resting: false,
       restLife: CASING_REST_LIFE,
       scale: item?.shellCasingScale ?? 1,
+    });
+  }
+
+  /**
+   * 按 weaponId / 物品 id 解析带 fireSound 的图鉴项。
+   * @param {string|null|undefined} weaponId
+   * @returns {object|null}
+   */
+  function resolveFireSoundItem(weaponId) {
+    if (!weaponId) return null;
+    const id = String(weaponId);
+    const direct = Catalog.getItem?.(id);
+    if (direct?.fireSound) return direct;
+    const items = Catalog.ITEMS;
+    if (!items) return null;
+    return (
+      Object.values(items).find(
+        (item) => item && item.fireSound && (item.weaponId === id || item.id === id)
+      ) || null
+    );
+  }
+
+  /**
+   * 在世界坐标播放武器开火 SFX（经 LpSfx：同车厢满音量，否则距离衰减）。
+   * @param {string|object|null|undefined} itemOrWeaponId
+   * @param {number} x
+   * @param {number} y
+   * @param {{ volume?: number, rateJitter?: number, playbackRate?: number }} [extra]
+   */
+  function playFireSfxAt(itemOrWeaponId, x, y, extra = {}) {
+    const item =
+      itemOrWeaponId && typeof itemOrWeaponId === 'object'
+        ? itemOrWeaponId
+        : resolveFireSoundItem(itemOrWeaponId);
+    if (!item?.fireSound) return;
+    window.LpSfx?.play?.(item.fireSound, {
+      volume: extra.volume ?? item.fireSoundVolume ?? 0.65,
+      rateJitter: extra.rateJitter ?? item.fireSoundRateJitter ?? 0.04,
+      playbackRate: extra.playbackRate,
+      x,
+      y,
     });
   }
 
@@ -278,7 +384,9 @@
     let dir = normalizeDir(options.dirX ?? facing, options.dirY ?? 0, facing);
     const baseDeg = item.spreadBaseDeg ?? 0.6;
     const bloomDeg = item.spreadBloomDeg ?? 6;
-    const spreadRad = ((baseDeg + state.recoil * bloomDeg) * Math.PI) / 180;
+    const pressureScale = window.LpPressure?.getAccuracySpreadScale?.() ?? 1;
+    const spreadRad =
+      ((baseDeg + state.recoil * bloomDeg) * Math.PI) / 180 * pressureScale;
     dir = rotateDir(dir, (Math.random() * 2 - 1) * spreadRad);
 
     const moving = Math.abs(options.moveSpeed || 0) > 28;
@@ -307,12 +415,7 @@
     const ejectY = options.ejectY ?? muzzleY - dir.y * 14;
     spawnShellCasing(ejectX, ejectY, dir.x, dir.y, item);
     state.cooldown = getCooldown(item);
-    if (item.fireSound) {
-      window.LpSfx?.play?.(item.fireSound, {
-        volume: item.fireSoundVolume ?? 0.65,
-        rateJitter: item.fireSoundRateJitter ?? 0.04,
-      });
-    }
+    playFireSfxAt(item, muzzleX, muzzleY);
     window.dispatchEvent(
       new CustomEvent('lp:weapon-fired', {
         detail: { ...payload, handIndex: held.index },
@@ -435,6 +538,81 @@
     return window.LpArmedAmmo?.getType?.(ammoType) || null;
   }
 
+  /**
+   * 解析单发对小怪伤害：options.damage → item.damage → 弹种样式默认。
+   * @param {object} options
+   * @param {object} style
+   */
+  function resolveShotDamage(options, style) {
+    if (options.damage != null && Number.isFinite(Number(options.damage))) {
+      return Math.max(0, Number(options.damage));
+    }
+    const itemDmg = options.item?.damage;
+    if (itemDmg != null && Number.isFinite(Number(itemDmg))) {
+      return Math.max(0, Number(itemDmg));
+    }
+    const styleDmg = style?.damage;
+    if (styleDmg != null && Number.isFinite(Number(styleDmg))) {
+      return Math.max(0, Number(styleDmg));
+    }
+    return 6;
+  }
+
+  /**
+   * 命中点在本帧线段上的参数 t（0=prev，1=当前位置）。
+   * @returns {number}
+   */
+  function segmentParamAt(x0, y0, x1, y1, hx, hy) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-10) return 0;
+    return ((hx - x0) * dx + (hy - y0) * dy) / len2;
+  }
+
+  /**
+   * 本帧弹道尝试命中小怪（LpMobs）；成功则扣血并可选销毁弹体。
+   * @returns {boolean} 是否应移除弹实体
+   */
+  function applyHostileImpact(shot) {
+    const probe = window.LpMobs?.probeSegmentHit;
+    const damageFn = window.LpMobs?.damageMob;
+    if (!probe || !damageFn) return false;
+    const hit = probe(shot.prevX, shot.prevY, shot.x, shot.y);
+    if (!hit) return false;
+    if (!shot.hitIds) shot.hitIds = new Set();
+    if (shot.hitIds.has(hit.id)) return false;
+
+    const Spec = window.LiminalCarriageSpec;
+    const surface = Spec?.hitProjectileSurfaces?.(
+      shot.prevX,
+      shot.prevY,
+      shot.x,
+      shot.y
+    );
+    if (surface) {
+      const st = segmentParamAt(
+        shot.prevX,
+        shot.prevY,
+        shot.x,
+        shot.y,
+        surface.x,
+        surface.y
+      );
+      if (st + 1e-6 < hit.t) return false;
+    }
+
+    shot.hitIds.add(hit.id);
+    damageFn(hit.id, shot.damage);
+    window.LpImpactFx?.spawnDust?.(hit.x, hit.y, {
+      surface: 'hostile',
+      dirX: shot.dirX,
+      dirY: shot.dirY,
+      scale: 0.55,
+    });
+    return !shot.penetrates;
+  }
+
   /** 生成飞行弹实体（本地或远端回放；不占用冷却、不检查持枪）。 */
   function spawnProjectile(options = {}) {
     const facing = options.facing >= 0 ? 1 : -1;
@@ -464,6 +642,7 @@
       weaponId,
       style: styleKey,
       ammoType,
+      damage: resolveShotDamage(options, style),
       penetrates: Boolean(visual?.penetrates),
       /** 拖尾采样点（世界坐标，队首为最新）。 */
       trail: trailCfg ? [{ x: originX, y: originY }] : null,
@@ -573,6 +752,10 @@
       }
       if (shot.muzzleFlashLife > 0) {
         shot.muzzleFlashLife = Math.max(0, shot.muzzleFlashLife - dt);
+      }
+      if (applyHostileImpact(shot)) {
+        removeShotAt(i);
+        continue;
       }
       if (applySurfaceImpact(shot)) {
         removeShotAt(i);
@@ -860,12 +1043,526 @@
 
   syncCrosshairBloom();
 
+  /** 敌方列表（转交 LpMobs，供传感器优先读战斗层）。 */
+  function listHostiles() {
+    return window.LpMobs?.listHostiles?.() || [];
+  }
+
+  /**
+   * 车厢级锁定（单塔车 / 传感聚合）：仅存敌方 id；读时从 listHostiles 刷新。
+   * @type {Record<string, { id: string }>}
+   */
+  const lockedByCar = Object.create(null);
+  /**
+   * 多炮塔分塔锁定：carId → turretId → { id }。
+   * 卫兵左右塔各锁一敌；传感无 turretId 时聚合读任一活锁。
+   * @type {Record<string, Record<string, { id: string }>>}
+   */
+  const lockedByTurret = Object.create(null);
+
+  /** 规范化炮位 id；缺省返回 null（表示车厢级）。 */
+  function normalizeLockTurretId(turretId) {
+    if (turretId == null || turretId === '') return null;
+    return turretId === 'right' ? 'right' : 'left';
+  }
+
+  /**
+   * 列出某车已占用的分塔锁定敌 id（供选敌去重）。
+   * @param {string} carId
+   * @returns {string[]}
+   */
+  function listLockedHostileIds(carId) {
+    if (!carId) return [];
+    const map = lockedByTurret[carId];
+    if (map) {
+      const out = [];
+      for (const entry of Object.values(map)) {
+        if (entry?.id) out.push(String(entry.id));
+      }
+      return out;
+    }
+    const car = lockedByCar[carId];
+    return car?.id ? [String(car.id)] : [];
+  }
+
+  /**
+   * 分塔锁变更后同步车厢级聚合 id（传感 / 旧 API 可读到「有锁」）。
+   * @param {string} carId
+   */
+  function syncCarLockFromTurrets(carId) {
+    const map = lockedByTurret[carId];
+    if (!map) return;
+    const order = ['left', 'right', ...Object.keys(map)];
+    for (const tid of order) {
+      const entry = map[tid];
+      if (entry?.id) {
+        lockedByCar[carId] = { id: String(entry.id) };
+        return;
+      }
+    }
+    delete lockedByCar[carId];
+    if (!Object.keys(map).length) delete lockedByTurret[carId];
+  }
+
+  const LOCK_TARGET_MODES = new Set([
+    'nearest',
+    'farthest',
+    'highest_hp',
+    'lowest_hp',
+    'highest_armor',
+    'lowest_armor',
+  ]);
+
+  /** 武装车厢用于锁定/射程计数的原点（走道中心）。 */
+  function carLockOrigin(carId) {
+    const Spec = window.LiminalCarriageSpec;
+    const car = Spec?.carriageById?.(carId);
+    if (!car || !Spec) return null;
+    const mid = (Spec.WALK_LEFT + Spec.WALK_RIGHT) / 2;
+    return { x: car.worldX + mid, y: Spec.FLOOR_Y };
+  }
+
+  /** 卫兵炮弹 / 绘轨锁定量程（世界像素）。 */
+  function lockRangeForCar(carId) {
+    if (carId === 'huigui') {
+      const n = window.LpRadarScope?.getLockRangeMax?.();
+      return typeof n === 'number' && Number.isFinite(n) ? n : 6000;
+    }
+    const shell = PROJECTILE_STYLE.shell;
+    if (shell?.maxRange != null && Number.isFinite(shell.maxRange)) {
+      return Math.max(0, shell.maxRange);
+    }
+    return 9600;
+  }
+
+  /** 炮弹速度（提前量用）；缺省 PROJECTILE_SPEED_SHELL。 */
+  function shellSpeed() {
+    const s = PROJECTILE_STYLE.shell?.speed;
+    return typeof s === 'number' && s > 0 ? s : PROJECTILE_SPEED_SHELL;
+  }
+
+  /**
+   * 射程内敌方（附 _d2）；无原点或射程时为空。
+   * @param {string} carId
+   */
+  function hostilesInRange(carId) {
+    const origin = carLockOrigin(carId);
+    const range = lockRangeForCar(carId);
+    if (!origin || range <= 0) return [];
+    const r2 = range * range;
+    const out = [];
+    for (const h of listHostiles()) {
+      if (h?.x == null || !Number.isFinite(Number(h.x))) continue;
+      const y =
+        h.y != null && Number.isFinite(Number(h.y)) ? Number(h.y) : origin.y;
+      const dx = Number(h.x) - origin.x;
+      const dy = y - origin.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > r2) continue;
+      out.push({ ...h, y, _d2: d2 });
+    }
+    return out;
+  }
+
+  /** 射程内敌方数量（传感器可优先走此 API）。 */
+  function countHostilesInRange(carId) {
+    return hostilesInRange(carId).length;
+  }
+
+  /**
+   * 世界点是否落在某节车厢走道舱内（几何兜底：无 phase/inCabin 时用）。
+   * 走道 [WALK_LEFT,WALK_RIGHT] × 顶棚～地板略上；轨面车底不算舱内。
+   * @param {number} x
+   * @param {number} y
+   */
+  function isPointInsideCabin(x, y) {
+    const Spec = window.LiminalCarriageSpec;
+    if (!Spec?.CARRIAGES?.length) return false;
+    const ceilY = Spec.FLOOR_Y - Spec.scaleArt(280);
+    const floorSlack = Spec.scaleArt(36);
+    for (const car of Spec.CARRIAGES) {
+      const left = car.worldX + Spec.WALK_LEFT;
+      const right = car.worldX + Spec.WALK_RIGHT;
+      if (x < left || x > right) continue;
+      if (y >= ceilY && y <= Spec.FLOOR_Y + floorSlack) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 敌方是否在车厢内：优先 listHostiles.inCabin / phase，否则走道几何。
+   * @param {{ x?: number, y?: number, inCabin?: boolean, phase?: string }} h
+   */
+  function isHostileInsideCabin(h) {
+    if (!h) return false;
+    if (typeof h.inCabin === 'boolean') return h.inCabin;
+    const p = String(h.phase || '');
+    if (p === 'inside' || p === 'jump' || p === 'climb' || p === 'enter') return true;
+    if (h.x == null || !Number.isFinite(Number(h.x))) return false;
+    const y =
+      h.y != null && Number.isFinite(Number(h.y)) ? Number(h.y) : NaN;
+    if (!Number.isFinite(y)) return false;
+    return isPointInsideCabin(Number(h.x), y);
+  }
+
+  /**
+   * 自枪口到目标的弹道是否在命中目标前撞车底/轨面（与 applyHostileImpact 同序）。
+   * @param {number} x0
+   * @param {number} y0
+   * @param {number} x1
+   * @param {number} y1
+   */
+  function projectileClearsToPoint(x0, y0, x1, y1) {
+    const Spec = window.LiminalCarriageSpec;
+    if (!Spec?.hitProjectileSurfaces) return true;
+    const surface = Spec.hitProjectileSurfaces(x0, y0, x1, y1);
+    if (!surface) return true;
+    const st = segmentParamAt(x0, y0, x1, y1, surface.x, surface.y);
+    return st + 1e-6 >= 1;
+  }
+
+  /**
+   * 锁定交战检查用的枢轴：指定 turretId 时仅该塔；否则优先空闲自动塔，全无空闲则全部枢轴。
+   * @param {string|null|undefined} [turretId]
+   * @returns {Array<{ id: string, x: number, y: number }>}
+   */
+  function pivotsForEngageCheck(turretId) {
+    const gt = window.LpGuardTurret;
+    const pivots = gt?.getPivotsWorld?.() || [];
+    if (!pivots.length) return [];
+    const tid = normalizeLockTurretId(turretId);
+    if (tid) return pivots.filter((p) => p.id === tid);
+    const free = gt.getAutoEngageTurretIds?.() || [];
+    if (free.length) {
+      return pivots.filter((p) => free.includes(p.id));
+    }
+    return pivots;
+  }
+
+  /**
+   * 卫兵炮塔是否能打到该点：与 canTurretEngageAim / 开火同一套门（楔+最小距+钳制命中），
+   * 且弹道不被车底挡住。不要求炮管已到位；供锁定筛选。
+   * @param {number} aimX
+   * @param {number} aimY
+   * @param {Array<{ id: string, x: number, y: number }>|null|undefined} [pivots]
+   */
+  function canTurretsEngagePoint(aimX, aimY, pivots) {
+    const gt = window.LpGuardTurret;
+    const engageAim = gt?.canTurretEngageAim || gt?.isAimInFireArc;
+    if (!engageAim) return false;
+    const list = Array.isArray(pivots) && pivots.length ? pivots : pivotsForEngageCheck();
+    for (const pivot of list) {
+      if (!engageAim.call(gt, aimX, aimY, pivot.id)) continue;
+      const mx = Number(pivot.x);
+      const my = Number(pivot.y);
+      if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
+      if (projectileClearsToPoint(mx, my, aimX, aimY)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 卫兵炮是否能现实交战该敌：提前点在最大射程内，且 canTurretEngageAim（含过近拒绝、
+   * 钳制弹道命中）与车底清通。与自动开火同一套几何门；不要求炮管已到位。
+   * @param {{ x?: number, y?: number, vx?: number, vy?: number }} hostile
+   * @param {string|null|undefined} [turretId] 指定则只验该塔枢轴
+   */
+  function canEngageHostile(hostile, turretId) {
+    if (!hostile || hostile.x == null || !Number.isFinite(Number(hostile.x))) {
+      return false;
+    }
+    const pivots = pivotsForEngageCheck(turretId);
+    if (!pivots.length) return false;
+    const maxRange = lockRangeForCar('guard');
+    const r2 = maxRange * maxRange;
+    const ty =
+      hostile.y != null && Number.isFinite(Number(hostile.y))
+        ? Number(hostile.y)
+        : pivots[0].y;
+    const target = { ...hostile, x: Number(hostile.x), y: ty };
+    for (const pivot of pivots) {
+      const mx = Number(pivot.x);
+      const my = Number(pivot.y);
+      if (!Number.isFinite(mx) || !Number.isFinite(my)) continue;
+      const lead = predictLeadAim(mx, my, target);
+      const ax = Number(lead?.x);
+      const ay = Number(lead?.y);
+      if (!Number.isFinite(ax) || !Number.isFinite(ay)) continue;
+      const dx = ax - mx;
+      const dy = ay - my;
+      if (dx * dx + dy * dy > r2) continue;
+      if (canTurretsEngagePoint(ax, ay, [pivot])) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 锁定候选过滤。
+   * 卫兵车：必须 canEngageHostile（最小距/钳制命中/楔/弹道/提前点射程）；其它车：舱外可锁，舱内仅炮可打到时保留。
+   * @param {Array<object>} list
+   * @param {string} carId
+   * @param {{ turretId?: string|null }} [opts]
+   */
+  function filterLockCandidates(list, carId, opts) {
+    const turretId = opts?.turretId;
+    if (carId === 'guard') {
+      return list.filter((h) => canEngageHostile(h, turretId));
+    }
+    return list.filter((h) => {
+      if (!isHostileInsideCabin(h)) return true;
+      return canTurretsEngagePoint(Number(h.x), Number(h.y));
+    });
+  }
+
+  /**
+   * 在候选列表中按模式选最优一条（nearest / farthest / hp / armor）。
+   * @param {Array<object>} list
+   * @param {string} mode
+   */
+  function pickBestFromLockList(list, mode) {
+    if (!list.length) return null;
+    const m = LOCK_TARGET_MODES.has(String(mode)) ? String(mode) : 'nearest';
+    let best = list[0];
+    for (let i = 1; i < list.length; i += 1) {
+      const h = list[i];
+      const armor = Number(h.armor) || 0;
+      const bestArmor = Number(best.armor) || 0;
+      const hp = Number(h.hp);
+      const bestHp = Number(best.hp);
+      switch (m) {
+        case 'farthest':
+          if (h._d2 > best._d2) best = h;
+          break;
+        case 'highest_hp':
+          if (
+            (Number.isFinite(hp) ? hp : -Infinity) >
+            (Number.isFinite(bestHp) ? bestHp : -Infinity)
+          ) {
+            best = h;
+          }
+          break;
+        case 'lowest_hp':
+          if (
+            (Number.isFinite(hp) ? hp : Infinity) <
+            (Number.isFinite(bestHp) ? bestHp : Infinity)
+          ) {
+            best = h;
+          }
+          break;
+        case 'highest_armor':
+          if (armor > bestArmor) best = h;
+          break;
+        case 'lowest_armor':
+          if (armor < bestArmor) best = h;
+          break;
+        default:
+          if (h._d2 < best._d2) best = h;
+          break;
+      }
+    }
+    const { _d2, ...rest } = best;
+    return rest;
+  }
+
+  /**
+   * 按模式从射程内挑选锁定目标（nearest / farthest / hp / armor）。
+   * 卫兵：仅保留该塔（或空闲塔）几何上能打到的敌；其它车舱内默认跳过除非炮可打到。
+   * opts.excludeIds：尽量避开已锁敌（有其它可交战目标时）；仅一目标时仍可返回该敌。
+   * @param {string} carId
+   * @param {string} mode
+   * @param {{ turretId?: string|null, excludeIds?: Array<string|number> }} [opts]
+   */
+  function pickLockTarget(carId, mode, opts) {
+    const turretId = opts?.turretId ?? null;
+    let list = filterLockCandidates(hostilesInRange(carId), carId, { turretId });
+    if (!list.length) return null;
+    const excludeRaw = opts?.excludeIds;
+    if (Array.isArray(excludeRaw) && excludeRaw.length) {
+      const ex = new Set(excludeRaw.map((x) => String(x)));
+      const unique = list.filter((h) => h?.id == null || !ex.has(String(h.id)));
+      if (unique.length) list = unique;
+    }
+    return pickBestFromLockList(list, mode);
+  }
+
+  /**
+   * 写入锁定（按敌方 id）。传 turretId 时写入分塔锁；否则写车厢级并清空该车分塔表。
+   * 无 id 则清除对应作用域。
+   * @param {string} carId
+   * @param {{ id?: string|number }|null|undefined} hostile
+   * @param {string|null|undefined} [turretId]
+   */
+  function setLockedHostile(carId, hostile, turretId) {
+    if (!carId) return;
+    const tid = normalizeLockTurretId(turretId);
+    const id = hostile?.id != null ? String(hostile.id) : '';
+    if (tid) {
+      if (!id) {
+        if (lockedByTurret[carId]) {
+          delete lockedByTurret[carId][tid];
+          if (!Object.keys(lockedByTurret[carId]).length) {
+            delete lockedByTurret[carId];
+          }
+        }
+        syncCarLockFromTurrets(carId);
+        return;
+      }
+      if (!lockedByTurret[carId]) {
+        lockedByTurret[carId] = Object.create(null);
+      }
+      lockedByTurret[carId][tid] = { id };
+      syncCarLockFromTurrets(carId);
+      return;
+    }
+    delete lockedByTurret[carId];
+    if (!id) {
+      delete lockedByCar[carId];
+      return;
+    }
+    lockedByCar[carId] = { id };
+  }
+
+  /**
+   * 清除锁定。传 turretId 只清该塔；否则清整车（含全部分塔）。
+   * @param {string} carId
+   * @param {string|null|undefined} [turretId]
+   */
+  function clearLockedHostile(carId, turretId) {
+    if (!carId) return;
+    const tid = normalizeLockTurretId(turretId);
+    if (tid) {
+      setLockedHostile(carId, null, tid);
+      return;
+    }
+    delete lockedByCar[carId];
+    delete lockedByTurret[carId];
+  }
+
+  /**
+   * 将条目解析为活体敌；失效或卫兵不可交战则清对应锁并返回 null。
+   * @param {string} carId
+   * @param {{ id: string }|null|undefined} entry
+   * @param {string|null} turretId
+   */
+  function resolveLiveLockedHostile(carId, entry, turretId) {
+    if (!entry?.id) return null;
+    const live = listHostiles().find((h) => String(h?.id) === entry.id);
+    if (!live) {
+      if (turretId) clearLockedHostile(carId, turretId);
+      else if (!lockedByTurret[carId]) delete lockedByCar[carId];
+      return null;
+    }
+    if (carId === 'guard' && !canEngageHostile(live, turretId)) {
+      if (turretId) {
+        clearLockedHostile(carId, turretId);
+        return null;
+      }
+      if (!canEngageHostile(live)) {
+        clearLockedHostile(carId);
+        return null;
+      }
+    }
+    return live;
+  }
+
+  /**
+   * 读取锁定敌方（活体刷新）。传 turretId 读该塔；否则优先任一分塔活锁，再回退车厢级。
+   * 目标已死、不在列表、或卫兵炮已无法交战时清锁定并返回 null。
+   * @param {string} carId
+   * @param {string|null|undefined} [turretId]
+   */
+  function getLockedHostile(carId, turretId) {
+    if (!carId) return null;
+    const tid = normalizeLockTurretId(turretId);
+    if (tid) {
+      return resolveLiveLockedHostile(
+        carId,
+        lockedByTurret[carId]?.[tid] || null,
+        tid
+      );
+    }
+    const map = lockedByTurret[carId];
+    if (map) {
+      const order = ['left', 'right', ...Object.keys(map)];
+      const seen = new Set();
+      for (const key of order) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const live = resolveLiveLockedHostile(carId, map[key] || null, key);
+        if (live) return live;
+      }
+    }
+    return resolveLiveLockedHostile(carId, lockedByCar[carId] || null, null);
+  }
+
+  /**
+   * 锁定分类：none|ground|air|large（供 turret_lock_kind 传感）。
+   * @param {string} carId
+   */
+  function getLockedHostileKind(carId) {
+    const h = getLockedHostile(carId);
+    if (!h) return 'none';
+    const raw = String(h.kind || h.targetClass || h.class || '').toLowerCase();
+    if (raw === 'air' || raw.includes('air') || raw.includes('fly')) return 'air';
+    if (raw.includes('large') || raw.includes('capital')) return 'large';
+    if (raw === 'ground' || raw.includes('ground') || Number.isFinite(Number(h.x))) {
+      return 'ground';
+    }
+    return 'none';
+  }
+
+  /** 锁定目标当前生命值；无锁定或无数则 null。 */
+  function getLockedHostileHp(carId) {
+    const h = getLockedHostile(carId);
+    if (!h || h.hp == null || !Number.isFinite(Number(h.hp))) return null;
+    return Number(h.hp);
+  }
+
+  /**
+   * 匀速拦截提前点：解 |P+Vt−O|=St；无正解则用 dist/S 一阶提前。
+   * 炮弹速度取 PROJECTILE_STYLE.shell.speed（内置，非玩家参数）。
+   * @param {number} originX
+   * @param {number} originY
+   * @param {{ x?: number, y?: number, vx?: number, vy?: number }} target
+   */
+  function predictLeadAim(originX, originY, target) {
+    const speed = shellSpeed();
+    const maxRange = lockRangeForCar('guard');
+    const px = Number(target?.x) || 0;
+    const py = Number(target?.y) || 0;
+    const vx = Number(target?.vx) || 0;
+    const vy = Number(target?.vy) || 0;
+    const rx = px - originX;
+    const ry = py - originY;
+    let t = Math.hypot(rx, ry) / Math.max(1, speed);
+    const a = vx * vx + vy * vy - speed * speed;
+    const b = 2 * (rx * vx + ry * vy);
+    const c = rx * rx + ry * ry;
+    if (Math.abs(a) > 1e-4) {
+      const disc = b * b - 4 * a * c;
+      if (disc >= 0) {
+        const s = Math.sqrt(disc);
+        const t1 = (-b - s) / (2 * a);
+        const t2 = (-b + s) / (2 * a);
+        const pos = [t1, t2].filter((x) => x > 1e-4);
+        if (pos.length) t = Math.min(...pos);
+      }
+    } else if (Math.abs(b) > 1e-4) {
+      const tLin = -c / b;
+      if (tLin > 1e-4) t = tLin;
+    }
+    const maxT = maxRange / Math.max(1, speed);
+    t = Math.min(Math.max(0, t), maxT);
+    return { x: px + vx * t, y: py + vy * t, t, speed };
+  }
+
   window.LpCombat = {
     tryFire,
     tryReload,
     spawnProjectile,
     spawnTracer,
     spawnShellCasing,
+    playFireSfxAt,
     tick,
     draw,
     setWeapon,
@@ -880,6 +1577,17 @@
     getSecondaryTurretCrosshairGapPx,
     getWeaponId: () => state.weaponId,
     drawMuzzleFlash,
+    listHostiles,
+    countHostilesInRange,
+    pickLockTarget,
+    canEngageHostile,
+    setLockedHostile,
+    clearLockedHostile,
+    getLockedHostile,
+    listLockedHostileIds,
+    getLockedHostileKind,
+    getLockedHostileHp,
+    predictLeadAim,
     PROJECTILE_STYLE,
   };
 })();

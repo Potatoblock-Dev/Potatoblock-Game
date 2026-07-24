@@ -15,6 +15,8 @@
   const crateLabel = document.getElementById('lpGuardCrateLabel');
   const crateSub = document.getElementById('lpGuardCrateSub');
   const bagTitle = document.getElementById('lpGuardCrateBagTitle');
+  const crateTransferAll = document.getElementById('lpGuardCrateTransferAll');
+  const bagTransferAll = document.getElementById('lpGuardCrateBagTransferAll');
   const ghost = document.getElementById('lpGuardCrateDragGhost');
   const dock = document.getElementById('lpGuardCrateDock');
   const layout = document.getElementById('lpGuardCrateLayout');
@@ -270,6 +272,23 @@
     }
   }
 
+  /** 同步两侧「全部转移」按钮的禁用态与 title。 */
+  function syncTransferButtons() {
+    const c = cfg();
+    const crateQty = countCrate();
+    const bagQty = c ? countPlayer(c.itemId) : 0;
+    if (crateTransferAll) {
+      crateTransferAll.disabled = crateQty <= 0;
+      crateTransferAll.title =
+        c?.theme === 'recycle' ? '全部取出弹壳到背包' : '全部取出弹药到背包';
+    }
+    if (bagTransferAll) {
+      bagTransferAll.disabled = bagQty <= 0;
+      bagTransferAll.title =
+        c?.theme === 'recycle' ? '全部存入回收箱' : '全部存入弹药箱';
+    }
+  }
+
   /** 刷新两侧网格与主题。 */
   function render() {
     const c = cfg();
@@ -295,6 +314,7 @@
 
     bagViewInv = buildBagViewInventory(c.itemId);
     renderInvGrid(bagGrid, bagViewInv, 'bag');
+    syncTransferButtons();
     syncAmmoBottom();
   }
 
@@ -319,6 +339,31 @@
     const c = cfg();
     if (!c || qty <= 0) return 0;
     return window.LpGuardTurret?.withdrawItem?.(mode, qty) ?? 0;
+  }
+
+  /**
+   * 将该侧可转移物品（弹药箱=弹药 / 回收箱=弹壳）全部移到对侧。
+   * 走 depositItem / withdrawItem（联机发 crate 权威 op；本机尊重格容量与堆叠上限）。
+   * @param {'crate'|'bag'} from
+   */
+  function transferAll(from) {
+    const c = cfg();
+    if (!open || !c) return;
+    let moved = 0;
+    if (from === 'bag') {
+      const qty = countPlayer(c.itemId);
+      moved = deposit(qty);
+      if (moved > 0) {
+        window.LiminalInteract?.showToast?.(`全部存入 ×${moved}（箱内 ${countCrate()}）`);
+      }
+    } else {
+      const qty = countCrate();
+      moved = withdraw(qty);
+      if (moved > 0) {
+        window.LiminalInteract?.showToast?.(`全部取出 ×${moved}`);
+      }
+    }
+    render();
   }
 
   /** 打开面板。 */
@@ -502,6 +547,8 @@
   });
 
   closeButton?.addEventListener('click', closePanel);
+  crateTransferAll?.addEventListener('click', () => transferAll('crate'));
+  bagTransferAll?.addEventListener('click', () => transferAll('bag'));
   window.addEventListener('lp:bindings-changed', syncLeaveHint);
 
   window.LpGuardCrateUi = {

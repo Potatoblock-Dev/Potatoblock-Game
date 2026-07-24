@@ -9,6 +9,7 @@
     material: '材料',
     metal: '金属',
     tool: '工具',
+    medical: '医疗',
     weapon: '武器',
     ammo: '弹药',
     apparel: '服装',
@@ -207,6 +208,8 @@
       shellCasingScale: 0.42,
       /** 飞行弹种：离散子弹实体（非激光）。 */
       projectileStyle: 'bullet',
+      /** 单发对小怪伤害（地面 18 / 空中 10）。 */
+      damage: 6,
       /**
        * 最大飞行距离（世界像素）；缺省用 PROJECTILE_STYLE[projectileStyle].maxRange。
        * bullet 默认 1600；shell（机炮）默认 6400。
@@ -287,6 +290,38 @@
       equipSlot: 'backpack',
       bagCols: 6,
       bagRows: 4,
+    },
+    /**
+     * 医疗箱：手部 3 号槽（index 2，工具槽）持有；对准自己或近距队友按开火键持续治疗。
+     * 足迹默认宽 2 × 高 1；耐久存 stack.dur。
+     */
+    medkit: {
+      id: 'medkit',
+      name: '医疗箱',
+      short: '医',
+      type: 'medical',
+      use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
+      color: '#7f1d1d',
+      accent: '#fca5a5',
+      maxStack: 1,
+      w: 2,
+      h: 1,
+      canHoldInHand: true,
+      /** 仅手部 3 号（utility index 2）；主手 0/1 仍只收武器。 */
+      handSlot: 2,
+      maxDurability: 40,
+      /** 自疗回复（HP/秒）。 */
+      selfHealPerSec: 12,
+      /** 近距队友回复（HP/秒，快于自疗）。 */
+      allyHealPerSec: 28,
+      /** 持续使用时耐久消耗（点/秒）。 */
+      durCostPerSec: 8,
+      /** 可治疗队友的最大距离（世界像素）。 */
+      allyRange: 150,
+      /** 瞄准点落在自身附近视为自疗。 */
+      selfAimRadius: 72,
+      /** 瞄准点落在队友附近视为队友治疗。 */
+      allyAimRadius: 88,
     },
   };
 
@@ -432,6 +467,12 @@
     return Boolean(item && item.type === 'ammo');
   }
 
+  /** 是否为医疗箱（可持用治疗）。 */
+  function isMedkit(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && (item.id === 'medkit' || item.type === 'medical'));
+  }
+
   /**
    * 武器是否接受该弹药：须有 magazineSize，且 ammoId 与弹药 id 一致。
    * 机炮弹等无 ammoId 武器返回 false（不走背包拖装填）。
@@ -467,6 +508,7 @@
     isEquipment,
     iconFollowsRot,
     isAmmo,
+    isMedkit,
     isFullAuto,
     getWeaponId,
     weaponAcceptsAmmo,

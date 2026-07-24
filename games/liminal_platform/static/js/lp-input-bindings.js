@@ -1,5 +1,5 @@
 /**
- * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑；支持自动奔跑。
+ * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑；支持自动奔跑（进房默认锁定奔跑）。
  */
 (() => {
   const STORAGE_KEY = 'liminal-platform-input-bindings-v6';
@@ -240,8 +240,8 @@
     const status = document.getElementById('lpBindingStatus');
     if (status && !captureTarget) {
       const sprintHint = settings.autoRun
-        ? `${formatAction('sprint') || 'Shift'} 行走`
-        : `${formatAction('sprint') || 'Shift'} 奔跑`;
+        ? `${formatAction('sprint') || 'Shift'} 切换走/跑`
+        : `${formatAction('sprint') || 'Shift'} 按住奔跑`;
       status.textContent =
         `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${sprintHint}`;
     }
@@ -375,6 +375,7 @@
     window.addEventListener('keydown', captureKeyDown, true);
     window.addEventListener('keyup', captureKeyUp, true);
     renderBindings();
+    window.dispatchEvent(new CustomEvent('lp:settings-changed', { detail: { ...settings } }));
   }
 
   window.LpInputBindings = {

@@ -30,6 +30,7 @@ class PoseMessage(TypedDict):
     gait: Literal["walk", "run"]
     headLook: float
     heldId: Optional[str]
+    # 可选：aimX/aimY/turretId/pressure/hp（运行时可能缺失）
 
 
 class JoinMessage(TypedDict):
@@ -63,6 +64,16 @@ class FireMessage(TypedDict):
     dirY: float
 
 
+class HealMessage(TypedDict):
+    type: Literal["heal"]
+    protocolVersion: int
+    handIndex: int
+    dt: float
+    targetId: Optional[str]
+    aimX: float
+    aimY: float
+
+
 class InvMessage(TypedDict):
     type: Literal["inv"]
     protocolVersion: int
@@ -92,6 +103,7 @@ ClientMessage = Union[
     TrainMessage,
     FuelAddMessage,
     FireMessage,
+    HealMessage,
     InvMessage,
     AppearanceOutMessage,
     ChatOutMessage,

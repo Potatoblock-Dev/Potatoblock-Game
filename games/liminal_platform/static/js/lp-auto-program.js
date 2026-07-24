@@ -1,13 +1,13 @@
 /**
- * 枢机自动化程序状态：按车厢存 rulesByCar（仍为一数组，trigger 区分类型）。
- * 持续判定（while）段内上→下 = 优先级；瞬时触发（edge）段内顺序仅美观、无优先级。
+ * 枢机自动化程序状态：按车厢存 rulesByCar（单一优先级数组；trigger 区分 while/edge）。
+ * 列表上→下 = 优先级；冲突域内同 tick 只执行更高优先级的匹配规则。
  * 变量分全局 vars 与车厢局部 varsByCar；程序弹链 beltsByCar；持久化 localStorage。
  * 分享两种 kind：整份程序 liminal-auto-program（覆盖）；单条规则 liminal-auto-rule（追加）。
  */
 (() => {
   const STORAGE_KEY = 'lp-auto-program-v1';
   const SHARE_KIND = 'liminal-auto-program';
-  /** 单条规则剪贴板 kind（导入时追加到当前车厢对应段，不覆盖整份程序）。 */
+  /** 单条规则剪贴板 kind（导入时追加到当前车厢列表末，不覆盖整份程序）。 */
   const SHARE_RULE_KIND = 'liminal-auto-rule';
   /** v3：+beltsByCar 程序弹链；仍接受 v2。 */
   const SHARE_VERSION = 3;
@@ -126,7 +126,7 @@
   }
 
   /**
-   * 按触发类型拆成两段（各自保留相对顺序）。
+   * 按触发类型拆成两段（各自保留相对顺序）。仅用于旧两段布局迁移。
    * @returns {{ continuous: object[], edge: object[] }}
    */
   function splitRulesByTrigger(rules) {
@@ -139,12 +139,15 @@
     return { continuous, edge };
   }
 
-  /** 合并两段：持续判定在前、瞬时触发在后（导出/运行时约定）。 */
+  /** 合并两段：持续判定在前、瞬时触发在后（旧布局 → 统一列表的一次性迁移）。 */
   function joinRulesByTrigger(continuous, edge) {
     return [...(continuous || []), ...(edge || [])];
   }
 
-  /** 规范化车厢规则顺序：while 段在前、edge 段在后，段内相对顺序不变。 */
+  /**
+   * 旧存档迁移：while 段在前、edge 段在后，段内相对顺序不变。
+   * 新编辑不再按 trigger 重排——数组下标即全局优先级。
+   */
   function normalizeRulesOrder(rules) {
     const { continuous, edge } = splitRulesByTrigger(rules);
     return joinRulesByTrigger(continuous, edge);
@@ -219,6 +222,7 @@
    * 旧扁平 vars 中的局部键会作为种子写入各车厢（无 varsByCar 时）。
    * 各车只保留该车可用的局部键（含武装车传感器键）。
    * 各已知车厢若缺少库存「着火→警报」规则则补上（不覆盖已有自定义规则）。
+   * 规则列表：加载时将旧「两段」规范为 while→edge 拼接（迁移），之后顺序即全局优先级。
    */
   function normalizeProgram(data) {
     const Cat = Catalog();
@@ -305,14 +309,14 @@
     };
   }
 
-  /** 某车厢规则（副本；已按 while→edge 规范化）。 */
+  /** 某车厢规则（副本；数组下标 = 优先级，越靠前越高）。 */
   function getRules(carId) {
     const list = state.rulesByCar[carId];
     return Array.isArray(list) ? list.map(cloneRule) : [];
   }
 
   /**
-   * 某车厢按触发类型拆分的规则副本（控制台两段列表 / 运行时调度用）。
+   * 按触发类型拆分的规则副本（兼容旧调用；新 UI / 运行时用统一列表）。
    * @returns {{ continuous: object[], edge: object[] }}
    */
   function getRulesByTrigger(carId) {
@@ -320,92 +324,80 @@
   }
 
   /**
-   * 运行时读取约定：continuous 按数组顺序做优先级；edge 全部边沿触发、无顺序竞争。
-   * @returns {{ continuous: object[], edge: object[] }}
+   * 运行时读取：按数组顺序的优先级列表（含 while 与 edge）。
+   * @returns {object[]}
    */
   function rulesForRuntime(carId) {
-    return getRulesByTrigger(carId);
+    return getRules(carId);
   }
 
-  /** 写回某车厢规则并持久化（自动 while 段在前、edge 段在后）。 */
+  /** 写回某车厢规则并持久化（保留调用方给出的顺序 = 优先级）。 */
   function setRules(carId, rules) {
-    state.rulesByCar[carId] = normalizeRulesOrder(rules.slice());
+    state.rulesByCar[carId] = (rules || []).slice();
     save();
   }
 
   /**
-   * 在同一触发段内上/下移一条规则；跨段不会换位。
-   * while 段移动改变优先级；edge 段移动仅改显示顺序。
+   * 在统一优先级列表内上/下移一条规则。
    * @param {string} carId
    * @param {string} ruleId
    * @param {-1|1} delta -1 上移 / 1 下移
    * @returns {boolean} 是否发生了移动
    */
   function moveRuleInSection(carId, ruleId, delta) {
-    const { continuous, edge } = splitRulesByTrigger(getRules(carId));
-    const inEdge = edge.some((r) => r.id === ruleId);
-    const section = inEdge ? edge : continuous;
-    const i = section.findIndex((r) => r.id === ruleId);
+    const list = getRules(carId);
+    const i = list.findIndex((r) => r.id === ruleId);
     const j = i + delta;
-    if (i < 0 || j < 0 || j >= section.length) return false;
-    [section[i], section[j]] = [section[j], section[i]];
-    setRules(carId, joinRulesByTrigger(continuous, edge));
+    if (i < 0 || j < 0 || j >= list.length) return false;
+    [list[i], list[j]] = [list[j], list[i]];
+    setRules(carId, list);
     return true;
   }
 
   /**
-   * 将规则放到目标触发段的指定下标（可跨段，顺带改 trigger）。
-   * index 为「除去本条后」的插入前位置（与控制台拖放命中一致）：0=段首，length=段末。
-   * while 段顺序=优先级；edge 段顺序仅美观。持久化同 setRules。
+   * 将规则放到统一列表的指定下标（不改 trigger）。
+   * index 为「除去本条后」的插入前位置：0=表首，length=表末。
+   * 兼容旧签名 moveRuleToSlot(carId, ruleId, targetTrigger, index)：若第 3 参为 while|edge 则忽略之，取第 4 参为 index。
    * @param {string} carId
    * @param {string} ruleId
-   * @param {'while'|'edge'} targetTrigger
-   * @param {number} index
-   * @returns {boolean} 是否发生了位置或触发类型变化
+   * @param {number|'while'|'edge'} indexOrTrigger
+   * @param {number} [maybeIndex]
+   * @returns {boolean}
    */
-  function moveRuleToSlot(carId, ruleId, targetTrigger, index) {
-    const trigger = targetTrigger === 'edge' ? 'edge' : 'while';
-    const { continuous, edge } = splitRulesByTrigger(getRules(carId));
-    const fromEdge = edge.some((r) => r.id === ruleId);
-    const fromList = fromEdge ? edge : continuous;
-    const fromIdx = fromList.findIndex((r) => r.id === ruleId);
-    if (fromIdx < 0) return false;
-    const rule = fromList[fromIdx];
-    const toList = trigger === 'edge' ? edge : continuous;
-    const sameSection = (fromEdge && trigger === 'edge') || (!fromEdge && trigger !== 'edge');
-    let insertAt = Math.max(0, Number(index) || 0);
-    if (sameSection && insertAt === fromIdx && rule.trigger === trigger) {
-      return false;
+  function moveRuleToSlot(carId, ruleId, indexOrTrigger, maybeIndex) {
+    let index = indexOrTrigger;
+    if (indexOrTrigger === 'while' || indexOrTrigger === 'edge') {
+      index = maybeIndex;
     }
-    fromList.splice(fromIdx, 1);
-    if (!sameSection) rule.trigger = trigger;
-    insertAt = Math.max(0, Math.min(insertAt, toList.length));
-    toList.splice(insertAt, 0, rule);
-    setRules(carId, joinRulesByTrigger(continuous, edge));
+    const list = getRules(carId);
+    const fromIdx = list.findIndex((r) => r.id === ruleId);
+    if (fromIdx < 0) return false;
+    const rule = list[fromIdx];
+    let insertAt = Math.max(0, Number(index) || 0);
+    if (insertAt === fromIdx) return false;
+    list.splice(fromIdx, 1);
+    insertAt = Math.max(0, Math.min(insertAt, list.length));
+    list.splice(insertAt, 0, rule);
+    setRules(carId, list);
     return true;
   }
 
   /**
-   * 新增或覆盖一条规则：写入对应触发段；改 trigger 时迁到新段末（或原段原位）。
+   * 新增或覆盖一条规则：add 追加到列表末；edit 尽量保留原下标（可改 trigger）。
    * @param {'add'|'edit'} mode
    */
   function upsertRule(carId, rule, mode) {
     const next = cloneRule(rule);
     next.trigger = next.trigger === 'edge' ? 'edge' : 'while';
-    const { continuous, edge } = splitRulesByTrigger(getRules(carId));
-    const wasEdgeIdx = edge.findIndex((r) => r.id === next.id);
-    const wasContIdx = continuous.findIndex((r) => r.id === next.id);
-    const without = (list) => list.filter((r) => r.id !== next.id);
-    let cont = without(continuous);
-    let edg = without(edge);
-    if (next.trigger === 'edge') {
-      const idx = mode === 'edit' && wasEdgeIdx >= 0 ? wasEdgeIdx : edg.length;
-      edg.splice(Math.min(idx, edg.length), 0, next);
+    const list = getRules(carId);
+    const wasIdx = list.findIndex((r) => r.id === next.id);
+    const without = list.filter((r) => r.id !== next.id);
+    if (mode === 'edit' && wasIdx >= 0) {
+      without.splice(Math.min(wasIdx, without.length), 0, next);
     } else {
-      const idx = mode === 'edit' && wasContIdx >= 0 ? wasContIdx : cont.length;
-      cont.splice(Math.min(idx, cont.length), 0, next);
+      without.push(next);
     }
-    setRules(carId, joinRulesByTrigger(cont, edg));
+    setRules(carId, without);
   }
 
   /** 删除一条规则。 */
@@ -542,16 +534,18 @@
     return Object.keys(getVars());
   }
 
-  /** 新建空规则草稿（未写入前）；条件/行为默认取当前车厢可用项。 */
+  /** 新建空规则草稿（未写入前）；条件/行为默认取当前车厢可用项；trigger 由 preferEdge/preferWhile 自动默认。 */
   function createBlankRule(carId) {
     const Cat = Catalog();
     const conds = Cat.conditionsForCar(carId);
     const cond = conds[0] || Cat.CONDITIONS[Cat.CONDITIONS.length - 1];
     const acts = Cat.actionsForCar(carId);
     const act = acts[0] || Cat.ACTIONS[Cat.ACTIONS.length - 1];
+    const trigger =
+      Cat.preferredTrigger?.(cond.id, act.id) === 'edge' ? 'edge' : 'while';
     return {
       id: uid(),
-      trigger: 'while',
+      trigger,
       condition: {
         id: cond.id,
         params: Cat.defaultParams(cond.params, carId),
@@ -703,7 +697,7 @@
       kind: SHARE_KIND,
       version: SHARE_VERSION,
       _comment:
-        '枢机自动化 v3：vars=全局；varsByCar=车厢局部；beltsByCar=可选遗留程序弹链库；rulesByCar 仍为一数组（while→edge）。select_ammo：连发车 params={target:belt,slots[]}，火炮车 params={target:type:ap}；由车厢 supportsBelts 自动决定，加载时 normalize。旧 type:ap / belt:pb_… / turret_ammo 导入时自动迁移。',
+        '枢机自动化 v3：vars=全局；varsByCar=车厢局部；beltsByCar=可选遗留程序弹链库；rulesByCar 为统一优先级数组（下标越小越高；trigger=while|edge）。冲突域同 tick 只执行最高优先级匹配项。select_ammo：连发车 params={target:belt,slots[]}，火炮车 params={target:type:ap}。旧两段布局加载时 while→edge 拼接迁移。',
       vars: getGlobalVars(),
       varsByCar: { ...state.varsByCar },
       beltsByCar: { ...(state.beltsByCar || {}) },
@@ -728,7 +722,7 @@
       kind: SHARE_RULE_KIND,
       version: SHARE_RULE_VERSION,
       _comment:
-        '单条枢机自动化规则。导入时追加到当前选中车厢的对应触发段，不会覆盖整份程序。',
+        '单条枢机自动化规则。导入时追加到当前选中车厢的优先级列表末尾，不会覆盖整份程序。',
       carId: typeof carId === 'string' ? carId : '',
       rule: migrated,
     };

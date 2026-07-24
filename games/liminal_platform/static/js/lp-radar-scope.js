@@ -1,8 +1,10 @@
 /**
- * 绘轨车厢 · 雷达示波器控制台（战斗机式 PPI）。
- * 搜索雷达：360° 旋转扫描；锁定雷达：扇区角平分线跟随鼠标 / 瞄准摇杆。
- * 方位约定：12 点 / 0° = 列车前进（默认编组右 = 世界 +X）；角度顺时针递增（canvas/PPI）。
- * 当前：本列火车 + 铁轨；预留 contacts 供其它列车 / 大型敌方曲射目标。
+ * 绘轨车厢 · 雷达示波器控制台（战斗机式俯视 PPI）。
+ * 搜索雷达：360° 慢速扫描；锁定扇区内另有往返扫描线（单向 ~0.5s，往返 ~1s）。
+ * 目标（车厢 / 接触 / 小型集群标）仅在扫描线穿过方位时涂磷光，随后缓慢衰减。
+ * 小型集群：绿方块 + 下划线=地面 / 上划线=空中；附速度矢量线（簇均速 × VECTOR_LEAD_S）。
+ * 方位约定：画面 12 点 / 0° = 列车前进（航向朝上）；角度顺时针递增。
+ * 本列编组沿前进轴画俯视矩形；世界接触按站心极坐标（距离 × 方位）落图。
  */
 (() => {
   const root = document.getElementById('lpRadarScopeRoot');
@@ -10,6 +12,7 @@
   const closeBtn = document.getElementById('lpRadarScopeClose');
   const rangeReadout = document.getElementById('lpRadarRangeReadout');
   const modeReadout = document.getElementById('lpRadarModeReadout');
+  const sectorRpmReadout = document.getElementById('lpRadarSectorRpmReadout');
   const rangeTrack = document.getElementById('lpRadarRangeTrack');
   const rangeKnob = document.getElementById('lpRadarRangeKnob');
   const rangeNotches = document.getElementById('lpRadarRangeNotches');
@@ -41,13 +44,87 @@
   const RANGE_GEAR_LABELS = new Set([RANGE_WORLD_MIN, 6000, RANGE_WORLD_MAX]);
   /** 锁定扇区有效世界量程；超出部分不填充，以外弧封闭表示超出锁定量程。 */
   const LOCK_RANGE_WORLD_MAX = 6000;
+  /**
+   * 小型目标集群：示波器局部坐标邻域链接距离（世界单位）。
+   * 仅簇大小 ≥ MOB_CLUSTER_MIN 才绘制，避免单只小球成点。
+   */
+  const MOB_CLUSTER_LINK = 300;
+  const MOB_CLUSTER_MIN = 2;
+  /** 集群标：绿色方块边长（CSS 像素）。 */
+  const CLUSTER_MARK_PX = 8;
+  /** 上/下划线相对方块外缘的间隙与线长余量（CSS 像素）。 */
+  const CLUSTER_BAR_GAP_PX = 2;
+  const CLUSTER_BAR_PAD_PX = 1;
+  /**
+   * 速度矢量：世界速度 × 秒数 → 示波器位移（再 × scale 成像素）。
+   * 低于 VECTOR_MIN_SPEED 不画；屏幕长度夹在 [VECTOR_MIN_PX, VECTOR_MAX_PX]。
+   */
+  const VECTOR_LEAD_S = 3.5;
+  const VECTOR_MIN_SPEED = 18;
+  const VECTOR_MIN_PX = 7;
+  const VECTOR_MAX_PX = 40;
+  /**
+   * 本列俯视车体比例：沿轨长度 / 车宽。
+   * 旧 beam=length×0.28（≈3.6:1）过胖；现 ≈7.4:1，更接近窄长车厢。
+   */
+  const OWN_CAR_BEAM_RATIO = 0.135;
+  /**
+   * 单节车厢屏幕可读下限（CSS 像素）。
+   * 沿轨长度或车宽任一项低于此 → 整列改画一条统一矩形（避免缩成难辨碎块）。
+   */
+  const OWN_CAR_MIN_LENGTH_PX = 12;
+  const OWN_CAR_MIN_BEAM_PX = 3.5;
+  /** 搜索雷达角速度（rad/s）；满圈约 2π/1.35 ≈ 4.65s。 */
+  const SEARCH_SWEEP_RAD_PER_S = 1.35;
+  /** 搜索雷达满圈周期（ms）；由角速度推导，扫速变更时自动同步。 */
+  const SEARCH_PERIOD_MS = ((Math.PI * 2) / SEARCH_SWEEP_RAD_PER_S) * 1000;
+  /** 锁定扇区扫描线单向（边→边）时长（ms）；往返为三角波，全周期 2×。 */
+  const LOCK_SECTOR_SWEEP_PERIOD_MS = 500;
+  /** 扇区扫描往返全周期（ms）：边→边→边。 */
+  const LOCK_SECTOR_SWEEP_CYCLE_MS = LOCK_SECTOR_SWEEP_PERIOD_MS * 2;
+  /** 扇区扫描转速（RPM）= 每分钟往返次数 = 60000 / CYCLE_MS。 */
+  const LOCK_SECTOR_SWEEP_RPM = 60000 / LOCK_SECTOR_SWEEP_CYCLE_MS;
+  /** 扇区扫描频率（Hz）= 每秒往返次数 = 1000 / CYCLE_MS。 */
+  const LOCK_SECTOR_SWEEP_HZ = 1000 / LOCK_SECTOR_SWEEP_CYCLE_MS;
+  /**
+   * 磷光余晖：涂覆后到完全消失的时长（ms）。
+   * 略长于搜索满圈周期，保证下次主扫描线再次经过前仍可见。
+   */
+  const BLIP_FADE_MS = SEARCH_PERIOD_MS * 1.08;
+  /** 扫描线命中半宽（弧度）；方位落在此内或本帧扫过即涂磷光。 */
+  const SWEEP_HIT_HALF_RAD = 0.04;
+  /** 量程档位 localStorage 键（关面板 / 刷新后仍保留）。 */
+  const RANGE_STORAGE_KEY = 'lp-radar-range-v1';
+  /** 未持久化或无效时的默认量程档。 */
+  const DEFAULT_RANGE_WORLD = 4800;
   /** 示波器量程（世界单位；始终落在 RANGE_GEARS）。 */
-  let rangeWorld = 4800;
+  let rangeWorld = DEFAULT_RANGE_WORLD;
   /** 量程拉杆拖拽中的 pointerId；null 表示未拖。 */
   let rangeGearPointer = null;
   let open = false;
   let raf = 0;
   let sweepAngle = -Math.PI / 2;
+  /** 锁定扇区内快速扫描线方位（canvas 弧度）。 */
+  let sectorSweepAngle = -Math.PI / 2;
+  /** 上一帧搜索/扇区扫描角；用于跨帧扫过判定。 */
+  let prevSearchSweep = null;
+  let prevSectorSweep = null;
+  /**
+   * 磷光余晖标绘表：扫描线扫过后写入，按 paintedAt 衰减绘制。
+   * @type {Map<string, {
+   *   key: string,
+   *   kind: 'contact' | 'mob-cluster',
+   *   paintedAt: number,
+   *   sx: number,
+   *   sy: number,
+   *   style?: string,
+   *   label?: string,
+   *   mobKind?: 'ground' | 'air',
+   *   vx?: number,
+   *   vy?: number,
+   * }>}
+   */
+  let phosphorBlips = new Map();
   /** 锁定扇区角平分线（canvas 弧度，0 = 右，顺时针为正）。 */
   let lockAimAngle = -Math.PI / 2;
   let mouseAimActive = false;
@@ -78,10 +155,11 @@
   }
 
   /**
-   * 前进方向对应的 canvas 弧度（0 = 右，顺时针为正）。
+   * 前进在 PPI 上的 canvas 弧度：恒为 12 点（上，-π/2）。
+   * forwardSign 只影响世界→航向变换，不旋转表盘。
    */
-  function forwardCanvasAngle(forwardSign) {
-    return forwardSign >= 0 ? 0 : Math.PI;
+  function forwardCanvasAngle(_forwardSign) {
+    return -Math.PI / 2;
   }
 
   /** 未来：其它列车 / 敌方大型目标等接触点（世界坐标）。 */
@@ -97,18 +175,102 @@
     else externalContacts.push({ ...contact });
   }
 
-  /** 本列车厢世界中心 X。 */
+  /**
+   * 本列车厢世界中心与俯视车体尺寸（沿轨长度 / 车宽，世界单位）。
+   * 长度取走道跨度；车宽按 OWN_CAR_BEAM_RATIO，避免旧 0.28 比例过胖。
+   */
   function ownTrainCenters() {
     const Spec = window.LiminalCarriageSpec;
     if (!Spec?.CARRIAGES) return [];
     const mid = (Spec.WALK_LEFT + Spec.WALK_RIGHT) / 2;
+    const length = Math.max(120, Spec.WALK_RIGHT - Spec.WALK_LEFT);
+    const beam = Math.max(28, length * OWN_CAR_BEAM_RATIO);
     return Spec.CARRIAGES.map((car) => ({
       id: car.id,
       label: car.map?.shortLabel || car.label || car.id,
       x: car.worldX + mid,
       y: Spec.FLOOR_Y,
+      length,
+      beam,
       kind: car.id === 'huigui' ? 'own-scope' : 'own',
     }));
+  }
+
+  /**
+   * 当前量程下单节车厢屏幕尺寸是否仍可读；不可读则应改画整列一条矩形。
+   * @param {number} scale
+   * @param {{ length: number, beam: number }} sample
+   */
+  function ownCarsReadableOnScreen(scale, sample) {
+    const lengthPx = sample.length * scale;
+    const beamPx = sample.beam * scale;
+    return lengthPx >= OWN_CAR_MIN_LENGTH_PX && beamPx >= OWN_CAR_MIN_BEAM_PX;
+  }
+
+  /**
+   * 绘制俯视车体矩形（填充 + 描边）；调用前须已 translate 到车心。
+   * @param {number} lengthPx
+   * @param {number} beamPx
+   * @param {string} stroke
+   * @param {string} fill
+   */
+  function strokeTrainBodyRect(lengthPx, beamPx, stroke, fill) {
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = fill;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.rect(-beamPx / 2, -lengthPx / 2, beamPx, lengthPx);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  /**
+   * 车厢过小时：整列沿前进轴画成一条统一长矩形（中心取编组航向质心）。
+   * @param {Array<{ x: number, y: number, length: number, beam: number, kind: string }>} cars
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} forwardSign
+   */
+  function paintOwnTrainUnified(cars, cx, cy, scale, forwardSign) {
+    let uMin = Infinity;
+    let uMax = -Infinity;
+    let vSum = 0;
+    let n = 0;
+    let hasScope = false;
+    let beamWorld = 0;
+    for (const car of cars) {
+      const p = worldToScope(car.x, car.y);
+      if (Math.hypot(p.x, p.y) > rangeWorld * 1.05) continue;
+      const h = scopeToHeading(p.x, p.y, forwardSign);
+      const half = car.length / 2;
+      uMin = Math.min(uMin, h.u - half);
+      uMax = Math.max(uMax, h.u + half);
+      vSum += h.v;
+      n += 1;
+      beamWorld = Math.max(beamWorld, car.beam);
+      if (car.kind === 'own-scope') hasScope = true;
+    }
+    if (n < 1 || !(uMax > uMin)) return;
+    const uMid = (uMin + uMax) / 2;
+    const vMid = vSum / n;
+    const lengthPx = Math.max(OWN_CAR_MIN_LENGTH_PX, (uMax - uMin) * scale);
+    const beamPx = Math.max(OWN_CAR_MIN_BEAM_PX, beamWorld * scale * 1.05);
+    const scr = headingToScreen(uMid, vMid, cx, cy, scale);
+    ctx.save();
+    ctx.translate(scr.x, scr.y);
+    strokeTrainBodyRect(
+      lengthPx,
+      beamPx,
+      hasScope ? '#b8ffc8' : '#5dff8a',
+      'rgba(80, 255, 120, 0.35)',
+    );
+    ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('编组', beamPx / 2 + 4, 0);
+    ctx.restore();
   }
 
   /** 轨道在示波器上的参考 Y（本车高度附近的「轨面」带）。 */
@@ -128,11 +290,47 @@
     return (first.worldX + last.worldX + Spec.MODULE_W) / 2;
   }
 
-  /** 世界 → 示波器局部（站心为 0，+X 前进）。 */
+  /** 世界 → 示波器局部（站心为 0；+X = 编组右 / 默认前进，+Y = 轨面侧向）。 */
   function worldToScope(wx, wy) {
     const ox = radarOriginX();
     const oy = trackY();
     return { x: wx - ox, y: wy - oy };
+  }
+
+  /**
+   * 示波器局部 → 航向坐标：+u = 前进，+v = 右舷（俯视）。
+   * 倒车时翻转，使 12 点始终为当前前进方向。
+   */
+  function scopeToHeading(sx, sy, forwardSign) {
+    if (forwardSign >= 0) return { u: sx, v: sy };
+    return { u: -sx, v: -sy };
+  }
+
+  /**
+   * 航向坐标 → PPI 像素：前进朝上（12 点），右舷朝右（3 点）。
+   */
+  function headingToScreen(u, v, cx, cy, scale) {
+    return {
+      x: cx + v * scale,
+      y: cy - u * scale,
+    };
+  }
+
+  /**
+   * 示波器局部点 → 俯视 PPI 像素（站心 + 量程比例 + 航向）。
+   */
+  function scopeToPpi(sx, sy, cx, cy, scale, forwardSign) {
+    const h = scopeToHeading(sx, sy, forwardSign);
+    return headingToScreen(h.u, h.v, cx, cy, scale);
+  }
+
+  /**
+   * 示波器局部点在俯视 PPI 上的 canvas 方位角（与扫描线 / 锁定扇区同系）。
+   * 前进（+u）→ -π/2（12 点）。
+   */
+  function scopeBearingCanvas(sx, sy, forwardSign) {
+    const h = scopeToHeading(sx, sy, forwardSign);
+    return Math.atan2(-h.u, h.v);
   }
 
   /** 按外壳宽度调整 canvas 像素尺寸，保持 PPI 圆形；右侧量程档预留约 78px。 */
@@ -181,6 +379,32 @@
       }
     }
     return best;
+  }
+
+  /**
+   * 从 localStorage 读取上次量程档；缺省或无效则回默认档。
+   */
+  function loadPersistedRangeWorld() {
+    try {
+      const raw = localStorage.getItem(RANGE_STORAGE_KEY);
+      if (raw == null || raw === '') return DEFAULT_RANGE_WORLD;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return DEFAULT_RANGE_WORLD;
+      return snapRangeWorld(n);
+    } catch {
+      return DEFAULT_RANGE_WORLD;
+    }
+  }
+
+  /**
+   * 将当前量程档写入 localStorage（关面板 / 刷新后仍保留）。
+   */
+  function persistRangeWorld() {
+    try {
+      localStorage.setItem(RANGE_STORAGE_KEY, String(rangeWorld));
+    } catch {
+      /* ignore quota / private mode */
+    }
   }
 
   /** 当前量程在 RANGE_GEARS 中的下标（0 = 最近）。 */
@@ -237,6 +461,7 @@
 
   /**
    * 同步档位拉杆把手位置、刻度高亮与 aria；读数由 drawFrame 写。
+   * 副作用：持久化当前量程档到 localStorage。
    */
   function syncRangeGearUi() {
     const index = rangeGearIndex();
@@ -253,6 +478,7 @@
         btn.setAttribute('aria-selected', active ? 'true' : 'false');
       }
     }
+    persistRangeWorld();
   }
 
   /**
@@ -381,6 +607,504 @@
   }
 
   /**
+   * 读取存活小怪列表（优先 LpMobs；否则战斗层敌方摘要）。
+   * @returns {Array<{ id?: string, x: number, y: number, kind?: string, vx?: number, vy?: number }>}
+   */
+  function readMobHostiles() {
+    const fromMobs = window.LpMobs?.listHostiles?.();
+    if (Array.isArray(fromMobs) && fromMobs.length) return fromMobs;
+    const fromCombat = window.LpCombat?.listHostiles?.();
+    return Array.isArray(fromCombat) ? fromCombat : [];
+  }
+
+  /**
+   * 目标在示波器局部坐标下的速度（世界 px/s）。
+   * 编组站心固定时直接用 mob/contact 的 vx/vy（与磷光点位移一致）。
+   * @param {{ vx?: number, vy?: number }} h
+   */
+  function hostileScopeVelocity(h) {
+    return {
+      vx: Number(h?.vx) || 0,
+      vy: Number(h?.vy) || 0,
+    };
+  }
+
+  /**
+   * 按示波器局部距离把点并成簇（并查集）；返回各簇成员下标。
+   * @param {Array<{ sx: number, sy: number }>} points
+   * @param {number} linkDist 链接半径（与 sx/sy 同单位）
+   * @returns {number[][]}
+   */
+  function clusterIndicesByDist(points, linkDist) {
+    const n = points.length;
+    const parent = Array.from({ length: n }, (_, i) => i);
+    /** 并查集找根（路径压缩）。 */
+    function find(i) {
+      while (parent[i] !== i) {
+        parent[i] = parent[parent[i]];
+        i = parent[i];
+      }
+      return i;
+    }
+    /** 合并两个点的连通分量。 */
+    function unite(a, b) {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent[rb] = ra;
+    }
+    const link2 = linkDist * linkDist;
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 1; j < n; j += 1) {
+        const dx = points[i].sx - points[j].sx;
+        const dy = points[i].sy - points[j].sy;
+        if (dx * dx + dy * dy <= link2) unite(i, j);
+      }
+    }
+    /** @type {Map<number, number[]>} */
+    const groups = new Map();
+    for (let i = 0; i < n; i += 1) {
+      const r = find(i);
+      let g = groups.get(r);
+      if (!g) {
+        g = [];
+        groups.set(r, g);
+      }
+      g.push(i);
+    }
+    return [...groups.values()];
+  }
+
+  /**
+   * 统计射程内小型目标集群数（与雷达集群标同源：按 kind 分桶、链接 MOB_CLUSTER_LINK、簇 ≥ MOB_CLUSTER_MIN）。
+   * 调用方应已剔除大型目标；本函数只做邻域聚类计数，不画图。
+   * @param {Array<{ x: number, y?: number, kind?: string }>} hostiles
+   * @param {{ x: number, y: number }} origin
+   * @param {number} range 世界像素半径
+   * @returns {number}
+   */
+  function countSmallTargetClustersInRange(hostiles, origin, range) {
+    if (!origin || !(range > 0) || !Array.isArray(hostiles)) return 0;
+    const range2 = range * range;
+    /** @type {Record<string, Array<{ sx: number, sy: number }>>} */
+    const byKind = Object.create(null);
+    for (const h of hostiles) {
+      if (h?.x == null || !Number.isFinite(h.x)) continue;
+      const y = h.y != null && Number.isFinite(h.y) ? h.y : origin.y;
+      const dx = h.x - origin.x;
+      const dy = y - origin.y;
+      if (dx * dx + dy * dy > range2) continue;
+      const bucket = h.kind === 'air' ? 'air' : 'ground';
+      if (!byKind[bucket]) byKind[bucket] = [];
+      byKind[bucket].push({ sx: h.x, sy: y });
+    }
+    let n = 0;
+    for (const pts of Object.values(byKind)) {
+      if (pts.length < MOB_CLUSTER_MIN) continue;
+      const clusters = clusterIndicesByDist(pts, MOB_CLUSTER_LINK);
+      for (const idxs of clusters) {
+        if (idxs.length >= MOB_CLUSTER_MIN) n += 1;
+      }
+    }
+    return n;
+  }
+
+  /**
+   * 最短有向角差，结果落在 (-π, π]。
+   * @param {number} from
+   * @param {number} to
+   */
+  function shortestAngleDelta(from, to) {
+    let d = to - from;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d <= -Math.PI) d += Math.PI * 2;
+    return d;
+  }
+
+  /**
+   * 判断扫描线从 prev→curr（可双向）是否扫过 bearing，或当前贴在命中半宽内。
+   * 用最短角跨度，支持搜索顺扫与锁定扇区往返。
+   * @param {number|null} prev
+   * @param {number} curr
+   * @param {number} bearing
+   */
+  function sweepIlluminates(prev, curr, bearing) {
+    if (Math.abs(shortestAngleDelta(curr, bearing)) <= SWEEP_HIT_HALF_RAD) return true;
+    if (prev == null || !Number.isFinite(prev)) return false;
+    const span = shortestAngleDelta(prev, curr);
+    /* 大跳变（重开 / 瞄准猛甩）不当作扫过，避免整圈误涂 */
+    if (Math.abs(span) < 1e-9 || Math.abs(span) > Math.PI * 0.99) return false;
+    const fromPrev = shortestAngleDelta(prev, bearing);
+    if (span > 0) return fromPrev >= 0 && fromPrev <= span;
+    return fromPrev <= 0 && fromPrev >= span;
+  }
+
+  /**
+   * 锁定扇区扫描相位：三角波 0→1→0（边到边再反向），单向时长 LOCK_SECTOR_SWEEP_PERIOD_MS。
+   * @param {number} now
+   * @returns {{ t: number, dir: number }} t∈[0,1]；dir +1 朝右缘、-1 朝左缘
+   */
+  function lockSectorSweepPhase(now) {
+    const phase = (now / LOCK_SECTOR_SWEEP_PERIOD_MS) % 2;
+    if (phase <= 1) return { t: phase, dir: 1 };
+    return { t: 2 - phase, dir: -1 };
+  }
+
+  /**
+   * 扇区扫描转速读数文案（由 LOCK_SECTOR_SWEEP_* 常量推导，不依赖帧时）。
+   */
+  function formatSectorSweepRpmReadout() {
+    const rpmStr = Number.isInteger(LOCK_SECTOR_SWEEP_RPM)
+      ? String(LOCK_SECTOR_SWEEP_RPM)
+      : LOCK_SECTOR_SWEEP_RPM.toFixed(1);
+    return `扇扫 ${rpmStr} RPM · ${LOCK_SECTOR_SWEEP_HZ.toFixed(1)} Hz`;
+  }
+
+  /**
+   * 把扇区扫描转速写到页脚读数（副作用：更新 DOM）。
+   */
+  function syncSectorRpmReadout() {
+    if (!sectorRpmReadout) return;
+    sectorRpmReadout.textContent = formatSectorSweepRpmReadout();
+  }
+
+  /**
+   * 示波器局部坐标是否落在锁定扇区角与锁定量程内（俯视航向方位）。
+   * @param {number} sx
+   * @param {number} sy
+   * @param {number} forwardSign
+   */
+  function inLockSector(sx, sy, forwardSign) {
+    const dist = Math.hypot(sx, sy);
+    if (dist > Math.min(LOCK_RANGE_WORLD_MAX, rangeWorld) * 1.02) return false;
+    if (dist < 1e-3) return true;
+    const bearing = scopeBearingCanvas(sx, sy, forwardSign);
+    return Math.abs(shortestAngleDelta(lockAimAngle, bearing)) <= LOCK_HALF_RAD;
+  }
+
+  /**
+   * 写入或刷新一条磷光标绘（副作用：更新 phosphorBlips）。
+   * @param {object} blip
+   * @param {number} now
+   */
+  function paintPhosphorBlip(blip, now) {
+    phosphorBlips.set(blip.key, { ...blip, paintedAt: now });
+  }
+
+  /**
+   * 清空磷光表与扫描角历史（关面板时调用，避免残留）。
+   */
+  function clearPhosphorState() {
+    phosphorBlips.clear();
+    prevSearchSweep = null;
+    prevSectorSweep = null;
+  }
+
+  /**
+   * 收集本帧可被扫描线涂覆的目标（外部接触、小型集群标）。
+   * 本列编组不走磷光，由 paintOwnTrainTopDown 常显俯视图标。
+   * @param {number} forwardSign
+   * @returns {Array<object>}
+   */
+  function collectSweepTargets(forwardSign) {
+    /** @type {Array<object>} */
+    const out = [];
+
+    for (const c of externalContacts) {
+      if (!Number.isFinite(c?.x) || !Number.isFinite(c?.y)) continue;
+      const p = worldToScope(c.x, c.y);
+      if (Math.hypot(p.x, p.y) > rangeWorld * 1.05) continue;
+      const vel = hostileScopeVelocity(c);
+      out.push({
+        key: `contact:${c.id || `${c.x},${c.y}`}`,
+        kind: 'contact',
+        sx: p.x,
+        sy: p.y,
+        bearing: scopeBearingCanvas(p.x, p.y, forwardSign),
+        style: c.kind || 'contact',
+        label: c.label,
+        length: c.length,
+        beam: c.beam,
+        vx: vel.vx,
+        vy: vel.vy,
+      });
+    }
+
+    const hostiles = readMobHostiles();
+    /** @type {{ ground: Array<{ sx: number, sy: number, vx: number, vy: number }>, air: Array<{ sx: number, sy: number, vx: number, vy: number }> }} */
+    const byKind = { ground: [], air: [] };
+    for (const h of hostiles) {
+      if (!Number.isFinite(h?.x) || !Number.isFinite(h?.y)) continue;
+      const p = worldToScope(h.x, h.y);
+      if (Math.hypot(p.x, p.y) > rangeWorld * 1.05) continue;
+      const bucket = h.kind === 'air' ? 'air' : 'ground';
+      const vel = hostileScopeVelocity(h);
+      byKind[bucket].push({ sx: p.x, sy: p.y, vx: vel.vx, vy: vel.vy });
+    }
+
+    for (const mobKind of ['ground', 'air']) {
+      const pts = byKind[mobKind];
+      if (pts.length < MOB_CLUSTER_MIN) continue;
+      const clusters = clusterIndicesByDist(pts, MOB_CLUSTER_LINK);
+      let clusterIdx = 0;
+      for (const idxs of clusters) {
+        if (idxs.length < MOB_CLUSTER_MIN) continue;
+        let sumX = 0;
+        let sumY = 0;
+        let sumVx = 0;
+        let sumVy = 0;
+        for (const i of idxs) {
+          sumX += pts[i].sx;
+          sumY += pts[i].sy;
+          sumVx += pts[i].vx;
+          sumVy += pts[i].vy;
+        }
+        const n = idxs.length;
+        const mx = sumX / n;
+        const my = sumY / n;
+        out.push({
+          key: `mob:${mobKind}:${clusterIdx}`,
+          kind: 'mob-cluster',
+          sx: mx,
+          sy: my,
+          bearing: scopeBearingCanvas(mx, my, forwardSign),
+          mobKind,
+          vx: sumVx / n,
+          vy: sumVy / n,
+        });
+        clusterIdx += 1;
+      }
+    }
+
+    return out;
+  }
+
+  /**
+   * 按搜索线与锁定扇区快扫线更新磷光表（扫过才涂；扇区内两条线均可涂）。
+   * @param {number} now
+   * @param {number} forwardSign
+   */
+  function updatePhosphorFromSweeps(now, forwardSign) {
+    const targets = collectSweepTargets(forwardSign);
+    for (const t of targets) {
+      const bySearch = sweepIlluminates(prevSearchSweep, sweepAngle, t.bearing);
+      const inSector = inLockSector(t.sx, t.sy, forwardSign);
+      const bySector =
+        inSector && sweepIlluminates(prevSectorSweep, sectorSweepAngle, t.bearing);
+      if (!bySearch && !bySector) continue;
+      paintPhosphorBlip(t, now);
+    }
+    prevSearchSweep = sweepAngle;
+    prevSectorSweep = sectorSweepAngle;
+  }
+
+  /**
+   * 示波器速度 → 俯视 PPI 屏幕像素位移（与 scopeToPpi 同系）。
+   * @param {number} vx
+   * @param {number} vy
+   * @param {number} scale
+   * @param {number} forwardSign
+   */
+  function scopeVelocityToScreenDelta(vx, vy, scale, forwardSign) {
+    const h = scopeToHeading(vx, vy, forwardSign);
+    return { dx: h.v * scale, dy: -h.u * scale };
+  }
+
+  /**
+   * 绘制速度矢量线（簇/接触均速 × VECTOR_LEAD_S）；过慢不画。
+   * @param {number} vx
+   * @param {number} vy
+   * @param {number} scale
+   * @param {number} forwardSign
+   */
+  function drawVelocityVector(vx, vy, scale, forwardSign) {
+    const speed = Math.hypot(vx, vy);
+    if (speed < VECTOR_MIN_SPEED) return;
+    const delta = scopeVelocityToScreenDelta(vx * VECTOR_LEAD_S, vy * VECTOR_LEAD_S, scale, forwardSign);
+    let len = Math.hypot(delta.dx, delta.dy);
+    if (len < 1e-3) return;
+    if (len < VECTOR_MIN_PX) {
+      const k = VECTOR_MIN_PX / len;
+      delta.dx *= k;
+      delta.dy *= k;
+      len = VECTOR_MIN_PX;
+    } else if (len > VECTOR_MAX_PX) {
+      const k = VECTOR_MAX_PX / len;
+      delta.dx *= k;
+      delta.dy *= k;
+    }
+    ctx.strokeStyle = 'rgba(180, 255, 200, 0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(delta.dx, delta.dy);
+    ctx.stroke();
+  }
+
+  /**
+   * 绘制一条接触类磷光标（俯视坐标）；alpha 由余晖衰减。
+   * @param {object} blip
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} alpha
+   * @param {number} forwardSign
+   */
+  function drawContactBlip(blip, cx, cy, scale, alpha, forwardSign) {
+    const scr = scopeToPpi(blip.sx, blip.sy, cx, cy, scale, forwardSign);
+    const style = blip.style || 'contact';
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(scr.x, scr.y);
+    if (style === 'hostile') {
+      ctx.strokeStyle = '#ff6b4a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-5, -5, 10, 10);
+    } else if (style === 'train') {
+      const len = Math.max(8, (blip.length || 900) * scale);
+      const beam = Math.max(3, (blip.beam || 250) * scale);
+      ctx.fillStyle = '#7ec8ff';
+      ctx.fillRect(-beam / 2, -len / 2, beam, len);
+    } else {
+      ctx.fillStyle = '#9dffb0';
+      ctx.beginPath();
+      ctx.arc(0, 0, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (blip.label && style !== 'train') {
+      ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
+      ctx.font = '9px ui-monospace, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(blip.label, 6, 0);
+    }
+    drawVelocityVector(blip.vx || 0, blip.vy || 0, scale, forwardSign);
+    ctx.restore();
+  }
+
+  /**
+   * 绘制小型集群磷光标：绿方块 + 下划线=地面 / 上划线=空中 + 速度矢量。
+   * @param {object} blip
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} alpha
+   * @param {number} forwardSign
+   */
+  function drawMobClusterBlip(blip, cx, cy, scale, alpha, forwardSign) {
+    const scr = scopeToPpi(blip.sx, blip.sy, cx, cy, scale, forwardSign);
+    const half = CLUSTER_MARK_PX / 2;
+    const air = blip.mobKind === 'air';
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(scr.x, scr.y);
+    ctx.fillStyle = 'rgba(90, 255, 140, 0.55)';
+    ctx.strokeStyle = '#6dff9a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.rect(-half, -half, CLUSTER_MARK_PX, CLUSTER_MARK_PX);
+    ctx.fill();
+    ctx.stroke();
+    const barY = air
+      ? -half - CLUSTER_BAR_GAP_PX
+      : half + CLUSTER_BAR_GAP_PX;
+    const barHalf = half + CLUSTER_BAR_PAD_PX;
+    ctx.strokeStyle = '#b8ffc8';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-barHalf, barY);
+    ctx.lineTo(barHalf, barY);
+    ctx.stroke();
+    drawVelocityVector(blip.vx || 0, blip.vy || 0, scale, forwardSign);
+    ctx.restore();
+  }
+
+  /**
+   * 绘制全部磷光余晖并剔除已过期条目。
+   * @param {number} now
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} forwardSign
+   */
+  function paintPhosphorBlips(now, cx, cy, scale, forwardSign) {
+    for (const [key, blip] of phosphorBlips) {
+      const age = now - blip.paintedAt;
+      if (age >= BLIP_FADE_MS) {
+        phosphorBlips.delete(key);
+        continue;
+      }
+      const alpha = Math.max(0, 1 - age / BLIP_FADE_MS);
+      if (blip.kind === 'mob-cluster' || blip.kind === 'mob-blob') {
+        drawMobClusterBlip(blip, cx, cy, scale, alpha, forwardSign);
+      } else {
+        drawContactBlip(blip, cx, cy, scale, alpha, forwardSign);
+      }
+    }
+  }
+
+  /**
+   * 常显本列俯视编组：车厢矩形沿前进轴（12↔6）堆叠，标签在右舷侧。
+   * 单节屏幕尺寸低于 OWN_CAR_MIN_*_PX 时改画整列一条矩形。
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} forwardSign
+   */
+  function paintOwnTrainTopDown(cx, cy, scale, forwardSign) {
+    const cars = ownTrainCenters();
+    if (!cars.length) return;
+    if (!ownCarsReadableOnScreen(scale, cars[0])) {
+      paintOwnTrainUnified(cars, cx, cy, scale, forwardSign);
+      return;
+    }
+    for (const car of cars) {
+      const p = worldToScope(car.x, car.y);
+      if (Math.hypot(p.x, p.y) > rangeWorld * 1.05) continue;
+      const scr = scopeToPpi(p.x, p.y, cx, cy, scale, forwardSign);
+      let length = Math.max(8, car.length * scale);
+      let beam = Math.max(3, car.beam * scale);
+      if (car.kind === 'own-scope') {
+        length *= 1.08;
+        beam *= 1.12;
+      }
+      ctx.save();
+      ctx.translate(scr.x, scr.y);
+      strokeTrainBodyRect(
+        length,
+        beam,
+        car.kind === 'own-scope' ? '#b8ffc8' : '#5dff8a',
+        'rgba(80, 255, 120, 0.35)',
+      );
+      if (car.label) {
+        ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
+        ctx.font = '9px ui-monospace, monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(car.label, beam / 2 + 4, 0);
+      }
+      ctx.restore();
+    }
+  }
+
+  /**
+   * 绘制锁定扇区内快速扫描线（仅亮线，无拖尾楔；满圈 PPI 搜索线仍保留余晖）。
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} lockR
+   */
+  function paintSectorSweepLine(cx, cy, lockR) {
+    ctx.strokeStyle = 'rgba(220, 255, 230, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(
+      cx + Math.cos(sectorSweepAngle) * lockR,
+      cy + Math.sin(sectorSweepAngle) * lockR
+    );
+    ctx.stroke();
+  }
+
+  /**
    * 绘制锁定雷达扇区（填充 + 两侧亮边 + 外弧封闭 + 角平分线）。
    * 扇区半径为 min(LOCK_RANGE_WORLD_MAX, rangeWorld) 映射像素；量程 > 6000 时外弧停在半途表示超出锁定量程。
    */
@@ -436,6 +1160,7 @@
     const scale = radius / rangeWorld;
 
     refreshLockAimFromSticks();
+    const forwardSign = resolveForwardSign();
 
     ctx.clearRect(0, 0, cssW, cssH);
 
@@ -473,25 +1198,26 @@
     ctx.strokeStyle = 'rgba(80, 255, 120, 0.22)';
     ctx.stroke();
 
-    /* 铁轨：过站心的水平轨带（前进 = +X = 右） */
-    const trackHalf = 22 * scale;
+    /* 铁轨：过站心沿前进轴（12↔6）的俯视轨带 */
+    const trackHalf = Math.max(3, 22 * scale);
     ctx.fillStyle = 'rgba(60, 200, 100, 0.12)';
-    ctx.fillRect(cx - radius, cy - trackHalf, radius * 2, trackHalf * 2);
+    ctx.fillRect(cx - trackHalf, cy - radius, trackHalf * 2, radius * 2);
     ctx.strokeStyle = 'rgba(100, 255, 140, 0.55)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(cx - radius, cy - trackHalf);
-    ctx.lineTo(cx + radius, cy - trackHalf);
-    ctx.moveTo(cx - radius, cy + trackHalf);
-    ctx.lineTo(cx + radius, cy + trackHalf);
+    ctx.moveTo(cx - trackHalf, cy - radius);
+    ctx.lineTo(cx - trackHalf, cy + radius);
+    ctx.moveTo(cx + trackHalf, cy - radius);
+    ctx.lineTo(cx + trackHalf, cy + radius);
     ctx.stroke();
     ctx.fillStyle = 'rgba(120, 255, 160, 0.45)';
     ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText('TRACK', cx - radius + 8, cy - trackHalf - 4);
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TRACK', cx + trackHalf + 6, cy - radius + 14);
 
-    /* 搜索雷达扫描线 */
-    sweepAngle = ((now / 1000) * 1.35) % (Math.PI * 2);
+    /* 搜索雷达扫描线（满圈 ~4.65s） */
+    sweepAngle = ((now / 1000) * SEARCH_SWEEP_RAD_PER_S) % (Math.PI * 2);
     const sweepGrad = ctx.createConicGradient(sweepAngle - Math.PI / 2, cx, cy);
     sweepGrad.addColorStop(0, 'rgba(80, 255, 120, 0.35)');
     sweepGrad.addColorStop(0.08, 'rgba(80, 255, 120, 0)');
@@ -510,58 +1236,26 @@
     ctx.lineTo(cx + Math.cos(sweepAngle) * radius, cy + Math.sin(sweepAngle) * radius);
     ctx.stroke();
 
-    /* 锁定雷达扇区（在接触点之下，便于读标；有效半径 capped 于 LOCK_RANGE_WORLD_MAX） */
+    /* 锁定雷达扇区（在接触点之下；有效半径 capped 于 LOCK_RANGE_WORLD_MAX） */
     paintLockSector(cx, cy, scale);
 
-    /** 画接触点；友方车厢为长方形。 */
-    function paintContact(c, style) {
-      const p = worldToScope(c.x, c.y);
-      const sx = cx + p.x * scale;
-      const sy = cy + p.y * scale;
-      const dist = Math.hypot(p.x, p.y);
-      if (dist > rangeWorld * 1.05) return;
-      ctx.save();
-      ctx.translate(sx, sy);
-      if (style === 'own' || style === 'own-scope') {
-        const w = style === 'own-scope' ? 12 : 10;
-        const h = style === 'own-scope' ? 7 : 6;
-        ctx.strokeStyle = style === 'own-scope' ? '#b8ffc8' : '#5dff8a';
-        ctx.fillStyle = 'rgba(80, 255, 120, 0.35)';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.rect(-w / 2, -h / 2, w, h);
-        ctx.fill();
-        ctx.stroke();
-        if (c.label) {
-          ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
-          ctx.font = '9px ui-monospace, monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(c.label, 0, h / 2 + 11);
-        }
-      } else if (style === 'hostile') {
-        ctx.strokeStyle = '#ff6b4a';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(-5, -5, 10, 10);
-      } else if (style === 'train') {
-        ctx.fillStyle = '#7ec8ff';
-        ctx.fillRect(-6, -2, 12, 4);
-      } else {
-        ctx.fillStyle = '#9dffb0';
-        ctx.beginPath();
-        ctx.arc(0, 0, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
+    /* 扇区内快速扫描线（单向 ~0.5s，到边后反向，往返 ~1s） */
+    const lockWorldR = Math.min(LOCK_RANGE_WORLD_MAX, rangeWorld);
+    const lockR = lockWorldR * scale;
+    const a0 = lockAimAngle - LOCK_HALF_RAD;
+    const a1 = lockAimAngle + LOCK_HALF_RAD;
+    const sectorPhase = lockSectorSweepPhase(now);
+    sectorSweepAngle = a0 + sectorPhase.t * (a1 - a0);
+    paintSectorSweepLine(cx, cy, lockR);
 
-    for (const car of ownTrainCenters()) {
-      paintContact(car, car.kind);
-    }
-    for (const c of externalContacts) {
-      paintContact(c, c.kind || 'contact');
-    }
+    /* 扫描线命中 → 涂磷光；再画余晖衰减标 */
+    updatePhosphorFromSweeps(now, forwardSign);
+    paintPhosphorBlips(now, cx, cy, scale, forwardSign);
 
-    /* 站心十字 = 本站（绘轨） */
+    /* 本列俯视编组（常显，不依赖扫描余晖） */
+    paintOwnTrainTopDown(cx, cy, scale, forwardSign);
+
+    /* 站心十字 = 本站（绘轨）；始终可见 */
     ctx.strokeStyle = 'rgba(220, 255, 230, 0.9)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -587,6 +1281,7 @@
     if (modeReadout) {
       modeReadout.textContent = `接触 ${ownTrainCenters().length + externalContacts.length} · PPI`;
     }
+    syncSectorRpmReadout();
   }
 
   /** 动画循环。 */
@@ -600,6 +1295,7 @@
   function openPanel() {
     if (open) return;
     open = true;
+    clearPhosphorState();
     clampRangeWorld();
     root.hidden = false;
     root.setAttribute('aria-hidden', 'false');
@@ -618,6 +1314,7 @@
     document.body.classList.remove('lp-radar-panel-open');
     cancelAnimationFrame(raf);
     raf = 0;
+    clearPhosphorState();
     resetRadarAimKnob();
   }
 
@@ -692,7 +1389,8 @@
     if (open) stepRangeGear(-1);
   });
 
-  /* 量程档位拉杆：拖拽 / 键盘上下 */
+  /* 量程档位拉杆：拖拽 / 键盘上下；启动时恢复上次量程 */
+  rangeWorld = loadPersistedRangeWorld();
   buildRangeNotches();
   if (rangeTrack) {
     rangeTrack.addEventListener('pointerdown', (event) => {
@@ -774,5 +1472,11 @@
     getLockBeamWidthDeg: () => LOCK_BEAM_WIDTH_DEG,
     /** 当前锁定角平分线弧度。 */
     getLockAimAngle: () => lockAimAngle,
+    /** 小型目标邻域链接距离（世界单位；与集群标一致）。 */
+    getMobClusterLinkDist: () => MOB_CLUSTER_LINK,
+    /** 计入「集群」的最小成员数（与集群标一致；单只不计）。 */
+    getMobClusterMinSize: () => MOB_CLUSTER_MIN,
+    /** 射程内小型目标集群数（供自动化传感器；与集群标同规则）。 */
+    countSmallTargetClustersInRange,
   };
 })();

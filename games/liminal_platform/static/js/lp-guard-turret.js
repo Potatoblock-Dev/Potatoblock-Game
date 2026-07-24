@@ -6,6 +6,8 @@
  * 深内侧仅跟踪不开火；禁止浅角打进甲板/货箱/友穹；
  * 多人：座位决定控哪塔；仅 1 名操作员时可双联；联机经 pose.turretId 同步占用与瞄准。
  * 连射抬升散布 bloom（准星张开 + 弹道抖动，封顶偏低）；双联时对角线准星显示 2 号塔 bloom。
+ * T（曳光）成功耗弹后置 accuracyBuffPending：下一触发（任意弹种）半宽散布 × ACCURACY_BUFF_SPREAD_SCALE；
+ * 不叠加（仅 0/1 电荷）；双联同触发多枪口共用该次 buff，在下次耗弹时整触发消耗。
  * 开火后坐；一发弹药 → 回收箱有空则静默 +1 shell_casing（离线即时入箱；联机由服务端权威写入）；
  * 回收箱已满则对每个实际开火枪口各播抛壳 FX（散落，不入箱；与联射枪口数对齐）。
  */
@@ -40,6 +42,11 @@
   const FIRE_BLOOM_MAX = 0.72;
   const SPREAD_BASE_DEG = 0.75;
   const SPREAD_BLOOM_DEG = 3.5;
+  /**
+   * T 曳光「下一发」精准 buff：半宽角倍率（相对 SPREAD_BASE + bloom*SPREAD_BLOOM）。
+   * 例：bloom0 → 0.30°；满 bloom ≈ 1.70°（原约 4.27°）。不叠加。
+   */
+  const ACCURACY_BUFF_SPREAD_SCALE = 0.4;
   /** 炮塔最大转速（弧度/秒，约 150°/s）。 */
   const TURN_RATE = (150 * Math.PI) / 180;
   /**
@@ -47,6 +54,16 @@
    * 约 4°——跟上瞄准后可连发，回转滞后时不开火。
    */
   const AIM_FIRE_TOLERANCE = (4 * Math.PI) / 180;
+  /**
+   * 钳制弹道相对准星/提前点的最大垂距（世界像素）。
+   * ≈ 轨面怪 radius(24) + 余量；MAX_DEPRESS 软停打高时垂距远超此值 → 不可交战。
+   */
+  const ENGAGE_HIT_MISS = 28;
+  /**
+   * 最小交战距离 = 炮管世界长 × 此系数（枢轴→准星欧氏）。
+   * 1.25× ≈ 333：更近落在枪口后/车底盲区。轨面过低另由钳制垂距门拒绝。
+   */
+  const MIN_ENGAGE_BARREL_SCALE = 1.25;
   /** 独立炮管贴图（炮口朝 +X；整图绘制，禁止从 guard-car 裁切）。 */
   const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=12';
   const SHOT_SFX = '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1';
@@ -59,9 +76,10 @@
    */
   const IDLE_ANGLE = { left: Math.PI, right: 0 };
   /**
-   * 外侧下俯：仅允许略低于水平（图2 红线贴水平外向）；过大则打进甲板。
+   * 外侧下俯：水平外向再往下压的最大角（打轨道/低威胁）。
+   * 22°：相对旧 8° 明显加深；过大则打进甲板。
    */
-  const MAX_DEPRESS = (8 * Math.PI) / 180;
+  const MAX_DEPRESS = (22 * Math.PI) / 180;
   /**
    * 越过天顶后仍允许的内侧仰角余量（相对 −90°）——转向/软停用。
    * 图2：左塔上右、右塔上左交叉于车厢中线上方。
@@ -78,12 +96,12 @@
    * 各塔射界端点（画布 atan2：0=右，−π/2=上，π=左，+π/2=下）。
    *
    *   转向楔 TURN（炮管可转到）：
-   *     left:  ARC_OUT(~172°) ──经 −π / 天顶 −90°──→ ARC_IN(~−20°)
-   *     right: ARC_IN(~−160°) ──经天顶 −90°──→ ARC_OUT(~8°)
+   *     left:  ARC_OUT(~158°) ──经 −π / 天顶 −90°──→ ARC_IN(~−20°)
+   *     right: ARC_IN(~−160°) ──经天顶 −90°──→ ARC_OUT(~22°)
    *
    *   开火楔 FIRE（可射击；为 TURN 的外向子集）：
-   *     left:  ARC_OUT(~172°) ──经 −π / 天顶──→ FIRE_IN(~−36°)
-   *     right: FIRE_IN(~−144°) ──经天顶──→ ARC_OUT(~8°)
+   *     left:  ARC_OUT(~158°) ──经 −π / 天顶──→ FIRE_IN(~−36°)
+   *     right: FIRE_IN(~−144°) ──经天顶──→ ARC_OUT(~22°)
    *     区间 (FIRE_IN … ARC_IN] = 仅跟踪（深内侧交叉，约 16°）。
    *
    * 禁止再锁「纯外侧半球」(cos≤0 / cos≥0)，否则挡掉图2 的对空交叉。
@@ -134,10 +152,17 @@
     recoil: { left: 0, right: 0 },
     /** 各塔连射散布 bloom 0–FIRE_BLOOM_MAX（驱动准星张开与弹道抖动）。 */
     fireBloom: { left: 0, right: 0 },
+    /**
+     * T 曳光留下的下一发精准电荷（卫士开火控制器级，非每塔）。
+     * true=下一成功耗弹触发半宽 × ACCURACY_BUFF_SPREAD_SCALE；不叠加。
+     */
+    accuracyBuffPending: false,
     fireCooldown: 0,
     flashes: [],
     ammoInv: null,
     recycleInv: null,
+    /** 本机最近一次瞄准世界坐标（供准星门控着色在炮管回转时仍可查询）。 */
+    lastAim: { x: 0, y: 0, valid: false },
   };
 
   /** 读取或新建弹药箱 / 回收箱库存；本机 crate 若含 belts 且 LpArmedAmmo 尚无数据则迁移灌入。 */
@@ -418,6 +443,21 @@
     return [state.manned];
   }
 
+  /**
+   * 自动化可接管的空闲炮塔：本机未控且远端未占。
+   * 本地入座（含单人双联）时对应塔不交给自动，避免与玩家抢准星。
+   */
+  function getAutoEngageTurretIds() {
+    const controlled = new Set(getControlledTurretIds());
+    const out = [];
+    for (const id of ['left', 'right']) {
+      if (controlled.has(id)) continue;
+      if (state.remoteClaims[id]) continue;
+      out.push(id);
+    }
+    return out;
+  }
+
   /** 是否单人双控模式。 */
   function isSoloDual() {
     return Boolean(state.manned) && operatorCount() <= 1;
@@ -457,11 +497,14 @@
       exitTurret();
       window.LiminalInteract?.showToast?.('该炮位已被占用');
     }
-    /* 远端释放的座位 → 目标角归位；无人时双塔都归（覆盖远端曾双联的空闲侧）。 */
+    /* 远端释放的座位 → 目标角归位；仅当本帧从「有远端」变为「双空且本机未坐」时双塔归位。
+     * 持续双空不每帧打回 IDLE，以免打断自动化瞄准。 */
     for (const id of ['left', 'right']) {
       if (prevClaims[id] && !nextClaims[id]) idleTurretIfFree(id);
     }
-    if (!state.manned && !nextClaims.left && !nextClaims.right) {
+    const wasRemoteEmpty = !prevClaims.left && !prevClaims.right;
+    const nowRemoteEmpty = !nextClaims.left && !nextClaims.right;
+    if (!state.manned && nowRemoteEmpty && !wasRemoteEmpty) {
       idleTurretIfFree('left');
       idleTurretIfFree('right');
     }
@@ -519,7 +562,7 @@
   }
 
   /**
-   * 离席：立刻解除操控（可走动），清空本机散布 bloom；
+   * 离席：立刻解除操控（可走动），清空本机散布 bloom 与 T 精准电荷；
    * 无人塔只改 targetAngles→IDLE_ANGLE，炮管在 tick 中按 TURN_RATE 旋回；
    * 中途再入座则从当前角继续追准星。
    */
@@ -529,6 +572,8 @@
     state.manned = null;
     state.fireBloom.left = 0;
     state.fireBloom.right = 0;
+    state.accuracyBuffPending = false;
+    state.lastAim.valid = false;
     document.body.classList.remove('lp-turret-mode');
     idleTurretIfFree(leftSeat);
     if (operatorCount() === 0) {
@@ -665,12 +710,15 @@
   /**
    * 读取散布 bloom（0–1 标度，相对 FIRE_BLOOM_MAX 归一化供准星用）。
    * which: 'primary' = 入座塔；'secondary' = 双联另一塔；或 'left'/'right'。
+   * 入座别名在无人时返回 0；直接传 left/right 时自动化开火也可读该塔 bloom。
    */
   function getFireBloom(which) {
-    if (!state.manned) return 0;
     let id = which;
-    if (which === 'primary') id = state.manned;
-    else if (which === 'secondary') {
+    if (which === 'primary') {
+      if (!state.manned) return 0;
+      id = state.manned;
+    } else if (which === 'secondary') {
+      if (!state.manned) return 0;
       id = state.manned === 'left' ? 'right' : 'left';
     } else {
       id = normalizeTurretId(which);
@@ -687,15 +735,28 @@
 
   /**
    * 按该塔当前 bloom 给炮口方向加随机散布（实际弹道，非仅视觉）。
-   * 半宽角 = SPREAD_BASE_DEG + bloom01 * SPREAD_BLOOM_DEG（满 bloom ≈ 4.25°）。
+   * 半宽角 = SPREAD_BASE_DEG + bloom01 * SPREAD_BLOOM_DEG（满 bloom ≈ 4.25°）；
+   * opts.accuracyBuff 时再 × ACCURACY_BUFF_SPREAD_SCALE（T 下一发）。
+   * @param {number} dirX
+   * @param {number} dirY
+   * @param {string} pivotId
+   * @param {{ accuracyBuff?: boolean }} [opts]
    */
-  function applyFireSpread(dirX, dirY, pivotId) {
+  function applyFireSpread(dirX, dirY, pivotId, opts = {}) {
     const bloom01 = getFireBloom(pivotId);
-    const spreadRad =
-      ((SPREAD_BASE_DEG + bloom01 * SPREAD_BLOOM_DEG) * Math.PI) / 180;
+    let halfDeg = SPREAD_BASE_DEG + bloom01 * SPREAD_BLOOM_DEG;
+    if (opts.accuracyBuff) halfDeg *= ACCURACY_BUFF_SPREAD_SCALE;
+    const pressureScale = window.LpPressure?.getAccuracySpreadScale?.() ?? 1;
+    halfDeg *= pressureScale;
+    const spreadRad = (halfDeg * Math.PI) / 180;
     const jitter = (Math.random() * 2 - 1) * spreadRad;
     const dir = rotateDir(dirX, dirY, jitter);
     return { dirX: dir.x, dirY: dir.y, angle: Math.atan2(dir.y, dir.x) };
+  }
+
+  /** 是否持有 T 曳光留下的下一发精准电荷（供准星提示）。 */
+  function isAccuracyBuffPending() {
+    return Boolean(state.manned && state.accuracyBuffPending);
   }
 
   /** 某塔单管枪口世界坐标（含后坐后移）。 */
@@ -839,6 +900,35 @@
     return Math.atan2(aimY - world.y, aimX - world.x);
   }
 
+  /** 最小交战欧氏距离（枢轴→准星）：炮管世界长 × MIN_ENGAGE_BARREL_SCALE。 */
+  function minEngageDistWorld() {
+    return barrelLengthWorld() * MIN_ENGAGE_BARREL_SCALE;
+  }
+
+  /**
+   * 钳制炮管角对应的弹道是否能打到准星：距枢轴够远、在炮口前方、垂距 ≤ ENGAGE_HIT_MISS。
+   * 与出膛方向同几何（枢轴沿 clamped 角的射线 ≈ 枪口射线）。
+   * @param {number} aimX
+   * @param {number} aimY
+   * @param {string} pivotId
+   * @param {number} clampedAngle
+   */
+  function clampedAimWouldHit(aimX, aimY, pivotId, clampedAngle) {
+    const pivot = ART_PIVOTS.find((p) => p.id === pivotId);
+    if (!pivot) return false;
+    const world = artToWorld(pivot.x, pivot.y);
+    const vx = aimX - world.x;
+    const vy = aimY - world.y;
+    const dist = Math.hypot(vx, vy);
+    if (dist < minEngageDistWorld()) return false;
+    const dirX = Math.cos(clampedAngle);
+    const dirY = Math.sin(clampedAngle);
+    const along = vx * dirX + vy * dirY;
+    if (along <= 0) return false;
+    const perp2 = vx * vx + vy * vy - along * along;
+    return perp2 <= ENGAGE_HIT_MISS * ENGAGE_HIT_MISS;
+  }
+
   /**
    * 准星原始角是否落在该塔开火楔内（不含深内侧跟踪区）。
    */
@@ -855,20 +945,43 @@
   }
 
   /**
+   * 该塔对准星是否具备几何交战条件（与 canTurretFire / 锁定同一套门），不要求炮管已到位。
+   * 条件：钳制角在开火楔内 ∧ 枢轴距准星 ≥ 最小交战距 ∧ 钳制射线垂距 ≤ ENGAGE_HIT_MISS。
+   * 禁止仅因「外侧软停仍在楔内」交战——俯角不够时弹道打高，不得开火/锁定。
+   * 深内侧 (FIRE_IN…ARC_IN]：钳制角不在开火楔 → 不可交战。
+   */
+  function canTurretEngageAim(aimX, aimY, pivotId) {
+    const id = pivotId === 'right' ? 'right' : 'left';
+    const raw = rawAimAngle(aimX, aimY, id);
+    const clamped = clampTurretAngle(raw, id);
+    if (!angleInFireWedge(clamped, id)) return false;
+    return clampedAimWouldHit(aimX, aimY, id, clamped);
+  }
+
+  /**
    * 指定炮塔在准星处是否可开火（相对该塔枢轴独立）。
-   * 条件：炮管已跟上钳制目标 ∧ 炮管角在开火楔内 ∧
-   *   （准星在开火楔内，或准星越出转向楔且钳制落点仍在开火楔——典型为外侧 ARC_OUT 软停）。
-   * 深内侧 (FIRE_IN…ARC_IN] 可跟踪、不开火。不检查弹药/冷却（由 tryFire 负责）。
+   * 条件：炮管已跟上钳制目标 ∧ canTurretEngageAim（含最小距 + 钳制命中）。
+   * 不检查弹药/冷却（由 tryFire 负责）。
    */
   function canTurretFire(aimX, aimY, pivotId) {
     const id = pivotId === 'right' ? 'right' : 'left';
-    const raw = rawAimAngle(aimX, aimY, id);
     if (!isBarrelAimedAt(aimX, aimY, id)) return false;
-    const barrel = state.angles[id];
-    if (!angleInFireWedge(barrel, id)) return false;
-    if (angleInFireWedge(raw, id)) return true;
-    /* 准星越界软停：仅外侧钳制仍在开火楔内时允许沿炮管开火；ARC_IN 软停不在开火楔。 */
-    return !angleInTurretArc(raw, id);
+    return canTurretEngageAim(aimX, aimY, id);
+  }
+
+  /**
+   * 任一给定炮塔（缺省左右双塔）对准星是否具备几何交战条件。
+   * 锁定筛选 / 双联门控复用；不要求炮管已到位、不查弹药。
+   * @param {number} aimX
+   * @param {number} aimY
+   * @param {string[]|null|undefined} turretIds
+   */
+  function canEngage(aimX, aimY, turretIds) {
+    const ids =
+      Array.isArray(turretIds) && turretIds.length
+        ? turretIds
+        : ['left', 'right'];
+    return ids.some((id) => canTurretEngageAim(aimX, aimY, id));
   }
 
   /**
@@ -881,9 +994,19 @@
     return getControlledTurretIds().some((id) => canTurretFire(aimX, aimY, id));
   }
 
-  /** 按准星更新本机控制的炮塔目标朝向。 */
-  function aimControlled(aimX, aimY) {
-    for (const id of getControlledTurretIds()) {
+  /**
+   * 将准星应用到指定炮塔的目标角（不要求入座；自动化与入座共用）。
+   * @param {number} aimX
+   * @param {number} aimY
+   * @param {string[]} turretIds
+   */
+  function aimTurrets(aimX, aimY, turretIds) {
+    state.lastAim.x = aimX;
+    state.lastAim.y = aimY;
+    state.lastAim.valid = true;
+    const ids = Array.isArray(turretIds) ? turretIds : [];
+    for (const raw of ids) {
+      const id = raw === 'right' ? 'right' : 'left';
       const pivot = ART_PIVOTS.find((p) => p.id === id);
       if (!pivot) continue;
       const world = artToWorld(pivot.x, pivot.y);
@@ -895,6 +1018,22 @@
   }
 
   /**
+   * 按准星更新本机控制的炮塔目标朝向，并记下 lastAim（双联准星门控色依赖）。
+   */
+  function aimControlled(aimX, aimY) {
+    aimTurrets(aimX, aimY, getControlledTurretIds());
+  }
+
+  /** 本机最近瞄准点（世界坐标）；未瞄准过则 valid=false。 */
+  function getLastAim() {
+    return {
+      x: state.lastAim.x,
+      y: state.lastAim.y,
+      valid: state.lastAim.valid,
+    };
+  }
+
+  /**
    * 兼容旧调用名：入座后瞄准本机控制的塔（单人双塔 / 多人单塔）。
    */
   function aimBoth(aimX, aimY) {
@@ -902,16 +1041,42 @@
   }
 
   /**
-   * 炮塔开火：耗弹 1，仅对「本机控制且该塔射界/炮管就绪」的塔联射。
-   * 各塔独立判定；无一就绪时只更新瞄准、不开火不耗弹。
-   * 每耗 1 发：回收箱有空 → +1 shell_casing（一次）；已满 → 每个开火枪口各抛壳 FX。
+   * 对指定炮塔开火（入座 / 自动化共用）：耗弹、射界、弹链、抛壳、T 精准与原先 tryFire 一致。
+   * 无一塔就绪时只更新瞄准、不开火不耗弹。
+   * opts.aimsByTurret：多塔各锁不同敌时按塔准星验开火门并保持分塔瞄准（不覆盖为单一点）。
+   * @param {number} aimX
+   * @param {number} aimY
+   * @param {string[]} turretIds
+   * @param {{
+   *   silentEmpty?: boolean,
+   *   eventTurretId?: string|null,
+   *   aimsByTurret?: Record<string, { x: number, y: number }>
+   * }} [opts]
    */
-  function tryFire(aimX, aimY) {
-    if (!state.manned || state.fireCooldown > 0) return null;
-    aimControlled(aimX, aimY);
-    const ready = getControlledTurretIds().filter((id) =>
-      canTurretFire(aimX, aimY, id)
-    );
+  function tryFireTurrets(aimX, aimY, turretIds, opts = {}) {
+    if (state.fireCooldown > 0) return null;
+    const ids = Array.isArray(turretIds) ? turretIds : [];
+    if (!ids.length) return null;
+    const perAim = opts.aimsByTurret || null;
+    if (perAim) {
+      for (const raw of ids) {
+        const id = raw === 'right' ? 'right' : 'left';
+        const a = perAim[id];
+        if (a && Number.isFinite(Number(a.x)) && Number.isFinite(Number(a.y))) {
+          aimTurrets(Number(a.x), Number(a.y), [id]);
+        } else {
+          aimTurrets(aimX, aimY, [id]);
+        }
+      }
+    } else {
+      aimTurrets(aimX, aimY, ids);
+    }
+    const ready = ids.filter((id) => {
+      const a = perAim?.[id === 'right' ? 'right' : id === 'left' ? 'left' : id];
+      const ax = a && Number.isFinite(Number(a.x)) ? Number(a.x) : aimX;
+      const ay = a && Number.isFinite(Number(a.y)) ? Number(a.y) : aimY;
+      return canTurretFire(ax, ay, id);
+    });
     if (ready.length === 0) return null;
     if (window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
       ensureInventories();
@@ -922,32 +1087,50 @@
       }
     }
     if (ammoCount() <= 0) {
-      window.LiminalInteract?.showToast?.('弹药箱没有弹药');
+      if (!opts.silentEmpty) {
+        window.LiminalInteract?.showToast?.('弹药箱没有弹药');
+      }
       state.fireCooldown = 0.35;
       return null;
     }
+
+    /*
+     * 弹链：先 peek 本发类型；出膛成功后再 advance / 耗弹 / 冷却。
+     * 入座时 peek/advance 忽略 autoByCar；双联多枪口共用同一发类型。
+     */
+    const Ammo = window.LpArmedAmmo;
+    const ammoType =
+      Ammo?.peekFireTypeId?.('guard') ||
+      Ammo?.getSelectedId?.() ||
+      'ap';
+    const useAccuracyBuff = state.accuracyBuffPending;
+
+    /** @type {Array<{ id: string, muzzle: object }>} */
+    const prepared = [];
+    for (const id of ready) {
+      const muzzle = muzzlePoint(id);
+      if (muzzle) prepared.push({ id, muzzle });
+    }
+    if (!prepared.length) return null;
+
     const online = window.LpInventoryNet?.isActive?.();
     if (!online && !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
       const spent = consumeCrateAmmo(1);
       if (spent <= 0) return null;
-      saveCrates();
+      /* 延后 saveCrates：须在 advanceFireCursor 之后，避免把游标 0 写回 crate 副本。 */
     }
     state.fireCooldown = FIRE_COOLDOWN;
-
-    /* 弹链循环：本触发 peek 一次类型；双联多枪口共用该类型，成功后再 advance 一次游标。 */
-    const ammoType =
-      window.LpArmedAmmo?.peekFireTypeId?.('guard') ||
-      window.LpArmedAmmo?.getSelectedId?.() ||
-      'ap';
+    if (useAccuracyBuff) state.accuracyBuffPending = false;
 
     const muzzles = [];
     let primaryFired = null;
-    for (const id of ready) {
+    const seatId = state.manned;
+    for (const { id, muzzle } of prepared) {
       kickRecoil(id);
-      const muzzle = muzzlePoint(id);
-      if (!muzzle) continue;
-      /* 先按当前 bloom 抖动弹道，再抬升 bloom（与手持 recoil 顺序一致）。 */
-      const spread = applyFireSpread(muzzle.dirX, muzzle.dirY, id);
+      /* 先按当前 bloom（+可选 T 精准）抖动弹道，再抬升 bloom（与手持 recoil 顺序一致）。 */
+      const spread = applyFireSpread(muzzle.dirX, muzzle.dirY, id, {
+        accuracyBuff: useAccuracyBuff,
+      });
       kickFireBloom(id);
       const fired = {
         x: muzzle.x,
@@ -957,28 +1140,21 @@
         angle: spread.angle,
       };
       muzzles.push(fired);
-      if (id === state.manned) primaryFired = fired;
+      if (id === seatId) primaryFired = fired;
       spawnTurretTracer(fired, ammoType);
       spawnMuzzleFlash(fired);
     }
-    if (muzzles.length === 0) return null;
-    window.LpArmedAmmo?.advanceFireCursor?.('guard');
+    Ammo?.advanceFireCursor?.('guard');
+    if (!online && !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) {
+      saveCrates();
+    }
+    /* T：刷新下一发精准电荷（已 pending 时仍为单电荷，不叠倍率）。 */
+    if (ammoType === 't') state.accuracyBuffPending = true;
     /* 耗 1 弹：有空入箱一次；已满则每开火枪口各抛壳。联机入箱由服务端权威。 */
     resolveCasingAfterFire(muzzles);
     window.LpCombat?.syncCrosshairBloom?.();
 
-    window.LpSfx?.play?.(SHOT_SFX, {
-      volume: 0.45,
-      rateJitter: 0.06,
-      playbackRate: 0.82,
-    });
-    window.setTimeout(() => {
-      window.LpSfx?.play?.(FEED_SFX, {
-        volume: 0.55,
-        rateJitter: 0.03,
-        playbackRate: 1,
-      });
-    }, Math.round(FEED_SFX_DELAY * 1000));
+    playTurretFireSfxAt(primaryFired?.x ?? muzzles[0].x, primaryFired?.y ?? muzzles[0].y);
 
     const primary = primaryFired || muzzles[0];
     const shots = muzzles.map((muzzle) => ({
@@ -987,6 +1163,10 @@
       dirX: muzzle.dirX,
       dirY: muzzle.dirY,
     }));
+    const eventTurretId =
+      opts.eventTurretId != null
+        ? opts.eventTurretId
+        : seatId || ready[0] || null;
     window.dispatchEvent(
       new CustomEvent('lp:weapon-fired', {
         detail: {
@@ -996,14 +1176,48 @@
           dirX: primary?.dirX,
           dirY: primary?.dirY,
           turret: true,
-          source: 'turret',
-          turretId: state.manned,
+          source: seatId ? 'turret' : 'turret_auto',
+          turretId: eventTurretId,
           ammoType,
           shots,
         },
       })
     );
     return primary || null;
+  }
+
+  /**
+   * 入座炮塔开火：仅对本机控制塔联射。
+   * T 精准电荷逻辑见 tryFireTurrets。
+   */
+  function tryFire(aimX, aimY) {
+    if (!state.manned) return null;
+    return tryFireTurrets(aimX, aimY, getControlledTurretIds());
+  }
+
+  /**
+   * 在枪口世界坐标播放机炮开火+进弹音（经 LpSfx：同车厢满音量，否则距离衰减）。
+   * @param {number} x
+   * @param {number} y
+   */
+  function playTurretFireSfxAt(x, y) {
+    if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    window.LpSfx?.play?.(SHOT_SFX, {
+      volume: 0.45,
+      rateJitter: 0.06,
+      playbackRate: 0.82,
+      x,
+      y,
+    });
+    window.setTimeout(() => {
+      window.LpSfx?.play?.(FEED_SFX, {
+        volume: 0.55,
+        rateJitter: 0.03,
+        playbackRate: 1,
+        x,
+        y,
+      });
+    }, Math.round(FEED_SFX_DELAY * 1000));
   }
 
   /**
@@ -1076,12 +1290,15 @@
         );
       }
     }
+    const sfxShot = shots.find((s) => s?.x != null && s?.y != null);
+    if (sfxShot) {
+      playTurretFireSfxAt(Number(sfxShot.x), Number(sfxShot.y));
+    }
   }
 
   /** 推进转向、冷却、后坐/散布回落与火光；并吸收远端瞄准。 */
   function tick(dt) {
     applyRemoteAims();
-    let bloomChanged = false;
     for (const pivot of ART_PIVOTS) {
       const id = pivot.id;
       state.angles[id] = slewAngle(
@@ -1098,10 +1315,10 @@
           0,
           state.fireBloom[id] - FIRE_BLOOM_RECOVER * dt
         );
-        bloomChanged = true;
       }
     }
-    if (bloomChanged && state.manned) {
+    /* 入座时每帧同步准星空隙与双联门控色（炮管回转也会改变 canTurretFire）。 */
+    if (state.manned) {
       window.LpCombat?.syncCrosshairBloom?.();
     }
     if (state.fireCooldown > 0) {
@@ -1213,9 +1430,13 @@
     isManned,
     getMannedId,
     getControlledTurretIds,
+    getAutoEngageTurretIds,
     isSoloDual,
     operatorCount,
     getFireBloom,
+    isAccuracyBuffPending,
+    ACCURACY_BUFF_SPREAD_SCALE,
+    getLastAim,
     enterTurret,
     exitTurret,
     interactTurret,
@@ -1227,12 +1448,20 @@
     getCrateInventory: (mode) => invForMode(mode),
     aimBoth,
     aimControlled,
+    aimTurrets,
     tryFire,
+    tryFireTurrets,
     canFire,
     canTurretFire,
+    canTurretEngageAim,
+    canEngage,
     isAimInFireArc,
     clampTurretAngle,
+    clampedAimWouldHit,
+    minEngageDistWorld,
     AIM_FIRE_TOLERANCE,
+    ENGAGE_HIT_MISS,
+    MIN_ENGAGE_BARREL_SCALE,
     syncRemoteOperators,
     noteRemoteFire,
     /** 卫兵机炮始终全自动（长按连发）。 */

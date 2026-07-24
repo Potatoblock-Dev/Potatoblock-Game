@@ -16,6 +16,18 @@
   background: #0a0a0a;
   color: #e5e5e5;
   font-family: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  /* 游戏 HUD / 触控：禁止长按选中与 iOS 呼出菜单；输入框另行放开 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-page input,
+.lp-page textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .lp-stage {
@@ -67,21 +79,27 @@ body.lp-auto-console-open #lpCanvas {
 
 body.lp-boiler-panel-open .lp-crosshair,
 body.lp-boiler-panel-open .lp-mobile-controls,
+body.lp-boiler-panel-open .lp-hotbar-cluster,
 body.lp-boiler-panel-open .lp-hud-top,
 body.lp-radar-panel-open .lp-crosshair,
 body.lp-radar-panel-open .lp-mobile-controls,
+body.lp-radar-panel-open .lp-hotbar-cluster,
 body.lp-radar-panel-open .lp-hud-top,
 body.lp-auto-console-open .lp-crosshair,
 body.lp-auto-console-open .lp-mobile-controls,
+body.lp-auto-console-open .lp-hotbar-cluster,
 body.lp-auto-console-open .lp-hud-top,
 body.lp-fuel-feed-open .lp-crosshair,
 body.lp-fuel-feed-open .lp-mobile-controls,
+body.lp-fuel-feed-open .lp-hotbar-cluster,
 body.lp-fuel-feed-open .lp-hud-top,
 body.lp-crate-feed-open .lp-crosshair,
 body.lp-crate-feed-open .lp-mobile-controls,
+body.lp-crate-feed-open .lp-hotbar-cluster,
 body.lp-crate-feed-open .lp-hud-top,
 body.lp-train-map-open .lp-crosshair,
 body.lp-train-map-open .lp-mobile-controls,
+body.lp-train-map-open .lp-hotbar-cluster,
 body.lp-train-map-open .lp-hud-top,
 /* 炮塔操控：只收顶栏（含编组条），保留准星与底部炮塔横幅 */
 body.lp-turret-mode .lp-hud-top {
@@ -497,6 +515,7 @@ body.lp-crate-feed-open {
 }
 
 .lp-guard-crate-rack {
+  position: relative;
   min-width: 0;
   width: 100%;
   height: 100%;
@@ -513,7 +532,57 @@ body.lp-crate-feed-open {
 
 .lp-guard-crate-root .lp-guard-crate-rack .lp-fuel-rack-title {
   margin: 0 0 8px;
+  padding-inline: 48px;
   color: inherit;
+  box-sizing: border-box;
+  width: 100%;
+  text-align: center;
+}
+
+/* 标题两侧留空，避免与右上角「全部转移」叠字 */
+.lp-guard-crate-zone .lp-fuel-drop-label,
+.lp-guard-crate-zone .lp-fuel-drop-sub {
+  padding-inline: 48px;
+  box-sizing: border-box;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* 弹药箱 / 回收箱两侧：全部转移（同侧框内右上角小按钮） */
+.lp-guard-crate-transfer {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  margin: 0;
+  min-height: 0;
+  padding: 2px 6px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: rgb(0 0 0 / 0.45);
+  color: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
+}
+
+.lp-guard-crate-transfer:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.1);
+}
+
+.lp-guard-crate-transfer:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 0 rgb(0 0 0 / 0.25);
+}
+
+.lp-guard-crate-transfer:disabled {
+  opacity: 0.38;
+  cursor: default;
 }
 
 .lp-guard-crate-rack.is-hot,
@@ -659,6 +728,107 @@ body.lp-crate-feed-open {
   padding: 0 8px 10px;
   border-bottom: 1px solid rgb(0 0 0 / 0.35);
   box-shadow: 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+.lp-cab-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.lp-cab-autopilot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 5px 10px 5px 12px;
+  border: 2px solid #5a5244;
+  background:
+    linear-gradient(180deg, #3a362e 0%, #24211c 55%, #1a1814 100%);
+  color: #c9b896;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 2px 0 rgb(0 0 0 / 0.45);
+}
+
+.lp-cab-autopilot-text {
+  white-space: nowrap;
+}
+
+.lp-cab-switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.lp-cab-switch input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.lp-cab-switch-track {
+  display: block;
+  width: 36px;
+  height: 18px;
+  border: 1px solid #1a1814;
+  background: linear-gradient(180deg, #2a2620, #141210);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 0.65);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lp-cab-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid #6a6358;
+  background: linear-gradient(180deg, #b8b0a0, #7a7368);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  pointer-events: none;
+}
+
+.lp-cab-switch input:checked + .lp-cab-switch-track {
+  border-color: #5a4a1a;
+  background: linear-gradient(180deg, #6a5a28, #3a3014);
+}
+
+.lp-cab-switch input:checked + .lp-cab-switch-track .lp-cab-switch-knob {
+  transform: translateX(18px);
+  border-color: #c9a84a;
+  background: linear-gradient(180deg, #f0d878, #c9a84a);
+  box-shadow:
+    0 0 6px rgb(201 168 74 / 0.55),
+    0 1px 2px rgb(0 0 0 / 0.45);
+}
+
+.lp-cab-autopilot:has(input:checked) {
+  border-color: #8a734d;
+  color: #e8d5a8;
+}
+
+.lp-boiler-shell.lp-autopilot-on .lp-lever-track-throttle {
+  outline: 1px solid rgb(201 168 74 / 0.35);
+  outline-offset: 2px;
+}
+
+.lp-boiler-shell.lp-autopilot-on .lp-lever-column:first-child .lp-lever-title::after {
+  content: ' · 自动';
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #c9a84a;
 }
 
 .lp-cab-nameplate {
@@ -1411,6 +1581,39 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   width: 12px;
 }
 
+/* 双联：该炮因开火门控无法开火时准星变灰（主十字 / 斜向 X 各自独立） */
+.lp-crosshair.lp-crosshair-gated .lp-crosshair-arm {
+  background: rgb(148 163 184 / 0.72);
+  box-shadow: 0 0 0 1px rgb(28 28 28 / 0.35);
+}
+
+.lp-crosshair.lp-crosshair-gated .lp-crosshair-dot {
+  background: #94a3b8;
+}
+
+body.lp-turret-mode .lp-crosshair.lp-crosshair-gated .lp-crosshair-dot {
+  background: #94a3b8;
+}
+
+.lp-crosshair-alt.lp-crosshair-gated .lp-crosshair-arm {
+  background: rgb(148 163 184 / 0.65);
+  box-shadow: 0 0 0 1px rgb(28 28 28 / 0.3);
+}
+
+/* T 曳光「下一发精准」待用：准星略收 + 浅绿提示 */
+.lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-arm {
+  background: rgb(134 239 172 / 0.92);
+  box-shadow: 0 0 0 1px rgb(22 101 52 / 0.45);
+}
+
+.lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
+  background: #86efac;
+}
+
+body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
+  background: #86efac;
+}
+
 /* 浮层 UI：对齐 avatar 大厅 stage-ui，仅控件接收指针 */
 .lp-stage-ui {
   position: absolute;
@@ -1435,7 +1638,8 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
 .lp-stage-ui > .lp-mobile-controls .lp-look-joystick,
 .lp-stage-ui > .lp-mobile-controls .lp-mobile-move-cluster > *,
 .lp-stage-ui > .lp-mobile-controls .lp-mobile-action-secondary > *,
-.lp-stage-ui > .lp-mobile-controls .lp-mobile-action-buttons > * {
+.lp-stage-ui > .lp-mobile-controls .lp-mobile-action-buttons > *,
+.lp-stage-ui > .lp-hotbar-cluster > * {
   pointer-events: auto;
 }
 
@@ -1472,6 +1676,271 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
 
 .lp-title-block {
   min-width: 0;
+}
+
+/* ---- 生命 / 压力 vitals（左上；本机 + 队友） ---- */
+
+.lp-vitals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  max-width: min(220px, 58vw);
+  max-height: min(42dvh, 320px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lp-vital-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lp-vital-cols {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.lp-vital-name {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+.lp-vital-head {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.35);
+}
+
+.lp-vitals-teammates {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lp-hp-bar {
+  position: relative;
+  margin-top: 0;
+  width: min(160px, 42vw);
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  overflow: hidden;
+}
+
+.lp-hp-bar--mate {
+  width: min(120px, 36vw);
+  height: 7px;
+}
+
+.lp-hp-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(1);
+  background: linear-gradient(90deg, #b91c1c, #f87171);
+  transition: transform 0.12s linear;
+}
+
+.lp-hp-label,
+.lp-pressure-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff7ed;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.lp-vital-row:hover .lp-hp-label,
+.lp-vital-row:hover .lp-pressure-label,
+.lp-vitals.is-values-on .lp-hp-label,
+.lp-vitals.is-values-on .lp-pressure-label {
+  opacity: 1;
+}
+
+.lp-pressure-bar {
+  position: relative;
+  width: min(160px, 42vw);
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  overflow: hidden;
+}
+
+.lp-pressure-bar--mate {
+  width: min(120px, 36vw);
+  height: 6px;
+}
+
+.lp-pressure-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background-image: linear-gradient(90deg, #2563eb 0%, #eab308 48%, #dc2626 100%);
+  background-repeat: no-repeat;
+  background-position: left center;
+  transition: width 0.12s linear;
+}
+
+.lp-vital-row--mate .lp-vital-name {
+  font-size: 9px;
+  color: #cbd5e1;
+}
+
+.lp-vital-row.is-hp-unknown .lp-hp-fill,
+.lp-vital-row.is-pressure-unknown .lp-pressure-fill {
+  opacity: 0.35;
+}
+
+/* 压力边缘色差：不挡触控；挂在 .lp-stage 下、UI 下 */
+.lp-pressure-chroma {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.lp-pressure-chroma.is-on {
+  opacity: var(--lp-chroma, 0);
+}
+
+.lp-pressure-chroma-r,
+.lp-pressure-chroma-b {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+.lp-pressure-chroma-r {
+  box-shadow: inset 0 0 72px 28px rgba(255, 48, 48, 0.42);
+  transform: translate(var(--lp-chroma-shift, 2px), 0);
+}
+
+.lp-pressure-chroma-b {
+  box-shadow: inset 0 0 72px 28px rgba(48, 120, 255, 0.4);
+  transform: translate(calc(var(--lp-chroma-shift, 2px) * -1), 0);
+}
+
+/* 濒死：本机屏幕边缘泛白 */
+.lp-downed-wash {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  box-shadow: inset 0 0 120px 48px rgba(248, 250, 252, 0.55);
+}
+
+.lp-downed-wash.is-on {
+  opacity: 1;
+}
+
+/* HP 条濒死倒计时（白填充） */
+.lp-hp-bar.is-downed-countdown {
+  border-color: rgba(248, 250, 252, 0.55);
+}
+
+.lp-hp-bar.is-downed-countdown .lp-hp-fill {
+  background: #f8fafc !important;
+}
+
+.lp-hp-bar.is-downed-countdown .lp-hp-label {
+  opacity: 1;
+  color: #0f172a;
+  text-shadow: none;
+}
+
+/* 最终死亡重生提示 */
+.lp-respawn-hint {
+  position: absolute;
+  left: 50%;
+  bottom: max(18%, 96px);
+  transform: translateX(-50%);
+  z-index: 6;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(248, 250, 252, 0.22);
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* 濒死重新部署长按进度 */
+.lp-redeploy-hint {
+  position: absolute;
+  left: 50%;
+  bottom: max(24%, 132px);
+  transform: translateX(-50%);
+  z-index: 6;
+  min-width: 180px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(226, 232, 240, 0.28);
+  pointer-events: none;
+}
+
+.lp-redeploy-label {
+  margin: 0 0 6px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.lp-redeploy-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.85);
+  overflow: hidden;
+}
+
+.lp-redeploy-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: #f8fafc;
 }
 
 .mp-bar {
@@ -1845,12 +2314,33 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   transform: scale(0.97);
 }
 
-/* ---- 左下角手部三槽预览 ---- */
+/* ---- 手部三槽 + 移动端跑走键（桌面左下；触屏右上） ---- */
 
-.lp-hands-hud {
+.lp-hotbar-cluster {
   position: absolute;
   left: calc(12px + env(safe-area-inset-left));
   bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 4;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.lp-hotbar-cluster > * {
+  pointer-events: auto;
+}
+
+/* 桌面不显示跑走触控键（用键盘） */
+.lp-hotbar-cluster > .lp-mobile-sprint-button {
+  display: none;
+}
+
+.lp-hands-hud {
+  position: relative;
+  left: auto;
+  bottom: auto;
   z-index: 4;
   display: flex;
   flex-direction: row;
@@ -1862,6 +2352,9 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   background: rgb(12 12 12 / 0.72);
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35), 0 8px 18px rgb(0 0 0 / 0.35);
   pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .lp-hands-hud[hidden] {
@@ -1963,6 +2456,9 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   align-items: center;
   gap: 4px;
   pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .lp-armed-ammo-hud[hidden] {
@@ -2143,6 +2639,19 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   gap: 8px;
 }
 
+.lp-guard-belt-list.is-belt-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.lp-guard-belt-list.is-belt-dragging .lp-guard-belt-row {
+  pointer-events: none;
+}
+
+.lp-guard-belt-list.is-belt-dragging .lp-guard-belt-handle {
+  cursor: grabbing;
+}
+
 .lp-guard-belt-row {
   display: flex;
   flex-wrap: wrap;
@@ -2153,9 +2662,62 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   background: rgb(20 20 20 / 0.9);
 }
 
+.lp-guard-belt-row.is-dragging {
+  opacity: 0.4;
+}
+
 .lp-guard-belt-row.is-active {
   border-color: rgb(251 191 36 / 0.85);
   box-shadow: 0 0 0 1px rgb(251 191 36 / 0.35);
+}
+
+.lp-guard-belt-handle {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #a3a3a3;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -1px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.lp-guard-belt-handle:hover:not(:disabled) {
+  color: #f5f5f5;
+  border-color: rgb(115 115 115 / 0.7);
+  background: rgb(28 28 28 / 0.95);
+}
+
+.lp-guard-belt-handle:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.lp-guard-belt-drop-line {
+  height: 0;
+  margin: 0 0 0 4px;
+  border-top: 2px solid rgb(251 191 36 / 0.95);
+  position: relative;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.lp-guard-belt-drop-line::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(251 191 36 / 0.95);
 }
 
 .lp-guard-belt-label {
@@ -2201,6 +2763,13 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   border-color: rgb(251 191 36 / 0.95);
   box-shadow: 0 0 0 1px rgb(251 191 36 / 0.4);
   transform: scale(1.06);
+}
+
+/* 弹药箱弹链：当前开火槽（与底栏 .lp-armed-ammo-chip.is-next 同语义） */
+.lp-guard-belt-chip.is-next {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  box-shadow: inset 0 -2px 0 rgb(248 250 252 / 0.85);
 }
 
 /* 弹链槽位弹种选择器：body 门户；低于详情(90)、高于弹药箱/HUD */
@@ -2346,6 +2915,7 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
 }
 
 body.lp-inventory-open .lp-mobile-controls,
+body.lp-inventory-open .lp-hotbar-cluster,
 body.lp-inventory-open .lp-hud-top {
   opacity: 0;
   pointer-events: none;
@@ -3343,6 +3913,34 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-mobile-controls {
   display: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-mobile-controls *,
+.lp-stage-ui,
+.lp-stage-ui *,
+.lp-auto-console-root,
+.lp-auto-console-root *:not(input):not(textarea),
+.lp-train-map-root,
+.lp-train-map-root *,
+.lp-boiler-panel-root,
+.lp-boiler-panel-root *:not(input):not(textarea),
+.lp-radar-scope-root,
+.lp-radar-scope-root *,
+.lp-guard-crate-root,
+.lp-guard-crate-root *,
+.lp-fuel-feed-root,
+.lp-fuel-feed-root *:not(input):not(textarea),
+.lp-inventory-root,
+.lp-inventory-root *:not(input):not(textarea),
+.lp-armed-ammo-detail,
+.lp-armed-ammo-detail * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -3356,6 +3954,11 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-mobile-only {
     display: inline !important;
+  }
+
+  /* 触屏：藏桌面键位/鼠标提示与重复 chrome（编组小地图改用触控地图键） */
+  .lp-fullscreen-btn {
+    display: none !important;
   }
 
   .lp-inventory-ghost-button .lp-label-long,
@@ -3427,7 +4030,8 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-fuel-feed-close,
-  .lp-boiler-close {
+  .lp-boiler-close,
+  .lp-cab-autopilot {
     min-height: 44px;
     padding: 8px 14px;
   }
@@ -3448,13 +4052,58 @@ body.lp-inventory-open .lp-hud-top {
     transition: opacity 0.15s ease;
   }
 
-  /* 抬高到手部区：避开左下移动摇杆（奔跑键改并排后高度≈摇杆） */
+  /* 右上：跑走在手部物品栏左侧 */
+  .lp-hotbar-cluster {
+    left: auto;
+    right: calc(12px + env(safe-area-inset-right));
+    top: calc(58px + env(safe-area-inset-top));
+    bottom: auto;
+    align-items: center;
+    gap: 10px;
+    z-index: 5;
+  }
+
+  /* 左上 vitals：缩短条、限制高度，避免压住左下背包摇杆 */
+  .lp-vitals {
+    max-width: min(168px, 46vw);
+    max-height: min(34dvh, 240px);
+    gap: 5px;
+  }
+
+  .lp-vital-head {
+    width: 32px;
+    height: 32px;
+  }
+
+  .lp-hp-bar,
+  .lp-pressure-bar {
+    width: min(128px, 38vw);
+  }
+
+  .lp-hp-bar--mate,
+  .lp-pressure-bar--mate {
+    width: min(100px, 32vw);
+  }
+
+  .lp-title-block {
+    max-width: min(200px, 52vw);
+  }
+
+  .lp-pressure-chroma-r {
+    box-shadow: inset 0 0 48px 18px rgba(255, 48, 48, 0.32);
+  }
+
+  .lp-pressure-chroma-b {
+    box-shadow: inset 0 0 48px 18px rgba(48, 120, 255, 0.3);
+  }
+
+  .lp-hotbar-cluster > .lp-mobile-sprint-button {
+    display: inline-flex;
+  }
+
   .lp-hands-hud {
-    left: calc(12px + env(safe-area-inset-left));
-    bottom: calc(148px + env(safe-area-inset-bottom));
     padding: 6px;
     gap: 6px;
-    z-index: 5;
   }
 
   .lp-hands-hud-slot.is-primary {
@@ -3474,7 +4123,7 @@ body.lp-inventory-open .lp-hud-top {
     pointer-events: auto;
   }
 
-  /* 奔跑键与摇杆横排，降低左侧总高度，减少与手部槽重叠 */
+  /* 左下：背包键 + 移动摇杆 */
   .lp-mobile-move-cluster {
     display: flex;
     flex-direction: row;
@@ -3510,12 +4159,87 @@ body.lp-inventory-open .lp-hud-top {
     background-position: center;
     background-size: contain;
     touch-action: none;
+    -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .lp-look-joystick {
     width: clamp(88px, 22vw, 112px);
     background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-look-outline.png");
+  }
+
+  /* 入座机炮：左摇杆改瞄准外观；右侧只留开火；离开键已挂到左侧簇 */
+  .lp-mobile-controls.is-turret-mode .lp-move-joystick {
+    width: clamp(112px, 28vw, 140px);
+    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-look-outline.png");
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-look-joystick,
+  .lp-mobile-controls.is-turret-mode .lp-mobile-map-button,
+  .lp-mobile-controls.is-turret-mode .lp-mobile-jump-button {
+    display: none !important;
+  }
+
+  /* 跑走键已不在 controls 内：炮塔时一并藏手部栏 */
+  body.lp-turret-mode .lp-hotbar-cluster {
+    display: none !important;
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-mobile-action-secondary {
+    display: none;
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-mobile-action-cluster {
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-mobile-action-buttons {
+    gap: 0;
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-mobile-fire-button {
+    width: clamp(84px, 22vw, 108px);
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-mobile-move-cluster {
+    gap: 12px;
+    align-items: flex-end;
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-mobile-inventory-button {
+    width: clamp(52px, 14vw, 64px);
+  }
+
+  /* 弹种栏抬高，避开右下开火键与状态条 */
+  body.lp-turret-mode .lp-armed-ammo-hud {
+    bottom: calc(118px + env(safe-area-inset-bottom));
+    max-width: min(92vw, 420px);
+  }
+
+  body.lp-turret-mode .lp-armed-ammo-list {
+    gap: 6px;
+    padding: 6px 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 100%;
+  }
+
+  body.lp-turret-mode .lp-armed-ammo-slot {
+    min-width: 56px;
+    padding: 6px 8px 16px;
+  }
+
+  body.lp-turret-mode .lp-armed-ammo-tag {
+    font-size: 13px;
+  }
+
+  body.lp-turret-mode .lp-armed-ammo-sub,
+  body.lp-turret-mode .lp-armed-ammo-chip {
+    font-size: 10px;
   }
 
   .lp-move-joystick::before,
@@ -3525,7 +4249,8 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   /* Optional look cue: faint Kenney crosshair under the knob */
-  .lp-look-joystick::before {
+  .lp-look-joystick::before,
+  .lp-mobile-controls.is-turret-mode .lp-move-joystick::before {
     content: "";
     position: absolute;
     left: 50%;
@@ -3590,7 +4315,10 @@ body.lp-inventory-open .lp-hud-top {
     font-size: 0;
     line-height: 0;
     touch-action: none;
+    -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
     padding: 0;
   }
 
@@ -3612,6 +4340,7 @@ body.lp-inventory-open .lp-hud-top {
     height: 48px;
     min-width: 44px;
     min-height: 44px;
+    flex-shrink: 0;
   }
 
   .lp-mobile-fire-button .lp-mc-icon {
@@ -3688,8 +4417,16 @@ body.lp-inventory-open .lp-hud-top {
     width: clamp(84px, 24vw, 104px);
   }
 
-  .lp-hands-hud {
-    bottom: calc(152px + env(safe-area-inset-bottom));
+  .lp-hotbar-cluster {
+    top: calc(64px + env(safe-area-inset-top));
+  }
+
+  .lp-mobile-controls.is-turret-mode .lp-move-joystick {
+    width: clamp(108px, 30vw, 132px);
+  }
+
+  body.lp-turret-mode .lp-armed-ammo-hud {
+    bottom: calc(124px + env(safe-area-inset-bottom));
   }
 }
 
@@ -4163,8 +4900,12 @@ body.lp-inventory-open .lp-hud-top {
     gap: 10px;
   }
 
+  .lp-hotbar-cluster {
+    top: calc(48px + env(safe-area-inset-top));
+    right: calc(10px + env(safe-area-inset-right));
+  }
+
   .lp-hands-hud {
-    bottom: calc(132px + env(safe-area-inset-bottom));
     padding: 4px;
     gap: 4px;
   }
@@ -4199,6 +4940,14 @@ body.lp-inventory-open .lp-hud-top {
     min-height: 44px;
   }
 
+  .lp-hud-rail {
+    max-width: min(42vw, 168px);
+  }
+
+  .lp-train-minimap {
+    width: min(100%, 168px);
+  }
+
   .mp-bar .lp-mp-button,
   .mp-join,
   .mp-feedback {
@@ -4210,6 +4959,11 @@ body.lp-inventory-open .lp-hud-top {
   .mp-count {
     font-size: 11px;
     min-height: 24px;
+  }
+
+  body.lp-turret-mode .lp-armed-ammo-slot {
+    min-width: 48px;
+    padding: 5px 6px 14px;
   }
 }
 
@@ -5156,6 +5910,60 @@ body.lp-inventory-open .lp-hud-top {
   margin-bottom: 16px;
 }
 
+.lp-auto-rule-section.is-drop-target {
+  outline: 1px dashed #5b6a8a;
+  outline-offset: 4px;
+  background: rgb(145 167 255 / 0.04);
+}
+
+.lp-auto-rule-section-body {
+  position: relative;
+  min-height: 8px;
+}
+
+.lp-auto-section-drop-pad {
+  padding: 14px 8px;
+  border: 1px dashed #3d4454;
+  margin: 0;
+}
+
+.lp-auto-drop-line {
+  height: 0;
+  margin: 0 0 0 28px;
+  border-top: 2px solid #91a7ff;
+  position: relative;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.lp-auto-drop-line::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #91a7ff;
+}
+
+.lp-auto-rules.is-rule-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+
+.lp-auto-rules.is-rule-dragging .lp-auto-rule-row {
+  pointer-events: none;
+}
+
+.lp-auto-rules.is-rule-dragging .lp-auto-rule-handle {
+  cursor: grabbing;
+}
+
+.lp-auto-rules.is-rule-dragging .lp-auto-rule-tools {
+  pointer-events: none;
+}
+
 .lp-auto-rule-section-head {
   display: flex;
   flex-direction: column;
@@ -5189,20 +5997,50 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-auto-rule-row {
-  display: grid;
-  grid-template-columns: 36px 1fr auto;
-  gap: 8px;
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  padding: 8px 10px;
-  margin-bottom: 8px;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
   background: #181c24;
   border: 1px solid #2a2f38;
+  min-width: 0;
+}
+
+.lp-auto-rule-handle {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8b93a7;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -1px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.lp-auto-rule-handle:hover {
+  color: #e8eaed;
+  border-color: #3d4454;
+  background: #1c212b;
+}
+
+.lp-auto-rule-row.is-dragging {
+  opacity: 0.4;
 }
 
 .lp-auto-prio {
+  flex: 0 0 auto;
+  min-width: 1.6em;
   font-family: ui-monospace, monospace;
   font-size: 12px;
   color: #91a7ff;
+  white-space: nowrap;
 }
 
 .lp-auto-prio.is-cosmetic {
@@ -5210,8 +6048,32 @@ body.lp-inventory-open .lp-hud-top {
   text-align: center;
 }
 
+.lp-auto-rule-tools {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.lp-auto-rule-tools button {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #3d4454;
+  background: #1c212b;
+  color: #e8eaed;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
 .lp-auto-rule-summary {
   appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
   border: 0;
   background: transparent;
   color: #e8eaed;
@@ -5221,21 +6083,9 @@ body.lp-inventory-open .lp-hud-top {
   line-height: 1.35;
   cursor: pointer;
   padding: 0;
-}
-
-.lp-auto-rule-tools {
-  display: flex;
-  gap: 4px;
-}
-
-.lp-auto-rule-tools button {
-  appearance: none;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #3d4454;
-  background: #1c212b;
-  color: #e8eaed;
-  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lp-auto-wizard {
@@ -5247,6 +6097,7 @@ body.lp-inventory-open .lp-hud-top {
   justify-content: center;
   background: rgb(0 0 0 / 0.55);
   padding: 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
 
 .lp-auto-wizard[hidden] {
@@ -5256,7 +6107,9 @@ body.lp-inventory-open .lp-hud-top {
 .lp-auto-wizard-card {
   width: min(480px, 100%);
   max-height: min(80dvh, 640px);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #161a22;
   border: 1px solid #3d4454;
   padding: 14px 16px;
@@ -5269,6 +6122,15 @@ body.lp-inventory-open .lp-hud-top {
   align-items: center;
   gap: 10px;
   margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.lp-auto-wizard-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
 }
 
 .lp-auto-wizard-top h4 {
@@ -5341,13 +6203,13 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-auto-choice-inline {
   flex: 0 1 auto;
-  min-width: 4.5rem;
-  max-width: 9.5rem;
+  min-width: 6.5rem;
+  max-width: 12rem;
 }
 
 .lp-auto-choice-params .lp-auto-select {
   width: 100%;
-  min-width: 4.5rem;
+  min-width: 6.5rem;
 }
 
 .lp-auto-choice-params .lp-auto-select-trigger {
@@ -5460,12 +6322,14 @@ body.lp-inventory-open .lp-hud-top {
 .lp-auto-select-menu {
   position: absolute;
   left: 0;
-  right: 0;
+  right: auto;
   top: calc(100% + 2px);
   z-index: 8;
   margin: 0;
   padding: 4px 0;
   list-style: none;
+  width: max-content;
+  min-width: 100%;
   max-height: min(220px, 40vh);
   overflow-y: auto;
   background: #151920;
@@ -5481,6 +6345,7 @@ body.lp-inventory-open .lp-hud-top {
   padding: 8px 10px;
   color: #e8eaed;
   cursor: pointer;
+  white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -5550,8 +6415,13 @@ body.lp-inventory-open .lp-hud-top {
 .lp-auto-wizard-foot {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 0;
+  padding-top: 12px;
+  flex-shrink: 0;
+  border-top: 1px solid #2a2f38;
+  background: #161a22;
 }
 
 @media (max-width: 720px) {

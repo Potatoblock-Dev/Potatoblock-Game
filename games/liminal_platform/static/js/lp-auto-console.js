@@ -1,7 +1,7 @@
 /**
- * 枢机车厢全屏自动化控制台：横滑选车厢 → 持续判定 / 瞬时触发两段规则 → 分步编辑。
- * 持续判定段内上→下为优先级；瞬时触发段内换行仅美观、无优先级。
- * 规则行支持拖拽换序 / 跨段改触发；↑↓ 仍作后备。桌面指针拖；触控长按后拖。
+ * 枢机车厢全屏自动化控制台：横滑选车厢 → 统一优先级规则列表 → 分步编辑。
+ * 列表上→下为优先级；trigger（while/edge）由目录 preferredTrigger 自动决定，无手动切换。
+ * 规则行支持拖拽换序；↑↓ 仍作后备。桌面指针拖；触控长按后拖。
  * 支持整份程序 / 单条规则复制到剪贴板；导入按 kind 覆盖或追加。
  * 整份覆盖导入后可「撤销导入」恢复快照（约 25s 或下次编辑前）。
  * UI 参考 Pixel Starships 船员/房间自动化行表。
@@ -38,18 +38,16 @@
   /** @type {ReturnType<typeof setTimeout> | null} */
   let undoBannerTimer = null;
   /**
-   * 规则行拖拽会话（指针模型；跨段改 trigger）。
+   * 规则行拖拽会话（指针模型；统一列表内重排）。
    * @type {null | {
    *   ruleId: string,
-   *   fromTrigger: 'while'|'edge',
    *   pointerId: number,
    *   startX: number,
    *   startY: number,
    *   active: boolean,
    *   fromHandle: boolean,
    *   longPressTimer: ReturnType<typeof setTimeout> | null,
-   *   dropTrigger: 'while'|'edge' | null,
-   *   dropIndex: number,
+   *   dropIndex: number | null,
    * }}
    */
   let ruleDrag = null;
@@ -297,44 +295,31 @@
   }
 
   /**
-   * 根据指针 Y 解析落点：所属触发段 + 段内插入下标。
+   * 根据指针 Y 解析统一列表落点插入下标。
    * @param {number} clientY
-   * @returns {{ trigger: 'while'|'edge', index: number, body: HTMLElement } | null}
+   * @returns {{ index: number, body: HTMLElement } | null}
    */
   function hitTestRuleDrop(clientY) {
-    const sections = [...rulesList.querySelectorAll('.lp-auto-rule-section[data-trigger]')];
-    if (!sections.length) return null;
-    let best = null;
-    let bestDist = Infinity;
-    for (const section of sections) {
-      const body = section.querySelector('.lp-auto-rule-section-body');
-      if (!body) continue;
-      const trigger = section.getAttribute('data-trigger') === 'edge' ? 'edge' : 'while';
-      const rect = body.getBoundingClientRect();
-      const rows = [...body.querySelectorAll('.lp-auto-rule-row')].filter(
-        (r) => r.dataset.ruleId !== ruleDrag?.ruleId
-      );
-      let index = 0;
-      if (!rows.length) {
-        index = 0;
-      } else {
-        index = rows.length;
-        for (let i = 0; i < rows.length; i += 1) {
-          const mid = rows[i].getBoundingClientRect().top + rows[i].offsetHeight / 2;
-          if (clientY < mid) {
-            index = i;
-            break;
-          }
+    const body =
+      rulesList.querySelector('.lp-auto-rule-section-body') || rulesList;
+    if (!body) return null;
+    const rows = [...body.querySelectorAll('.lp-auto-rule-row')].filter(
+      (r) => r.dataset.ruleId !== ruleDrag?.ruleId
+    );
+    let index = 0;
+    if (!rows.length) {
+      index = 0;
+    } else {
+      index = rows.length;
+      for (let i = 0; i < rows.length; i += 1) {
+        const mid = rows[i].getBoundingClientRect().top + rows[i].offsetHeight / 2;
+        if (clientY < mid) {
+          index = i;
+          break;
         }
       }
-      const clampedY = Math.max(rect.top, Math.min(clientY, rect.bottom));
-      const dist = Math.abs(clientY - clampedY);
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = { trigger, index, body };
-      }
     }
-    return best;
+    return { index, body };
   }
 
   /** 结束拖拽会话并卸下 document 指针监听。 */
@@ -373,7 +358,7 @@
   }
 
   /**
-   * 拖拽中更新插入线；记录 dropTrigger / dropIndex。
+   * 拖拽中更新插入线；记录 dropIndex。
    * @param {PointerEvent} event
    */
   function onRuleDragMove(event) {
@@ -400,7 +385,6 @@
     event.preventDefault();
     const hit = hitTestRuleDrop(event.clientY);
     if (!hit) return;
-    ruleDrag.dropTrigger = hit.trigger;
     ruleDrag.dropIndex = hit.index;
     showRuleDropLine(hit.body, hit.index);
     const src = findRuleRowEl(ruleDrag.ruleId);
@@ -415,11 +399,11 @@
     if (!ruleDrag || event.pointerId !== ruleDrag.pointerId) return;
     const session = ruleDrag;
     const wasActive = session.active;
-    const { ruleId, dropTrigger, dropIndex } = session;
+    const { ruleId, dropIndex } = session;
     endRuleDrag();
-    if (!wasActive || dropTrigger == null || !selectedCarId) return;
+    if (!wasActive || dropIndex == null || !selectedCarId) return;
     const moved = Prog().moveRuleToSlot
-      ? Prog().moveRuleToSlot(selectedCarId, ruleId, dropTrigger, dropIndex)
+      ? Prog().moveRuleToSlot(selectedCarId, ruleId, dropIndex)
       : false;
     if (moved) {
       discardImportUndo();
@@ -431,23 +415,20 @@
    * 在拖动手柄或摘要上开始潜在拖拽（触控需长按；手柄立即可拖）。
    * @param {PointerEvent} event
    * @param {object} rule
-   * @param {'while'|'edge'} fromTrigger
    * @param {boolean} fromHandle
    */
-  function beginRuleDrag(event, rule, fromTrigger, fromHandle) {
+  function beginRuleDrag(event, rule, fromHandle) {
     if (event.button != null && event.button !== 0) return;
     if (ruleDrag) endRuleDrag();
     ruleDrag = {
       ruleId: rule.id,
-      fromTrigger,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
       fromHandle,
       longPressTimer: null,
-      dropTrigger: null,
-      dropIndex: 0,
+      dropIndex: null,
     };
     document.addEventListener('pointermove', onRuleDragMove, { passive: false });
     document.addEventListener('pointerup', onRuleDragUp);
@@ -467,64 +448,50 @@
   }
 
   /**
-   * 渲染一段规则区（持续判定 / 瞬时触发）；body 为拖放命中区。
-   * @param {{ title:string, hint:string, rules:object[], priority:boolean, trigger:'while'|'edge' }} section
+   * 渲染统一优先级规则区；body 为拖放命中区。
+   * @param {object[]} rules
    */
-  function appendRuleSection(section) {
+  function appendRuleList(rules) {
     const wrap = document.createElement('section');
-    wrap.className = `lp-auto-rule-section${section.priority ? ' is-priority' : ' is-cosmetic'}`;
-    wrap.dataset.trigger = section.trigger;
+    wrap.className = 'lp-auto-rule-section is-priority';
     wrap.innerHTML = `
       <header class="lp-auto-rule-section-head">
-        <h4 class="lp-auto-rule-section-title">${section.title}</h4>
-        <p class="lp-auto-rule-section-hint">${section.hint}</p>
+        <h4 class="lp-auto-rule-section-title">规则（优先级）</h4>
+        <p class="lp-auto-rule-section-hint">越靠上优先级越高；同冲突域只执行最高优先级匹配项。</p>
       </header>
       <div class="lp-auto-rule-section-body" data-drop-body></div>
     `;
     const body = wrap.querySelector('.lp-auto-rule-section-body');
-    if (!section.rules.length) {
+    if (!rules.length) {
       const empty = document.createElement('p');
       empty.className = 'lp-auto-empty lp-auto-section-drop-pad';
-      empty.textContent = '本段暂无规则 · 可拖入';
+      empty.textContent = '尚无规则 · 可拖入';
       body.appendChild(empty);
     } else {
-      section.rules.forEach((rule, index) => {
-        body.appendChild(buildRuleRow(rule, index, section.priority, section.trigger));
+      rules.forEach((rule, index) => {
+        body.appendChild(buildRuleRow(rule, index));
       });
     }
     rulesList.appendChild(wrap);
   }
 
   /**
-   * 构建单条规则行；priority=true 时 #n 与 ↑↓ 表示优先级，否则仅美观换行。
-   * 左侧手柄 / 摘要可拖；工具按钮不参与拖拽。
+   * 构建单条规则行（拖柄 → 行号 → 摘要 → 操作钮）；trigger 仅存数据，不展示。
    * @param {object} rule
    * @param {number} index
-   * @param {boolean} priority
-   * @param {'while'|'edge'} trigger
    */
-  function buildRuleRow(rule, index, priority, trigger) {
+  function buildRuleRow(rule, index) {
     const row = document.createElement('div');
-    row.className = `lp-auto-rule-row${priority ? '' : ' is-edge'}`;
+    row.className = 'lp-auto-rule-row';
     row.dataset.ruleId = rule.id;
-    row.dataset.trigger = trigger;
     const summary = Cat().summarizeRule(rule, selectedCarId);
-    const prioTitle = priority ? '优先级（数字越小越高）' : '显示序号（无优先级）';
-    const prioHtml = priority
-      ? `<span class="lp-auto-prio" title="${prioTitle}">#${index + 1}</span>`
-      : `<span class="lp-auto-prio is-cosmetic" title="${prioTitle}">·</span>`;
-    const upTitle = priority ? '上移（提高优先级）' : '上移（仅美观，无优先级）';
-    const downTitle = priority ? '下移（降低优先级）' : '下移（仅美观，无优先级）';
-    const dragTitle = priority
-      ? '拖拽调整优先级；拖到「瞬时触发」可改触发类型'
-      : '拖拽调整显示顺序；拖到「持续判定」可改触发类型';
     row.innerHTML = `
-      <button type="button" class="lp-auto-rule-handle" data-drag-handle title="${dragTitle}" aria-label="拖拽排序">⋮⋮</button>
-      ${prioHtml}
+      <button type="button" class="lp-auto-rule-handle" data-drag-handle title="拖拽调整优先级" aria-label="拖拽排序">⋮⋮</button>
+      <span class="lp-auto-prio" title="优先级（数字越小越高）">#${index + 1}</span>
       <button type="button" class="lp-auto-rule-summary" data-act="edit" data-drag-summary>${summary}</button>
       <div class="lp-auto-rule-tools">
-        <button type="button" data-act="up" title="${upTitle}">↑</button>
-        <button type="button" data-act="down" title="${downTitle}">↓</button>
+        <button type="button" data-act="up" title="上移（提高优先级）">↑</button>
+        <button type="button" data-act="down" title="下移（降低优先级）">↓</button>
         <button type="button" data-act="copy" title="复制" aria-label="复制">⧉</button>
         <button type="button" data-act="edit" title="编辑">✎</button>
         <button type="button" data-act="del" title="删除">×</button>
@@ -534,10 +501,10 @@
     const summaryBtn = row.querySelector('[data-drag-summary]');
     handle?.addEventListener('pointerdown', (event) => {
       event.stopPropagation();
-      beginRuleDrag(event, rule, trigger, true);
+      beginRuleDrag(event, rule, true);
     });
     summaryBtn?.addEventListener('pointerdown', (event) => {
-      beginRuleDrag(event, rule, trigger, false);
+      beginRuleDrag(event, rule, false);
     });
     row.addEventListener('click', (event) => {
       if (rulesList.classList.contains('is-rule-dragging')) {
@@ -575,7 +542,7 @@
     return row;
   }
 
-  /** 分两段渲染持续判定（有优先级）与瞬时触发（无优先级）。 */
+  /** 渲染统一优先级规则列表。 */
   function renderRules() {
     endRuleDrag();
     rulesList.innerHTML = '';
@@ -583,34 +550,27 @@
       rulesList.innerHTML = '<p class="lp-auto-empty">先在上方选择一节车厢</p>';
       return;
     }
-    const split =
-      Prog().getRulesByTrigger?.(selectedCarId) ||
-      Prog().splitRulesByTrigger?.(Prog().getRules(selectedCarId)) || {
-        continuous: Prog().getRules(selectedCarId).filter((r) => r.trigger !== 'edge'),
-        edge: Prog().getRules(selectedCarId).filter((r) => r.trigger === 'edge'),
-      };
-    if (!split.continuous.length && !split.edge.length) {
+    const rules = Prog().getRules(selectedCarId);
+    if (!rules.length) {
       rulesList.innerHTML =
-        '<p class="lp-auto-empty">尚无规则。点击「添加规则」。持续判定段内越靠上优先级越高；瞬时触发无优先级。可拖拽行调整位置。</p>';
+        '<p class="lp-auto-empty">尚无规则。点击「添加规则」。列表越靠上优先级越高；可拖拽调整。</p>';
       return;
     }
-    appendRuleSection({
-      title: '持续判定',
-      hint: '列表越靠上优先级越高。拖拽排序；拖到下方可改为瞬时触发。',
-      rules: split.continuous,
-      priority: true,
-      trigger: 'while',
-    });
-    appendRuleSection({
-      title: '瞬时触发',
-      hint: '顺序仅美观，无优先级。拖拽换行；拖到上方可改为持续判定。',
-      rules: split.edge,
-      priority: false,
-      trigger: 'edge',
-    });
+    appendRuleList(rules);
   }
 
-  /** 分步向导：触发 → 条件（参数内联同行）→ 行为（参数内联同行）。 */
+  /**
+   * 按目录 preferredTrigger / preferEdge / preferWhile 写入草稿 trigger。
+   */
+  function applyPreferredTrigger() {
+    if (!editor) return;
+    const suggested =
+      Cat()?.preferredTrigger?.(editor.rule.condition?.id, editor.rule.action?.id) ||
+      'while';
+    editor.rule.trigger = suggested === 'edge' ? 'edge' : 'while';
+  }
+
+  /** 分步向导：条件（参数内联）→ 行为（参数内联）；trigger 由目录自动决定。 */
   function openWizard(mode, rule) {
     const migratedAction = Cat()?.migrateAction
       ? Cat().migrateAction(rule.action || {}, {
@@ -628,6 +588,7 @@
       ),
       step: 0,
     };
+    if (mode === 'add') applyPreferredTrigger();
     wizard.hidden = false;
     paintWizard();
   }
@@ -641,11 +602,13 @@
   }
 
   function wizardSteps() {
-    const steps = [{ id: 'trigger', label: '1 · 触发模式' }, { id: 'cond', label: '2 · 选择条件' }];
-    steps.push({ id: 'action', label: `${steps.length + 1} · 选择行为` });
-    return steps;
+    return [
+      { id: 'cond', label: '1 · 选择条件' },
+      { id: 'action', label: '2 · 选择行为' },
+    ];
   }
 
+  /** 绘制当前向导步（条件/行为选择）；不展示 trigger 选择器。 */
   function paintWizard() {
     if (!editor) return;
     const steps = wizardSteps();
@@ -664,28 +627,14 @@
       )
       .join('');
 
-    if (step.id === 'trigger') {
-      body.innerHTML = Cat()
-        .TRIGGERS.map(
-          (t) => `
-        <label class="lp-auto-choice">
-          <input type="radio" name="lpAutoTrig" value="${t.id}" ${rule.trigger === t.id ? 'checked' : ''}>
-          <span><strong>${t.label}</strong><small>${t.hint || ''}</small></span>
-        </label>`
-        )
-        .join('');
-      body.querySelectorAll('input[name="lpAutoTrig"]').forEach((el) => {
-        el.addEventListener('change', () => {
-          rule.trigger = el.value;
-        });
-      });
-    } else if (step.id === 'cond') {
+    if (step.id === 'cond') {
       const conds = Cat().conditionsForCar(selectedCarId);
       if (!conds.some((c) => c.id === rule.condition.id)) {
         rule.condition = {
           id: conds[0].id,
           params: Cat().defaultParams(conds[0].params, selectedCarId),
         };
+        applyPreferredTrigger();
       }
       body.innerHTML = conds
         .map((c) => {
@@ -712,6 +661,7 @@
           params: Cat().defaultParams(c.params, selectedCarId),
         };
         syncInlineParamsFromRow(row, rule.condition.params);
+        applyPreferredTrigger();
       };
       bindChoiceRadios(body, 'lpAutoCond', selectCond);
       bindChoiceInlineParams(body, 'lpAutoCond', () => rule.condition.params, selectCond);
@@ -729,6 +679,7 @@
           id: acts[0].id,
           params: Cat().defaultParams(acts[0].params, selectedCarId),
         };
+        applyPreferredTrigger();
       }
       body.innerHTML = acts
         .map((a) => {
@@ -755,6 +706,7 @@
           params: Cat().defaultParams(a.params, selectedCarId),
         };
         syncInlineParamsFromRow(row, rule.action.params);
+        applyPreferredTrigger();
       };
       bindChoiceRadios(body, 'lpAutoAct', selectAct);
       bindChoiceInlineParams(body, 'lpAutoAct', () => rule.action.params, selectAct);

@@ -4,8 +4,16 @@
  */
 (() => {
   const PUBLIC_ROOM_ID = window.AvatarNetwork?.PUBLIC_ROOM_ID || 'public';
+  /** 本地联调默认房间码（加入可不手打）。 */
+  const LOCAL_DEV_ROOM = 'testroom';
   /** 已连线后，断线未超过此时长仍显示「连线」。 */
   const ONLINE_HOLD_MS = 1500;
+
+  /** 是否本机开发入口（localhost / 环回）。 */
+  function isLocalDevHost() {
+    const host = String(location.hostname || '').toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  }
 
   function bindMultiplayerUi(session) {
     const statusEl = document.getElementById('mpStatus');
@@ -17,6 +25,10 @@
     const joinBtn = document.getElementById('mpJoinButton');
     const publicBtn = document.getElementById('mpPublicButton');
     const inviteBtn = document.getElementById('mpInviteButton');
+
+    if (isLocalDevHost() && joinInput && !String(joinInput.value || '').trim()) {
+      joinInput.value = LOCAL_DEV_ROOM;
+    }
 
     /** 写入房间操作反馈文案。 */
     function setFeedback(text, isError = false) {

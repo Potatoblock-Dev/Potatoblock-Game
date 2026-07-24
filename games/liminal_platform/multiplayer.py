@@ -41,8 +41,9 @@ HALF_W = (40.0 * 1.35) / 2.0
 # 与客户端 carriage-spec.js WORLD_SCALE 保持一致
 WORLD_SCALE = 0.88
 FLOOR_Y = 972.0 * WORLD_SCALE
-WALK_LEFT = 456.0 * WORLD_SCALE
-WALK_RIGHT = 1793.0 * WORLD_SCALE
+# 与 carriage-spec.js ART_WALK_* 对齐（含两端外廊端台）
+WALK_LEFT = 368.0 * WORLD_SCALE
+WALK_RIGHT = 1882.0 * WORLD_SCALE
 COUPLER_JOIN = 1526.0 * WORLD_SCALE
 MAX_MESSAGE_BYTES = 16384
 MAX_POSE_HZ = 30
@@ -195,6 +196,11 @@ class LiminalPlayer:
         self.aim_x: Optional[float] = None
         self.aim_y: Optional[float] = None
         self.turret_id: Optional[str] = None
+        self.pressure = 0.0
+        self.hp = 100.0
+        self.life_state = "alive"
+        self.downed_remain = None
+        self.death_cause = None
         self.inventories = Inv.PlayerInventories()
         self.sync_held_from_inv()
 
@@ -231,7 +237,17 @@ class LiminalPlayer:
             "appearance": dict(self.appearance),
             "connected": self.connected,
             "heldId": None if manned else self.held_id,
+            "pressure": round(self.pressure, 1),
+            "hp": round(self.hp, 1),
+            "lifeState": self.life_state if self.life_state in ("alive", "downed", "dead") else "alive",
         }
+        if self.life_state == "downed" and self.downed_remain is not None:
+            try:
+                data["downedRemain"] = round(float(self.downed_remain), 2)
+            except (TypeError, ValueError):
+                pass
+        if self.life_state == "dead" and self.death_cause in ("timer", "redeploy", "solo"):
+            data["deathCause"] = self.death_cause
         if self.aim_x is not None and self.aim_y is not None:
             data["aimX"] = round(self.aim_x, 2)
             data["aimY"] = round(self.aim_y, 2)
@@ -257,6 +273,7 @@ class LiminalRoom:
         self._train_set_times: Dict[str, float] = {}
         self._inv_op_times: Dict[str, float] = {}
         self._fire_times: Dict[str, float] = {}
+        self._heal_times: Dict[str, float] = {}
 
     def connected_count(self) -> int:
         return sum(1 for player in self.players.values() if player.connected)
@@ -523,6 +540,37 @@ class LiminalLobbyManager:
             player.aim_x = None
             player.aim_y = None
         self._apply_turret_claim(room, player, payload.get("turretId"))
+        # HUD 透传：压力 / 生命（客户端本地权威，仅供队友条显示）
+        if "pressure" in payload:
+            try:
+                player.pressure = _clamp(float(payload.get("pressure")), 0.0, 200.0)
+            except (TypeError, ValueError):
+                pass
+        if "hp" in payload:
+            try:
+                player.hp = _clamp(float(payload.get("hp")), 0.0, 100.0)
+            except (TypeError, ValueError):
+                pass
+        life = str(payload.get("lifeState") or "").strip().lower()
+        if life in ("alive", "downed", "dead"):
+            player.life_state = life
+        if life == "downed":
+            if "downedRemain" in payload:
+                try:
+                    raw = payload.get("downedRemain")
+                    player.downed_remain = (
+                        None if raw is None else _clamp(float(raw), 0.0, 60.0)
+                    )
+                except (TypeError, ValueError):
+                    player.downed_remain = None
+            player.death_cause = None
+        elif life == "dead":
+            cause = str(payload.get("deathCause") or "").strip().lower()
+            player.death_cause = cause if cause in ("timer", "redeploy", "solo") else "timer"
+            player.downed_remain = None
+        elif life == "alive":
+            player.death_cause = None
+            player.downed_remain = None
 
     def _apply_turret_claim(
         self, room: "LiminalRoom", player: LiminalPlayer, raw_turret_id: Any
@@ -703,6 +751,109 @@ class LiminalLobbyManager:
         if ammo_type in ("ap", "t"):
             fired["ammoType"] = ammo_type
         await room.broadcast(fired, exclude_id=user_id)
+
+    async def handle_heal(self, user_id: str, payload: Dict[str, Any]) -> None:
+        """医疗箱治疗：校验手部医箱与距离，扣耐久，广播回血量（生命仍由客户端应用）。"""
+        room, player = self._room_player(user_id)
+        if room is None or player is None or not player.connected:
+            return
+        now = _now()
+        last = room._heal_times.get(user_id, 0.0)
+        if now - last < 0.08:
+            return
+        room._heal_times[user_id] = now
+        try:
+            dt = float(payload.get("dt") or 0.1)
+        except (TypeError, ValueError):
+            dt = 0.1
+        dt = max(0.02, min(0.25, dt))
+        target_id = str(payload.get("targetId") or "").strip()
+        ally = False
+        target = player
+        if target_id and target_id != user_id:
+            other = room.players.get(target_id)
+            if other is None or not other.connected:
+                await player.connection.enqueue(player.inv_message(room))
+                return
+            item = Inv.ITEMS.get(Inv.MEDKIT_ID) or {}
+            ally_range = float(item.get("allyRange") or 150)
+            dist = ((other.x - player.x) ** 2 + (other.y - player.y) ** 2) ** 0.5
+            if dist > ally_range + 40:
+                await player.connection.enqueue(player.inv_message(room))
+                return
+            ally = True
+            target = other
+            if getattr(other, "life_state", "alive") == "downed":
+                # 濒死须走 revive，不用持续 heal
+                await player.connection.enqueue(player.inv_message(room))
+                return
+        result = Inv.apply_medkit_tick(
+            player.inventories,
+            hand_index=payload.get("handIndex"),
+            dt=dt,
+            ally=ally,
+        )
+        await player.connection.enqueue(player.inv_message(room))
+        if not result or float(result.get("amount") or 0) <= 0:
+            return
+        await room.broadcast(
+            {
+                "type": "player_healed",
+                "protocolVersion": PROTOCOL_VERSION,
+                "roomId": room.room_id,
+                "by": user_id,
+                "targetId": target.user_id,
+                "amount": round(float(result["amount"]), 3),
+                "ally": ally,
+            }
+        )
+
+    async def handle_revive(self, user_id: str, payload: Dict[str, Any]) -> None:
+        """消耗整箱医箱复活濒死队友；生命/压力由客户端按广播应用。"""
+        room, player = self._room_player(user_id)
+        if room is None or player is None or not player.connected:
+            return
+        now = _now()
+        last = room._heal_times.get(user_id, 0.0)
+        if now - last < 0.15:
+            return
+        room._heal_times[user_id] = now
+        target_id = str(payload.get("targetId") or "").strip()
+        if not target_id or target_id == user_id:
+            await player.connection.enqueue(player.inv_message(room))
+            return
+        other = room.players.get(target_id)
+        if other is None or not other.connected:
+            await player.connection.enqueue(player.inv_message(room))
+            return
+        if getattr(other, "life_state", "alive") != "downed":
+            await player.connection.enqueue(player.inv_message(room))
+            return
+        item = Inv.ITEMS.get(Inv.MEDKIT_ID) or {}
+        ally_range = float(item.get("allyRange") or 150)
+        dist = ((other.x - player.x) ** 2 + (other.y - player.y) ** 2) ** 0.5
+        if dist > ally_range + 40:
+            await player.connection.enqueue(player.inv_message(room))
+            return
+        consumed = Inv.consume_held_medkit(
+            player.inventories, hand_index=payload.get("handIndex")
+        )
+        await player.connection.enqueue(player.inv_message(room))
+        if not consumed:
+            return
+        other.life_state = "alive"
+        other.downed_remain = None
+        other.death_cause = None
+        other.hp = max(1.0, round(100.0 * 0.2, 1))
+        await room.broadcast(
+            {
+                "type": "player_revived",
+                "protocolVersion": PROTOCOL_VERSION,
+                "roomId": room.room_id,
+                "by": user_id,
+                "targetId": other.user_id,
+            }
+        )
 
     async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:
         """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop / rotate / sort。"""

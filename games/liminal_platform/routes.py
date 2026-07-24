@@ -133,6 +133,12 @@ async def liminal_platform_ws(websocket: WebSocket):
             if message_type == "fire":
                 await lobby_manager.handle_fire(connection.user_id, payload)
                 continue
+            if message_type == "heal":
+                await lobby_manager.handle_heal(connection.user_id, payload)
+                continue
+            if message_type == "revive":
+                await lobby_manager.handle_revive(connection.user_id, payload)
+                continue
             if message_type == "inv":
                 await lobby_manager.handle_inv(connection.user_id, payload)
                 continue

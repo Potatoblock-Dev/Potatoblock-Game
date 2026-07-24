@@ -1,18 +1,43 @@
 /**
- * 左下角手部三槽预览：常显；按绑定键循环切换选中槽。
+ * 手部三槽预览：常显；按绑定键循环切换选中槽。
+ * 桌面左下；移动端与跑走键同簇置右上（见 .lp-hotbar-cluster）。
  */
 (() => {
   const Catalog = window.LpItemCatalog;
   const root = document.getElementById('lpHandsHud');
   if (!root) return;
 
+  const STORAGE_KEY = 'lp-hands-hud-active-v1';
   const slots = [0, 1, 2].map((i) => root.querySelector(`[data-lp-hand-hud="${i}"]`));
-  const LABELS = ['', '', '工具'];
-  const TOAST_LABELS = ['1', '2', '工具'];
+  const LABELS = ['', '', '3'];
+  const TOAST_LABELS = ['1', '2', '3'];
+  const DEFAULT_ACTIVE = 1;
 
   let visible = true;
-  /** 当前选中槽（开火优先用此槽上的枪）。 */
-  let activeIndex = 1;
+  /** 当前选中槽（开火优先用此槽上的枪）；跨会话记在 localStorage。 */
+  let activeIndex = loadPersistedActiveIndex();
+
+  /** 从 localStorage 读取上次手部栏选中槽；缺省或无效则回默认槽。 */
+  function loadPersistedActiveIndex() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw == null || raw === '') return DEFAULT_ACTIVE;
+      const n = Number(raw);
+      if (n === 0 || n === 1 || n === 2) return n;
+      return DEFAULT_ACTIVE;
+    } catch {
+      return DEFAULT_ACTIVE;
+    }
+  }
+
+  /** 将当前选中槽写入 localStorage（刷新后仍保留）。 */
+  function persistActiveIndex() {
+    try {
+      localStorage.setItem(STORAGE_KEY, String(activeIndex));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
 
   /** 预览是否显示。 */
   function isVisible() {
@@ -24,10 +49,11 @@
     return activeIndex;
   }
 
-  /** 设置选中槽。 */
+  /** 设置选中槽并持久化。 */
   function setActiveIndex(index) {
     if (index < 0 || index > 2) return;
     activeIndex = index;
+    persistActiveIndex();
     render();
   }
 
@@ -44,10 +70,9 @@
     window.LiminalInteract?.showToast?.(visible ? '手部栏显示' : '手部栏隐藏');
   }
 
-  /** 在 0→1→2→0 间切换选中。 */
+  /** 在 0→1→2→0 间切换选中（经 setActiveIndex 持久化）。 */
   function cycleActive() {
-    activeIndex = (activeIndex + 1) % 3;
-    render();
+    setActiveIndex((activeIndex + 1) % 3);
     const hands = window.LpInventory?.getHandsInventory?.();
     const stack = hands?.getSlot?.(activeIndex);
     const name = stack ? Catalog.getItem(stack.itemId)?.name : null;
@@ -113,6 +138,8 @@
     );
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
+    } else if (item.maxDurability != null) {
+      qty.textContent = `${stack.dur ?? item.maxDurability}/${item.maxDurability}`;
     } else {
       qty.textContent = stack.qty > 1 ? String(stack.qty) : '';
     }

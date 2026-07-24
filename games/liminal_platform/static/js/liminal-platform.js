@@ -29,6 +29,12 @@
     kneel: 0,
   };
 
+  /** 本地生命与受击硬直（小怪触碰）；联机权威伤害为后续项。 */
+  const PLAYER_MAX_HP = 100;
+  let playerHp = PLAYER_MAX_HP;
+  let hitStunT = 0;
+  let hitInvulnT = 0;
+
   const avatar = Entity.createAvatarEntity({
     id: userId,
     nickname,
@@ -59,7 +65,7 @@
 
   const coarsePointer = window.matchMedia('(hover: none), (pointer: coarse)');
 
-  /** 读取触控输入（移动端）。 */
+  /** 读取触控输入（移动端；无模块时回退并带上自动奔跑偏好）。 */
   function readTouchInput() {
     return (
       window.LpTouchControls?.read() || {
@@ -67,6 +73,7 @@
         jump: false,
         interact: false,
         fire: false,
+        sprintToggle: Boolean(window.LpInputBindings?.getAutoRun?.()),
         look: { x: 0, y: 0, mag: 0, active: false, ready: false },
       }
     );
@@ -161,9 +168,64 @@
     };
   }
 
+  /** 移动端准星吸附：屏幕半径（px）；越近拉力越强，不硬锁。 */
+  const TOUCH_AIM_ASSIST_RADIUS_PX = 88;
+  /** 最大朝目标中心的混合比例（0–1）；留足余量做微调。 */
+  const TOUCH_AIM_ASSIST_MAX_PULL = 0.46;
+
+  /**
+   * 对原始触控准星做软磁吸附：在半径内拉向最近存活敌方（LpMobs / 战斗敌方）。
+   * 拉力随距离二次衰减；不硬锁，桌面鼠标路径不调用。
+   */
+  function applyTouchAimAssist(screenX, screenY, view) {
+    const hostiles =
+      window.LpMobs?.listHostiles?.() ||
+      window.LpCombat?.listHostiles?.() ||
+      [];
+    if (!hostiles.length) return { x: screenX, y: screenY };
+
+    let bestX = 0;
+    let bestY = 0;
+    let bestDist = Infinity;
+    let bestRadius = TOUCH_AIM_ASSIST_RADIUS_PX;
+
+    for (let i = 0; i < hostiles.length; i += 1) {
+      const h = hostiles[i];
+      const sx = Number(h.x);
+      const sy = Number(h.y);
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
+      const scr = worldToScreen(sx, sy, view);
+      if (
+        scr.x < -48 ||
+        scr.x > viewW + 48 ||
+        scr.y < -48 ||
+        scr.y > viewH + 48
+      ) {
+        continue;
+      }
+      const mobScreenR = Math.max(0, Number(h.radius) || 0) * view.zoom;
+      const assistR = TOUCH_AIM_ASSIST_RADIUS_PX + mobScreenR * 0.4;
+      const dist = Math.hypot(screenX - scr.x, screenY - scr.y);
+      if (dist >= assistR || dist >= bestDist) continue;
+      bestDist = dist;
+      bestRadius = assistR;
+      bestX = scr.x;
+      bestY = scr.y;
+    }
+
+    if (bestDist === Infinity) return { x: screenX, y: screenY };
+
+    const t = 1 - bestDist / bestRadius;
+    const pull = TOUCH_AIM_ASSIST_MAX_PULL * t * t;
+    return {
+      x: screenX + (bestX - screenX) * pull,
+      y: screenY + (bestY - screenY) * pull,
+    };
+  }
+
   /**
    * 移动端：瞄准摇杆方向 × 把手距离 → 准星屏幕位置（松手保持方向与距离）。
-   * lead = maxLead * mag；mag 为死区外归一化 0–1。
+   * lead = maxLead * mag；mag 为死区外归一化 0–1。近敌时再软吸附。
    */
   function syncTouchAimPointer() {
     if (!isCoarsePointer() || isUiOpen()) return;
@@ -179,15 +241,20 @@
     const playerScreen = worldToScreen(local.x, aimAnchorY, view);
     const maxLead = Math.min(viewW, viewH) * 0.42 * (window.LpGuardTurret?.getAimLeadScale?.() ?? 1);
     const maxLeadY = maxLead * (window.LpGuardTurret?.isManned?.() ? 1.15 : 0.9);
+    let rawX;
+    let rawY;
     if (look.ready) {
       const mag = Math.min(1, Math.max(0, Number(look.mag) || 0));
-      pointer.x = playerScreen.x + look.x * maxLead * mag;
-      pointer.y = playerScreen.y + look.y * maxLeadY * mag;
+      rawX = playerScreen.x + look.x * maxLead * mag;
+      rawY = playerScreen.y + look.y * maxLeadY * mag;
     } else {
       const facing = avatar.facing >= 0 ? 1 : -1;
-      pointer.x = playerScreen.x + facing * maxLead * 0.55;
-      pointer.y = playerScreen.y - maxLeadY * 0.08;
+      rawX = playerScreen.x + facing * maxLead * 0.55;
+      rawY = playerScreen.y - maxLeadY * 0.08;
     }
+    const assisted = applyTouchAimAssist(rawX, rawY, view);
+    pointer.x = assisted.x;
+    pointer.y = assisted.y;
     pointer.known = true;
   }
 
@@ -233,9 +300,12 @@
     return getMuzzleWorld();
   }
 
-  /** 向当前瞄准方向开火（手持武器或卫兵防御炮塔）。 */
+  /** 向当前瞄准方向开火（手持武器或卫兵防御炮塔）；持医疗箱时改走治疗。 */
   function requestFire() {
+    if (window.LpPlayerDeath?.isIncapacitated?.()) return;
     if (isUiOpen() || !window.LpCombat) return;
+    if (window.LpMedkit?.isHoldingMedkit?.()) return;
+    window.LpPressure?.noteAction?.();
     const aim = getAimWorld();
     if (window.LpGuardTurret?.isManned?.()) {
       window.LpGuardTurret.tryFire(aim.x, aim.y);
@@ -256,16 +326,17 @@
   }
 
   /**
-   * 按住时是否应连发：入座机炮，或手持全自动/机炮类武器。
+   * 按住时是否应连发：入座机炮，或手持全自动/机炮类武器，或持医疗箱持续治疗。
    * 半自动仅依赖 pointerdown / keydown / lp:fire 单发。
    */
   function shouldHoldFire() {
     if (window.LpGuardTurret?.isManned?.()) return true;
+    if (window.LpMedkit?.isHoldingMedkit?.()) return true;
     return Boolean(window.LpCombat?.isHeldWeaponFullAuto?.());
   }
 
   /**
-   * 每帧轮询开火键/指针是否仍按住；全自动或入座机炮时触发 requestFire。
+   * 每帧轮询开火键/指针是否仍按住；全自动或入座机炮或医疗箱时触发。
    * 入座 early-return 路径也必须调用，否则长按无法连发。
    */
   function pollHoldFire() {
@@ -275,7 +346,52 @@
       window.LpTouchControls?.isFireHeld?.() ||
       desktopFireHeld ||
       window.LpInputBindings?.isPressed('fire', keys);
+    if (fireHeld && window.LpMedkit?.isHoldingMedkit?.() && !window.LpGuardTurret?.isManned?.()) {
+      return;
+    }
     if (fireHeld && shouldHoldFire()) requestFire();
+  }
+
+  /** 每帧推进医疗箱持续治疗（与 pollHoldFire 共用按住判定）。 */
+  function tickMedkit(dt) {
+    if (isUiOpen() || window.LpGuardTurret?.isManned?.()) return;
+    const touch = readTouchInput();
+    const fireHeld =
+      touch.fire ||
+      window.LpTouchControls?.isFireHeld?.() ||
+      desktopFireHeld ||
+      window.LpInputBindings?.isPressed('fire', keys);
+    if (!fireHeld) return;
+    const aim = getAimWorld();
+    const remotes = [];
+    const remoteMap = window.LiminalSession?.remotes?.();
+    if (remoteMap && typeof remoteMap.values === 'function') {
+      for (const r of remoteMap.values()) remotes.push(r);
+    }
+    window.LpMedkit?.tick?.(dt, {
+      fireHeld: true,
+      aimX: aim.x,
+      aimY: aim.y,
+      selfX: local.x,
+      selfY: avatar.y,
+      remotes,
+      localUserId: userId,
+    });
+  }
+
+  /** 回复本地生命（医疗箱等）；不超过上限。濒死/死亡中忽略（复活走专用路径）。 */
+  function healPlayer(amount) {
+    if (window.LpPlayerDeath?.isIncapacitated?.()) return playerHp;
+    const add = Math.max(0, Number(amount) || 0);
+    if (add <= 0) return playerHp;
+    playerHp = Math.min(PLAYER_MAX_HP, playerHp + add);
+    syncHpHud();
+    return playerHp;
+  }
+
+  /** 刷新左上角生命条（委托 LpHudVitals）。 */
+  function syncHpHud() {
+    window.LpHudVitals?.syncHp?.(playerHp, PLAYER_MAX_HP);
   }
 
   /** 装填手持武器弹匣。 */
@@ -500,8 +616,167 @@
     return Math.max(value - maxStep, target);
   }
 
+  /**
+   * 小怪触碰：若在炮塔等岗位上则先离席，再扣血、击飞，并给关节初速做简易布娃娃。
+   * 仅走 mob onHit 路径；其它伤害源不经此函数，不会误踢下岗。
+   * @param {{ damage?: number, knockVx?: number, knockVy?: number }} hit
+   */
+  function applyMobHit(hit) {
+    if (window.LpPlayerDeath?.isIncapacitated?.()) return;
+    if (hitInvulnT > 0 || hitStunT > 0.2) return;
+    /* 岗位上受击：走与 F 离席相同的 exitTurret，再按站立受击处理击退 */
+    if (window.LpGuardTurret?.isManned?.()) {
+      window.LpGuardTurret.exitTurret();
+    }
+    const dmg = Math.max(0, Number(hit?.damage) || 0);
+    playerHp = Math.max(0, playerHp - dmg);
+    syncHpHud();
+    window.LpPressure?.noteMobHit?.(local.x);
+    if (playerHp <= 0) {
+      window.LpPlayerDeath?.onLethalHit?.({
+        x: local.x,
+        exitTurret: () => window.LpGuardTurret?.exitTurret?.(),
+      });
+    }
+    const kx = Number(hit?.knockVx) || 0;
+    const ky = Number(hit?.knockVy) || -280;
+    local.vx = kx;
+    local.vy = Math.min(local.vy, ky);
+    local.onGround = false;
+    hitStunT = 0.62;
+    hitInvulnT = 0.9;
+    avatar.moveDirection = 0;
+    avatar.gait = 'walk';
+    avatar.leanVelocity += Math.sign(kx || 1) * 9;
+    avatar.squashVelocity = Math.max(avatar.squashVelocity, 3.2);
+    const joints = avatar.joints;
+    if (joints) {
+      const flop = 14 + Math.abs(kx) * 0.012;
+      for (const key of Object.keys(joints)) {
+        const j = joints[key];
+        if (!j) continue;
+        j.velocity += (Math.random() - 0.5) * flop * 2;
+      }
+    }
+  }
+
+  /** 组装重生钩子（仓储传送 / 满血 / 短暂无敌）。 */
+  function respawnHooks() {
+    return {
+      local,
+      avatar,
+      restoreHp() {
+        playerHp = PLAYER_MAX_HP;
+        syncHpHud();
+      },
+      syncPose: syncAvatarPose,
+      setInvuln(t) {
+        hitInvulnT = Math.max(0, Number(t) || 0);
+        hitStunT = 0;
+      },
+    };
+  }
+
+  /** 濒死时仅保留重力落地与倒地姿势，忽略移动/开火。 */
+  function stepIncapacitatedPhysics(dt) {
+    if (hitInvulnT > 0) hitInvulnT = Math.max(0, hitInvulnT - dt);
+    hitStunT = 0;
+    local.vx *= Math.exp(-3.2 * dt);
+    local.x = Math.max(worldLeft, Math.min(worldRight, local.x + local.vx * dt));
+    avatar.moveDirection = 0;
+    avatar.gait = 'walk';
+    const wasOnGround = local.onGround;
+    local.vy += GRAVITY * dt;
+    local.y += local.vy * dt;
+    const floorY = floorAt(local.x);
+    if (floorY !== null && local.y >= 0) {
+      local.y = 0;
+      if (!wasOnGround) {
+        avatar.squashVelocity = Math.min(Math.max(local.vy - 180, 0) / 100, 4.6);
+      }
+      local.vy = 0;
+      local.onGround = true;
+      if (Math.abs(local.vx) < 40) local.vx *= 0.5;
+    } else {
+      local.onGround = false;
+    }
+    Entity.updateEntityMotion(avatar, dt);
+    window.LpPlayerDeath?.applyDownedPose?.(avatar, dt);
+    local.kneel = avatar.kneel || 0;
+    syncAvatarPose();
+    const extras = window.LpPlayerDeath?.poseExtras?.() || {};
+    window.LiminalSession?.maybeSendPose?.({
+      x: local.x,
+      y: local.y,
+      vx: local.vx,
+      vy: local.vy,
+      facing: avatar.facing,
+      onGround: local.onGround,
+      gait: avatar.gait,
+      headLook: 0,
+      aimX: null,
+      aimY: null,
+      lifeState: extras.lifeState,
+      downedRemain: extras.downedRemain,
+      deathCause: extras.deathCause,
+    });
+  }
+
+  /** 受击硬直期间：忽略移动输入，只保留击飞动量与重力落地。 */
+  function stepHitStunPhysics(dt) {
+    hitStunT = Math.max(0, hitStunT - dt);
+    local.vx *= Math.exp(-2.4 * dt);
+    local.x = Math.max(worldLeft, Math.min(worldRight, local.x + local.vx * dt));
+    avatar.moveDirection = 0;
+    avatar.gait = 'walk';
+    const wasOnGround = local.onGround;
+    local.vy += GRAVITY * dt;
+    local.y += local.vy * dt;
+    const floorY = floorAt(local.x);
+    if (floorY !== null && local.y >= 0) {
+      local.y = 0;
+      if (!wasOnGround) {
+        avatar.squashVelocity = Math.min(Math.max(local.vy - 180, 0) / 100, 4.6);
+      }
+      local.vy = 0;
+      local.onGround = true;
+      if (Math.abs(local.vx) < 40) local.vx *= 0.5;
+    } else {
+      local.onGround = false;
+    }
+    Entity.updateEntityMotion(avatar, dt);
+    syncAvatarPose();
+  }
+
   /** 积分玩家运动；y 为相对平台顶边的物理高度（地面 0，腾空为负）。 */
   function stepPhysics(dt) {
+    if (hitInvulnT > 0) hitInvulnT = Math.max(0, hitInvulnT - dt);
+
+    if (window.LpPlayerDeath?.isIncapacitated?.()) {
+      stepIncapacitatedPhysics(dt);
+      return;
+    }
+
+    if (hitStunT > 0 && !isUiOpen() && !window.LpGuardTurret?.isManned?.()) {
+      stepHitStunPhysics(dt);
+      {
+        const aim = getWeaponAimWorld();
+        window.LiminalSession?.maybeSendPose?.({
+          x: local.x,
+          y: local.y,
+          vx: local.vx,
+          vy: local.vy,
+          facing: avatar.facing,
+          onGround: local.onGround,
+          gait: avatar.gait,
+          headLook: avatar.headLook,
+          aimX: aim?.x,
+          aimY: aim?.y,
+        });
+      }
+      return;
+    }
+
     if (isUiOpen() || window.LpGuardTurret?.isManned?.()) {
       local.vx = 0;
       avatar.gait = 'walk';
@@ -567,6 +842,7 @@
 
     if (direction !== 0) avatar.facing = direction;
     avatar.moveDirection = direction;
+    if (direction !== 0) window.LpPressure?.noteAction?.();
 
     // 瞄准时朝向跟随准星（可边走边看）
     if (isAimCameraMode() && pointer.known) {
@@ -576,14 +852,17 @@
       }
     }
 
-    const autoRun = window.LpInputBindings?.getAutoRun?.() ?? false;
+    const autoRun = Boolean(window.LpInputBindings?.getAutoRun?.());
     let wantRun = false;
     if (direction !== 0) {
-      if (isCoarsePointer()) {
-        wantRun = Boolean(touch.sprintToggle);
+      if (isCoarsePointer() || autoRun) {
+        /* 触控 / 自动奔跑：共用锁定；进房时 applyAutoRunPreference 已按偏好置位。 */
+        wantRun = Boolean(
+          window.LpTouchControls?.isSprintOn?.() ?? touch.sprintToggle
+        );
       } else {
-        const holdSprint = window.LpInputBindings?.isPressed('sprint', keys) ?? false;
-        wantRun = autoRun ? !holdSprint : holdSprint;
+        /* 桌面且未开自动奔跑：按住奔跑键。 */
+        wantRun = Boolean(window.LpInputBindings?.isPressed('sprint', keys));
       }
     }
     avatar.gait = wantRun ? 'run' : 'walk';
@@ -602,6 +881,7 @@
     if (jumpPressed && local.onGround) {
       local.vy = -JUMP_SPEED;
       local.onGround = false;
+      window.LpPressure?.noteAction?.();
     }
 
     const wasOnGround = local.onGround;
@@ -694,17 +974,19 @@
       view.offsetX * dpr, view.offsetY * dpr
     );
 
-    /* 炮管在车厢贴图之下，白球/车身挡住炮尾；火光/抛壳在贴图之上以免被甲板盖住 */
+    /* 轨道在车厢之下；炮管亦在贴图下，白球/车身挡住炮尾；火光/抛壳在贴图之上 */
+    window.LpTrack?.draw?.(ctx);
     window.LpGuardTurret?.draw?.(ctx);
     Spec.CARRIAGES.forEach((car, i) => drawCarriage(car, i));
     window.LpGuardTurret?.drawFx?.(ctx);
     window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
     const heldItem = window.LpCombat?.getHeldWeaponItem?.();
-    /* 控制台/面板打开时仅隐藏持枪绘制与持枪层序，不卸装备；离席后自然恢复 */
+    /* 控制台/面板打开或濒死/死亡时仅隐藏持枪绘制与持枪层序，不卸装备 */
     const holdingGun =
       Boolean(heldItem) &&
       !window.LpGuardTurret?.isManned?.() &&
-      !isUiOpen();
+      !isUiOpen() &&
+      !window.LpPlayerDeath?.isIncapacitated?.();
     /* 持枪层序（远→近）：后腿→前臂(橙/护木)→身→前腿→头→枪→换弹匣→后臂(红/握把) */
     Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipBackArm: true } : {});
     if (holdingGun) {
@@ -714,6 +996,8 @@
       Entity.drawBackArm?.(ctx, avatar);
     }
     window.LpGroundLoot?.draw?.(ctx);
+    /* 小怪在车厢之上，避免被贴图完全挡住；轨面怪仍可见于底盘外 */
+    window.LpMobs?.draw?.(ctx);
     window.LpCombat?.draw(ctx);
     window.LpImpactFx?.draw?.(ctx);
 
@@ -732,8 +1016,15 @@
     lastTs = ts;
     syncTouchAimPointer();
     stepPhysics(dt);
+    window.LpPlayerDeath?.tick?.(dt, {
+      avatar,
+      keys,
+      coarse: isCoarsePointer(),
+    });
+    window.LpPlayerDeath?.watchAllyDeaths?.(local.x);
     window.LiminalSession?.tickRemotes?.(dt, remoteStageY);
     window.LpTrainDrive?.tick(dt);
+    window.LpTrack?.tick?.(dt);
     window.LpCarriageBob?.tick?.(dt);
     window.LpCombat?.tick(dt, {
       floorY: Spec.FLOOR_Y,
@@ -742,8 +1033,32 @@
     window.LpImpactFx?.tick?.(dt);
     window.LpReloadAction?.tick?.(dt);
     window.LpGuardTurret?.tick?.(dt);
+    {
+      const avatarH = Entity.AVATAR_SIZE * Entity.AVATAR_DRAW_SCALE * (avatar.heightScale || 1);
+      const incap = Boolean(window.LpPlayerDeath?.isIncapacitated?.());
+      window.LpMobs?.tick?.(dt, {
+        player: {
+          x: local.x,
+          y: avatar.y,
+          halfW: HALF_W,
+          height: avatarH,
+          /* 濒死/死亡期间无敌；入座仍可被打 */
+          invuln: hitInvulnT > 0 || incap,
+        },
+        onHit: applyMobHit,
+        view: cameraView(),
+        viewW,
+        viewH,
+      });
+    }
     window.LpAutoSensors?.tick?.(dt);
     window.LpAutoExecutors?.tick?.(dt);
+    if (!window.LpPlayerDeath?.isIncapacitated?.()) tickMedkit(dt);
+    window.LpPressure?.tick?.(dt, {
+      localX: local.x,
+      active: !window.LpPlayerDeath?.isIncapacitated?.(),
+    });
+    window.LpHudVitals?.tick?.();
     stepCamera(dt);
     syncAimCursor();
     updateLocalHeadLook(dt);
@@ -772,6 +1087,11 @@
     loopStarted = true;
     syncAvatarPose();
     window.LpInventory?.flushSeedOverflow?.(local.x);
+    window.LpMobs?.reset?.({
+      view: cameraView(),
+      viewW,
+      viewH,
+    });
     requestAnimationFrame(frame);
   }
 
@@ -832,6 +1152,17 @@
   window.addEventListener('keydown', (event) => {
     if (event.target instanceof HTMLInputElement) return;
     keys.add(event.code);
+
+    if (window.LpPlayerDeath?.tryRespawnFromEvent?.(event, respawnHooks())) {
+      event.preventDefault();
+      return;
+    }
+    if (window.LpPlayerDeath?.isIncapacitated?.()) {
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'Space', 'Tab'].includes(event.code)) {
+        event.preventDefault();
+      }
+      return;
+    }
 
     if (window.LpInputBindings?.matchesKeyEvent('inventory', event)) {
       event.preventDefault();
@@ -906,6 +1237,16 @@
       event.preventDefault();
       requestReload();
     }
+    if (window.LpInputBindings?.matchesKeyEvent('sprint', event)) {
+      /* 自动奔跑（或触控）下 Shift 边沿切换锁定；未开自动奔跑时桌面仍靠按住。 */
+      if (
+        isCoarsePointer() ||
+        Boolean(window.LpInputBindings?.getAutoRun?.())
+      ) {
+        event.preventDefault();
+        window.LpTouchControls?.toggleSprint?.();
+      }
+    }
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'Space', 'Tab'].includes(event.code)) {
       event.preventDefault();
     }
@@ -918,10 +1259,27 @@
     pointer.known = true;
   });
   canvas.addEventListener('pointerdown', (event) => {
+    if (window.LpPlayerDeath?.tryRespawnFromEvent?.(event, respawnHooks())) {
+      event.preventDefault();
+      return;
+    }
+    if (window.LpPlayerDeath?.isIncapacitated?.()) return;
     if (isCoarsePointer() || isUiOpen()) return;
     if (event.button !== 0) return;
     desktopFireHeld = true;
     requestFire();
+  });
+  window.addEventListener('pointerdown', (event) => {
+    if (!window.LpPlayerDeath?.canAcceptRespawnInput?.()) return;
+    if (event.target === canvas) return;
+    if (window.LpPlayerDeath.tryRespawnFromEvent(event, respawnHooks())) {
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener('contextmenu', (event) => {
+    if (window.LpPlayerDeath?.tryRespawnFromEvent?.(event, respawnHooks())) {
+      event.preventDefault();
+    }
   });
   window.addEventListener('pointerup', (event) => {
     if (event.button === 0) desktopFireHeld = false;
@@ -936,6 +1294,7 @@
     syncAimCursor();
   });
   window.addEventListener('blur', () => {
+    keys.clear();
     if (!isCoarsePointer()) pointer.known = false;
     desktopFireHeld = false;
     syncAimCursor();
@@ -951,17 +1310,42 @@
       window.LpSfx?.resume?.();
       loadWornAppearance().then(syncAvatarPose);
     } else {
+      keys.clear();
       window.LpTrainAudio?.suspend();
       window.LpSfx?.suspend?.();
     }
   });
 
   bindAudioUnlock();
+  window.LpTouchControls?.applyAutoRunPreference?.();
   window.LiminalSession?.start?.({ userId, nickname });
+  syncHpHud();
   window.LpGame = {
     getLocalAvatar: () => avatar,
+    /** 本地玩家世界 X（压力同车判定 / HUD）。 */
+    getLocalX: () => local.x,
     /** 全屏 UI（物品栏/锅炉/燃料/弹药箱/雷达/枢机）是否打开；联机上报可据此隐藏持枪。 */
     isUiOpen,
+    /** 本地玩家当前生命值。 */
+    getHp: () => playerHp,
+    getMaxHp: () => PLAYER_MAX_HP,
+    /** 回复生命（医疗箱等）；返回回血后的当前 HP。 */
+    heal: healPlayer,
+    /** 是否濒死或最终死亡（不可移动/开火）。 */
+    isIncapacitated: () => Boolean(window.LpPlayerDeath?.isIncapacitated?.()),
+    isDowned: () => Boolean(window.LpPlayerDeath?.isDowned?.()),
+    isDead: () => Boolean(window.LpPlayerDeath?.isDead?.()),
+    getLifeState: () => window.LpPlayerDeath?.getLifeState?.() || 'alive',
+    /** 调试：直接触发一次击飞受击。 */
+    debugMobHit(hit) {
+      applyMobHit(hit || { damage: 10, knockVx: 400, knockVy: -320 });
+    },
+    /** 调试：直接扣至 0 血进入濒死/死亡。 */
+    debugKill() {
+      playerHp = 0;
+      syncHpHud();
+      window.LpPlayerDeath?.onLethalHit?.({ x: local.x });
+    },
     /** 令本地角色朝向列车前进方向（屏幕右 / 世界 +X）。 */
     faceTrainForward() {
       const dir = Spec.TRAIN_FORWARD_X >= 0 ? 1 : -1;
@@ -978,6 +1362,33 @@
       return true;
     },
   };
+
+  /** 应用服务端广播的队友医箱复活（本机为目标或复活者）。 */
+  window.addEventListener('lp:player-revived', (event) => {
+    const d = event.detail || {};
+    const localId = String(userId || '');
+    const targetId = String(d.targetId || '');
+    const byId = String(d.by || '');
+    if (targetId && targetId === localId) {
+      window.LpPlayerDeath?.applyAllyRevive?.({
+        maxHp: PLAYER_MAX_HP,
+        setHp(hp) {
+          playerHp = Math.max(0, Math.min(PLAYER_MAX_HP, Number(hp) || 0));
+          syncHpHud();
+        },
+        avatar,
+        local,
+        syncPose: syncAvatarPose,
+        setInvuln(t) {
+          hitInvulnT = Math.max(0, Number(t) || 0);
+          hitStunT = 0;
+        },
+      });
+    }
+    if (byId && byId === localId) {
+      window.LpPlayerDeath?.applyReviverPressureRelief?.(local.x);
+    }
+  });
   window.addEventListener('lp:turret-enter', (event) => {
     const turretId = event.detail?.turretId === 'right' ? 'right' : 'left';
     const spotId = turretId === 'right' ? 'guard-turret-right' : 'guard-turret-left';
@@ -989,6 +1400,7 @@
     }
   });
   window.addEventListener('lp:interact', () => {
+    window.LpPressure?.noteAction?.();
     if (closeConsoleUi()) return;
     if (isUiOpen()) return;
     window.LiminalInteract?.tryInteract(local);

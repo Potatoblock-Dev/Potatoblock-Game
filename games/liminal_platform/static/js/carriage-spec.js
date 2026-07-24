@@ -18,13 +18,17 @@
    */
   const ART_UNDERSIDE_Y = 1023;
   /**
-   * 轨道 / 轨道路基虚拟地面 Y（源图像素；贴图轮缘约至 1058，略下为逻辑轨面）。
-   * 弹道命中此水平面 → 地面尘土 FX。
+   * 轨道轨头顶面 Y（源图像素；与贴图轮缘底边对齐，众数约 1058）。
+   * LpTrack 绘轨、地面怪寻路、弹道地面尘土 FX 均读 TRACK_Y。
    */
-  const ART_TRACK_Y = 1100;
-  /** 单节车厢内可行走水平范围（含 chassis 顶边，不含外侧链钩）。 */
-  const ART_WALK_LEFT = 456;
-  const ART_WALK_RIGHT = 1793;
+  const ART_TRACK_Y = 1058;
+  /**
+   * 单节车厢内可行走水平范围（源图像素）。
+   * 含舱内走道 + 两端带栏杆的外廊端台；不含栏杆外侧链钩尖。
+   * 贴图测得：左端台≈352–448、右端台≈1801–1897；内收至栏杆内侧以免踩空。
+   */
+  const ART_WALK_LEFT = 368;
+  const ART_WALK_RIGHT = 1882;
   /**
    * 相邻车厢 worldX 间距：前车右钩尖与后车左钩尖对接。
    * 成品贴图测得：动力/卫兵防御右 tip≈1898，仓储左 tip≈372 → 1526。
@@ -154,6 +158,30 @@
     return car.worldX + (WALK_LEFT + WALK_RIGHT) / 2;
   }
 
+  /**
+   * 距 fromX 最近的仓储车厢（id=storage）走道中心；仅一节时即该节。
+   * 无仓储时回退 defaultSpawnX()。
+   * @param {number} fromX
+   * @returns {number}
+   */
+  function nearestStorageSpawnX(fromX) {
+    const mid = (WALK_LEFT + WALK_RIGHT) / 2;
+    const storages = CARRIAGES.filter((car) => car.id === 'storage');
+    if (!storages.length) return defaultSpawnX();
+    const x0 = Number(fromX);
+    let best = storages[0];
+    let bestD = Math.abs(best.worldX + mid - x0);
+    for (let i = 1; i < storages.length; i += 1) {
+      const car = storages[i];
+      const d = Math.abs(car.worldX + mid - x0);
+      if (d < bestD) {
+        bestD = d;
+        best = car;
+      }
+    }
+    return best.worldX + mid;
+  }
+
   /** 返回世界坐标下的走道平台段（含节间连廊）。 */
   function buildWalkPlatforms() {
     const floors = CARRIAGES.map((car) => ({
@@ -264,6 +292,7 @@
     listMapEntries,
     carriageById,
     defaultSpawnX,
+    nearestStorageSpawnX,
     buildWalkPlatforms,
     carriageAt,
     hitProjectileSurfaces,

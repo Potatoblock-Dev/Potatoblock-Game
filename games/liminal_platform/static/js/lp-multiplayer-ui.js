@@ -4,8 +4,19 @@
  */
 (() => {
   const PUBLIC_ROOM_ID = window.LiminalNetwork?.PUBLIC_ROOM_ID || 'public';
+  /** 本地联调默认房间码（加入可不手打）。 */
+  const LOCAL_DEV_ROOM = 'testroom';
   /** 已连线后，断线未超过此时长仍显示「连线」。 */
   const ONLINE_HOLD_MS = 1500;
+
+  /** 是否本机开发入口（与 LiminalNetwork.isLocalDevHost 一致）。 */
+  function isLocalDevHost() {
+    if (typeof window.LiminalNetwork?.isLocalDevHost === 'function') {
+      return window.LiminalNetwork.isLocalDevHost();
+    }
+    const host = String(location.hostname || '').toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  }
 
   function bindMultiplayerUi(session) {
     const statusEl = document.getElementById('mpStatus');
@@ -17,6 +28,11 @@
     const joinBtn = document.getElementById('mpJoinButton');
     const publicBtn = document.getElementById('mpPublicButton');
     const inviteBtn = document.getElementById('mpInviteButton');
+    const localDev = isLocalDevHost();
+
+    if (localDev && joinInput && !String(joinInput.value || '').trim()) {
+      joinInput.value = LOCAL_DEV_ROOM;
+    }
 
     /** 写入房间操作反馈文案。 */
     function setFeedback(text, isError = false) {
@@ -25,10 +41,10 @@
       feedbackEl.classList.toggle('is-error', Boolean(isError && text));
     }
 
-    let lastStatus = 'connecting';
+    let lastStatus = localDev ? 'offline' : 'connecting';
     let everOnline = false;
     /** 展示态：online | connecting | reconnecting | offline | replaced */
-    let displayKind = 'connecting';
+    let displayKind = localDev ? 'offline' : 'connecting';
     let holdTimer = null;
 
     /** 将展示态映射为状态条文案。 */

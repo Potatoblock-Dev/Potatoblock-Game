@@ -286,13 +286,18 @@
     };
   }
 
-  /** 绘制燃料条与操作反馈；炮塔操控时跳过顶栏画布 HUD，仍可显示 toast。 */
-  function drawHud(ctx, view, dpr) {
+  /**
+   * 绘制动力车车厢详细信息（锅炉燃料 + 列车车速）与 toast。
+   * 燃料/车速仅在玩家处于动力车厢时显示；toast 全局；炮塔模式跳过顶栏 chrome。
+   */
+  function drawHud(ctx, view, dpr, worldX) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const { barX, barY } = hudAnchor();
     const hideTopChrome = document.body.classList.contains('lp-turret-mode');
+    const inPowerCar =
+      window.LiminalCarriageSpec?.carriageAt?.(worldX)?.id === 'power';
 
-    if (!hideTopChrome) {
+    if (!hideTopChrome && inPowerCar) {
       const barW = 120;
       const barH = 8;
       const ratio = fuel.level / fuel.max;
@@ -355,7 +360,7 @@
           : `炮塔中 · 弹药 ${ammo} · 按 ${keyLabel} 离开 · 左键开火`;
         drawStatusBanner(ctx, dpr, line, { mobile });
       }
-      drawHud(ctx, view, dpr);
+      drawHud(ctx, view, dpr, local.x);
       return;
     }
     const active = findActive(local);
@@ -372,7 +377,7 @@
     } else if (!active && !panelOpen) {
       drawStoragePrompt(ctx, local, view, dpr, inventoryKeyLabel, { mobile });
     }
-    drawHud(ctx, view, dpr);
+    drawHud(ctx, view, dpr, local.x);
   }
 
   /** 交互提示文案（弹药箱附带库存）。 */

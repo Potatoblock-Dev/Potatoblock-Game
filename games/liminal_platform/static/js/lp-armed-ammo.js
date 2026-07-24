@@ -8,7 +8,11 @@
  * 切组后再切回从该组上次位置继续。火炮类（supportsBelts:false）仅单选弹种，无弹链。
  *
  * 枢机自动化：`applyAmmoSelection` 写入内存 autoByCar（自动装载），不改写本机弹药箱弹链。
- * peek / advance 优先用 autoByCar；玩家手动切组/弹种时清除该车自动装载。
+ * peek / advance 优先用 autoByCar；玩家入座或手动切组/弹种时清除该车自动装载。
+ * 入座期间（activate / isManned）拒绝再写入 autoByCar，且 peek/advance/take 忽略残留 auto，
+ * 连续单击与长按共用本机弹链游标；HUD 下划线经 scheduleRender 跟随游标。
+ * 离席后重置 ammo 边沿闩并允许规则再设。
+ * 无人卫士开火经 peekFireTypeId('guard') 读自动装载（与本机弹链隔离）。
  *
  * 损坏存档：缺失 / 未知 / 不在 allowedTypes 的槽位一律改为 ap，并写回 localStorage。
  */
@@ -45,7 +49,7 @@
       color: '#86efac',
       accent: '#166534',
       role: '曳光',
-      use: '亮绿曳光弹：弹道拖尾，弹体消失后尾迹短暂滞空，便于校射。',
+      use: '亮绿曳光弹：弹道拖尾；成功发射后下一发散布收窄（不叠加），便于校射。',
       body: '#86efac',
       band: '#166534',
       tip: '#ecfdf5',
@@ -138,6 +142,27 @@
    * @type {{ carriageId: string, beltIndex: number, slotIndex: number, chip: HTMLElement } | null}
    */
   let openChooserRef = null;
+
+  /** 弹链组行拖拽：移动超过该像素才激活（桌面）。 */
+  const BELT_DRAG_MOVE_PX = 6;
+  /** 触控长按后才激活拖拽，避免与列表滚动冲突。 */
+  const BELT_DRAG_LONG_PRESS_MS = 420;
+  /**
+   * 弹药箱弹链组拖拽会话（仅编辑器内；与枢机规则拖拽同语义）。
+   * @type {{
+   *   carriageId: string,
+   *   fromIndex: number,
+   *   pointerId: number,
+   *   startX: number,
+   *   startY: number,
+   *   active: boolean,
+   *   fromHandle: boolean,
+   *   longPressTimer: ReturnType<typeof setTimeout> | null,
+   *   dropIndex: number | null,
+   *   listEl: HTMLElement,
+   * } | null}
+   */
+  let beltDrag = null;
 
   /** 取弹种定义；未知 id 回退 AP。 */
   function getType(id) {
@@ -369,7 +394,7 @@
   }
 
   /**
-   * 清除某车厢的枢机自动装载（玩家手动切弹时调用）。
+   * 清除某车厢的枢机自动装载（入座接管或玩家手动切弹时调用）。
    * @param {string} [carriageId]
    */
   function clearAutoLoadout(carriageId) {
@@ -396,15 +421,35 @@
   }
 
   /**
+   * 卫士是否正被本机入座操控（入座时开火必须走本机弹链，忽略 autoByCar）。
+   * @returns {boolean}
+   */
+  function isLocalMannedGuard() {
+    return Boolean(window.LpGuardTurret?.isManned?.());
+  }
+
+  /**
+   * 解析开火用车厢 id：显式参数 → 当前 activate → 入座卫士兜底 guard。
+   * @param {string} [carriageId]
+   * @returns {string | null}
+   */
+  function resolveFireCarriageId(carriageId) {
+    const raw = String(carriageId || state.carriageId || '').trim();
+    if (raw) return raw;
+    return isLocalMannedGuard() ? 'guard' : null;
+  }
+
+  /**
    * 窥视下一发弹种 id（不推进游标）。
-   * 优先枢机 autoByCar；否则弹链组 cursor / 单弹种 typeIndex。
-   * @param {string} [carriageId] 省略则用当前激活车厢
+   * 无人：优先枢机 autoByCar。入座：始终本机弹链/弹种（忽略残留 auto）。
+   * @param {string} [carriageId] 省略则用当前激活车厢 / 入座卫士
    */
   function peekFireTypeId(carriageId) {
-    const id = carriageId || state.carriageId;
+    const id = resolveFireCarriageId(carriageId);
     const cfg = getCarriage(id);
     if (!cfg) return 'ap';
-    const auto = id ? state.autoByCar[id] : null;
+    const mannedSkipAuto = id === 'guard' && isLocalMannedGuard();
+    const auto = id && !mannedSkipAuto ? state.autoByCar[id] : null;
     if (auto?.kind === 'type') {
       return coerceAmmoId(auto.ammo, cfg);
     }
@@ -415,8 +460,8 @@
       const store = beltStore(id);
       const slots = store?.belts[store.activeBeltIndex];
       if (!slots?.length) return cfg.allowedTypes[0] || 'ap';
-      const cursor = store.cursors[store.activeBeltIndex] || 0;
-      return slots[cursor % slots.length];
+      const cursor = Number(store.cursors[store.activeBeltIndex]) || 0;
+      return slots[((cursor % slots.length) + slots.length) % slots.length];
     }
     if (id && state.carriageId === id) {
       return cfg.allowedTypes[state.typeIndex] || cfg.allowedTypes[0] || 'ap';
@@ -426,17 +471,20 @@
 
   /**
    * 成功开火后推进：自动装载弹链 cursor+1；否则本机弹链组内 cursor+1。
-   * 须在确认本触发已耗弹并发射后调用一次（双联同发仍只推进 1 次）。
+   * 入座卫士只推进本机弹链（忽略 auto）。双联同发仍只调用一次。
+   * HUD / 弹药箱弹链编辑器游标经 scheduleRender + renderBeltEditor 刷新。
    * @param {string} [carriageId]
    */
   function advanceFireCursor(carriageId) {
-    const id = carriageId || state.carriageId;
+    const id = resolveFireCarriageId(carriageId);
     const cfg = getCarriage(id);
     if (!cfg) return;
-    const auto = id ? state.autoByCar[id] : null;
+    const mannedSkipAuto = id === 'guard' && isLocalMannedGuard();
+    const auto = id && !mannedSkipAuto ? state.autoByCar[id] : null;
     if (auto?.kind === 'belt' && auto.slots?.length) {
-      auto.cursor = ((auto.cursor || 0) + 1) % auto.slots.length;
-      render();
+      auto.cursor = ((Number(auto.cursor) || 0) + 1) % auto.slots.length;
+      scheduleRender();
+      renderBeltEditor();
       return;
     }
     if (auto?.kind === 'type') return;
@@ -445,9 +493,35 @@
     if (!store) return;
     const i = store.activeBeltIndex;
     const n = store.belts[i]?.length || 1;
-    store.cursors[i] = ((store.cursors[i] || 0) + 1) % n;
+    store.cursors[i] = ((Number(store.cursors[i]) || 0) + 1) % n;
     savePersisted();
-    render();
+    scheduleRender();
+    renderBeltEditor();
+  }
+
+  /**
+   * 成功耗弹后取本发弹种并推进游标（peek + advance 原子组合）。
+   * 双联多枪口共用返回值，只调用一次。
+   * @param {string} [carriageId]
+   * @returns {string}
+   */
+  function takeFireTypeId(carriageId) {
+    const typeId = peekFireTypeId(carriageId);
+    advanceFireCursor(carriageId);
+    return typeId;
+  }
+
+  /** 合并同帧多次 render，避免开火 pointerdown 中途 replaceChildren。 */
+  let renderScheduled = 0;
+
+  /** 安排下一微任务刷新武装 HUD（游标下划线等）。 */
+  function scheduleRender() {
+    if (renderScheduled) return;
+    renderScheduled = 1;
+    queueMicrotask(() => {
+      renderScheduled = 0;
+      render();
+    });
   }
 
   /** 当前选中弹种定义（窥视下一发）。 */
@@ -935,6 +1009,7 @@
 
   /**
    * 进入武装操控：启用该车厢能力并显示底栏。
+   * 立刻清除该车 autoByCar，开火与 HUD 改用本机弹链/弹种；入座期间拒绝自动再写入。
    * 首次无存档时 seed 默认弹链；损坏槽位改为 ap 并写回本机。
    * @param {string} carriageId
    */
@@ -942,6 +1017,7 @@
     const id = String(carriageId || '').trim();
     if (!CARRIAGES[id]) return;
     state.carriageId = id;
+    clearAutoLoadout(id);
     const cfg = CARRIAGES[id];
     if (cfg.supportsBelts) {
       const { store, changed } = ensureBeltStore(id);
@@ -953,11 +1029,18 @@
     render();
   }
 
-  /** 离席：隐藏底栏。 */
+  /**
+   * 离席：隐藏底栏；放开 autoByCar 写入。
+   * 重置该车 ammo 冲突域边沿闩，使仍为真的 select_ammo（含旧 edge）下一帧可再装载。
+   */
   function deactivate() {
+    const leftId = state.carriageId;
     state.carriageId = null;
     hideDetail();
     render();
+    if (leftId) {
+      window.LpAutoExecutors?.resetEdgeForDomain?.(leftId, 'ammo');
+    }
   }
 
   /** 选中弹链组（0-based）；保留各组 cursor；清除该车自动装载。 */
@@ -1053,6 +1136,7 @@
    * 枢机自动化选弹：写入 autoByCar（不改本机弹药箱弹链）。
    * 弹种：火炮 → type；连发车 → 全同型 slots 弹链装载。弹链：消毒 slots 后装载。
    * 同一 pattern 重复写入时保留 cursor（持续规则每帧调用不重置循环）。
+   * 玩家已入座该车时拒绝写入（离席后规则可再设）。
    * @param {string} carriageId
    * @param {{ kind: 'type'|'belt', ammo?: string, slots?: string[] }} selection
    * @param {{ toast?: boolean }} [opts]
@@ -1060,6 +1144,9 @@
   function applyAmmoSelection(carriageId, selection, opts = {}) {
     const cfg = getCarriage(carriageId);
     if (!cfg || !selection || !carriageId) return false;
+    /* 入座中：拒绝自动装载（含 activate 未及时设 carriageId 时的 isManned 兜底）。 */
+    if (state.carriageId === carriageId) return false;
+    if (carriageId === 'guard' && isLocalMannedGuard()) return false;
     const prev = state.autoByCar[carriageId];
 
     if (selection.kind === 'type') {
@@ -1177,6 +1264,55 @@
     return true;
   }
 
+  /**
+   * 将弹链组挪到指定插入下标并写回本机存档。
+   * dropIndex 为「除去被拖组后」的插入前位置（0=表首，length=表末），与枢机 moveRuleToSlot 一致。
+   * 激活组与各组 cursor 随内容移动：拖走激活组时 activeBeltIndex 指向该组新下标。
+   * @param {string} carriageId
+   * @param {number} fromIndex
+   * @param {number} dropIndex
+   * @returns {boolean}
+   */
+  function moveBeltToSlot(carriageId, fromIndex, dropIndex) {
+    const store = beltStore(carriageId);
+    if (!store) return false;
+    const n = store.belts.length;
+    if (n <= 1) return false;
+    if (fromIndex < 0 || fromIndex >= n) return false;
+    let insertAt = Math.max(0, Number(dropIndex) || 0);
+    if (insertAt === fromIndex) return false;
+
+    const belt = store.belts.splice(fromIndex, 1)[0];
+    const cursor = store.cursors.splice(fromIndex, 1)[0];
+    let active = store.activeBeltIndex;
+    let movedActive = false;
+    if (active === fromIndex) {
+      movedActive = true;
+      active = 0;
+    } else if (active > fromIndex) {
+      active -= 1;
+    }
+    insertAt = Math.max(0, Math.min(insertAt, store.belts.length));
+    store.belts.splice(insertAt, 0, belt);
+    store.cursors.splice(insertAt, 0, cursor);
+    if (movedActive) {
+      store.activeBeltIndex = insertAt;
+    } else if (insertAt <= active) {
+      store.activeBeltIndex = active + 1;
+    } else {
+      store.activeBeltIndex = active;
+    }
+
+    const cfgId = getCarriage(carriageId)?.id || carriageId;
+    if (!state.carriageId || state.carriageId === cfgId) {
+      state.activeBeltIndex = store.activeBeltIndex;
+    }
+    savePersisted();
+    render();
+    renderBeltEditor();
+    return true;
+  }
+
   /** 设置某组某槽弹种。 */
   function setBeltSlot(carriageId, beltIndex, slotIndex, ammoId) {
     const cfg = getCarriage(carriageId);
@@ -1205,6 +1341,7 @@
 
   /** 渲染弹药箱底栏：弹链编辑 或 弹种介绍（按 supportsBelts）。 */
   function renderCrateBottom() {
+    endBeltDrag();
     hideSlotChooser();
     if (!crateBottomHost) return;
     const carriageId = crateBottomHost.dataset.carriageId || 'guard';
@@ -1289,6 +1426,7 @@
    * @param {object} cfg
    */
   function renderBeltEditorInto(host, carriageId, cfg) {
+    endBeltDrag();
     const store = beltStore(carriageId);
 
     const header = document.createElement('div');
@@ -1323,14 +1461,31 @@
       row.classList.toggle('is-active', bi === store.activeBeltIndex);
       row.dataset.beltIndex = String(bi);
 
+      const handle = document.createElement('button');
+      handle.type = 'button';
+      handle.className = 'lp-guard-belt-handle';
+      handle.textContent = '⋮⋮';
+      handle.title = '拖拽调整组顺序';
+      handle.setAttribute('aria-label', '拖拽排序');
+      handle.disabled = store.belts.length <= 1;
+      handle.addEventListener('pointerdown', (event) => {
+        event.stopPropagation();
+        beginBeltDrag(event, carriageId, bi, list, true);
+      });
+
       const label = document.createElement('button');
       label.type = 'button';
       label.className = 'lp-guard-belt-label';
       label.textContent = `组 ${bi + 1}`;
       label.setAttribute('aria-pressed', bi === store.activeBeltIndex ? 'true' : 'false');
-      label.addEventListener('click', () =>
-        selectBeltIndex(bi, { toast: true, carriageId })
-      );
+      label.addEventListener('click', (event) => {
+        if (list.classList.contains('is-belt-dragging')) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        selectBeltIndex(bi, { toast: true, carriageId });
+      });
       bindHoverDetail(label, (e) =>
         showBeltDetail(bi, {
           clientX: e.clientX,
@@ -1341,6 +1496,8 @@
 
       const slotsEl = document.createElement('div');
       slotsEl.className = 'lp-guard-belt-slots';
+      const cursor = Number(store.cursors[bi]) || 0;
+      const activeBelt = bi === store.activeBeltIndex;
       slots.forEach((id, si) => {
         const def = getType(id);
         const chip = document.createElement('button');
@@ -1349,6 +1506,10 @@
         chip.dataset.ammoId = def.id;
         chip.textContent = def.tag;
         chip.title = `悬停选择弹种 · 点击循环 · ${def.tag} ${def.subtitle}`;
+        /* 激活组当前开火槽：与底栏 HUD is-next 一致，开火后可看见游标前进 */
+        if (activeBelt && slots.length && si === cursor % slots.length) {
+          chip.classList.add('is-next');
+        }
         bindSlotTypeChooser(chip, carriageId, bi, si);
         slotsEl.appendChild(chip);
         if (si < slots.length - 1) {
@@ -1365,21 +1526,206 @@
       removeBtn.className = 'lp-guard-belt-remove';
       removeBtn.textContent = '删除';
       removeBtn.disabled = store.belts.length <= 1;
-      removeBtn.addEventListener('click', () => {
+      removeBtn.addEventListener('click', (event) => {
+        if (list.classList.contains('is-belt-dragging')) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (removeBelt(carriageId, bi)) {
           window.LiminalInteract?.showToast?.('已删除弹链');
         }
       });
 
-      row.append(label, slotsEl, removeBtn);
+      row.append(handle, label, slotsEl, removeBtn);
       list.appendChild(row);
     });
     host.appendChild(list);
 
     const hint = document.createElement('p');
     hint.className = 'lp-guard-belt-hint';
-    hint.textContent = `悬停槽位展开可选弹种（如 AP / T）。连发按组内顺序循环。最多 ${cfg.maxBelts} 组 · 每组 ${cfg.slotsPerBelt} 槽。弹链仅保存在本机，每位操作者各自独立。`;
+    hint.textContent = `拖 ⋮⋮ 调整组顺序。悬停槽位展开可选弹种（如 AP / T）。连发按组内顺序循环。最多 ${cfg.maxBelts} 组 · 每组 ${cfg.slotsPerBelt} 槽。弹链仅保存在本机，每位操作者各自独立。`;
     host.appendChild(hint);
+  }
+
+  /** 清除弹链拖放插入线。 */
+  function clearBeltDropIndicator(listEl) {
+    if (!listEl) return;
+    listEl.querySelectorAll('.lp-guard-belt-drop-line').forEach((el) => el.remove());
+  }
+
+  /**
+   * 在列表插入下标处画水平插入线（相对非拖拽中行，与 moveBeltToSlot 下标一致）。
+   * @param {HTMLElement} listEl
+   * @param {number} index
+   */
+  function showBeltDropLine(listEl, index) {
+    clearBeltDropIndicator(listEl);
+    const line = document.createElement('div');
+    line.className = 'lp-guard-belt-drop-line';
+    line.setAttribute('aria-hidden', 'true');
+    const rows = [...listEl.querySelectorAll('.lp-guard-belt-row')].filter(
+      (r) => !r.classList.contains('is-dragging')
+    );
+    if (!rows.length || index <= 0) {
+      const firstRow = listEl.querySelector('.lp-guard-belt-row');
+      listEl.insertBefore(line, firstRow || listEl.firstChild);
+      return;
+    }
+    if (index >= rows.length) {
+      rows[rows.length - 1].after(line);
+      return;
+    }
+    listEl.insertBefore(line, rows[index]);
+  }
+
+  /**
+   * 按指针 Y 解析弹链组落点插入下标（除去被拖行）。
+   * @param {HTMLElement} listEl
+   * @param {number} clientY
+   * @param {number} fromIndex
+   * @returns {number}
+   */
+  function hitTestBeltDrop(listEl, clientY, fromIndex) {
+    const rows = [...listEl.querySelectorAll('.lp-guard-belt-row')].filter(
+      (r) => Number(r.dataset.beltIndex) !== fromIndex
+    );
+    if (!rows.length) return 0;
+    let index = rows.length;
+    for (let i = 0; i < rows.length; i += 1) {
+      const mid = rows[i].getBoundingClientRect().top + rows[i].offsetHeight / 2;
+      if (clientY < mid) {
+        index = i;
+        break;
+      }
+    }
+    return index;
+  }
+
+  /** 结束弹链组拖拽并卸下 document 指针监听。 */
+  function endBeltDrag() {
+    if (!beltDrag) return;
+    if (beltDrag.longPressTimer) {
+      clearTimeout(beltDrag.longPressTimer);
+      beltDrag.longPressTimer = null;
+    }
+    document.removeEventListener('pointermove', onBeltDragMove);
+    document.removeEventListener('pointerup', onBeltDragUp);
+    document.removeEventListener('pointercancel', onBeltDragUp);
+    clearBeltDropIndicator(beltDrag.listEl);
+    beltDrag.listEl.querySelectorAll('.lp-guard-belt-row.is-dragging').forEach((el) => {
+      el.classList.remove('is-dragging');
+    });
+    beltDrag.listEl.classList.remove('is-belt-dragging');
+    beltDrag = null;
+  }
+
+  /** 进入已激活拖拽态：源行半透明、列表禁选。 */
+  function activateBeltDrag() {
+    if (!beltDrag || beltDrag.active) return;
+    beltDrag.active = true;
+    hideSlotChooser();
+    beltDrag.listEl.classList.add('is-belt-dragging');
+    const row = beltDrag.listEl.querySelector(
+      `.lp-guard-belt-row[data-belt-index="${beltDrag.fromIndex}"]`
+    );
+    if (row) row.classList.add('is-dragging');
+  }
+
+  /**
+   * 拖拽中更新插入线；记录 dropIndex。
+   * @param {PointerEvent} event
+   */
+  function onBeltDragMove(event) {
+    if (!beltDrag || event.pointerId !== beltDrag.pointerId) return;
+    const dx = event.clientX - beltDrag.startX;
+    const dy = event.clientY - beltDrag.startY;
+    const moved = Math.hypot(dx, dy) >= BELT_DRAG_MOVE_PX;
+    if (!beltDrag.active) {
+      /* 触控未进入拖拽前移动 → 取消，把滚动留给面板 */
+      if (event.pointerType === 'touch' && moved) {
+        endBeltDrag();
+        return;
+      }
+      if (beltDrag.fromHandle || moved) {
+        if (beltDrag.longPressTimer) {
+          clearTimeout(beltDrag.longPressTimer);
+          beltDrag.longPressTimer = null;
+        }
+        activateBeltDrag();
+      } else {
+        return;
+      }
+    }
+    event.preventDefault();
+    beltDrag.dropIndex = hitTestBeltDrop(
+      beltDrag.listEl,
+      event.clientY,
+      beltDrag.fromIndex
+    );
+    showBeltDropLine(beltDrag.listEl, beltDrag.dropIndex);
+    const src = beltDrag.listEl.querySelector(
+      `.lp-guard-belt-row[data-belt-index="${beltDrag.fromIndex}"]`
+    );
+    if (src) src.classList.add('is-dragging');
+  }
+
+  /**
+   * 松手：若已激活则 moveBeltToSlot 并刷新；否则忽略（手柄无点击语义）。
+   * @param {PointerEvent} event
+   */
+  function onBeltDragUp(event) {
+    if (!beltDrag || event.pointerId !== beltDrag.pointerId) return;
+    const session = beltDrag;
+    const wasActive = session.active;
+    const { carriageId, fromIndex, dropIndex } = session;
+    endBeltDrag();
+    if (!wasActive || dropIndex == null) return;
+    if (moveBeltToSlot(carriageId, fromIndex, dropIndex)) {
+      window.LiminalInteract?.showToast?.('已调整弹链顺序');
+    }
+  }
+
+  /**
+   * 在拖动手柄上开始潜在拖拽（触控需长按；桌面手柄立即可拖）。
+   * @param {PointerEvent} event
+   * @param {string} carriageId
+   * @param {number} fromIndex
+   * @param {HTMLElement} listEl
+   * @param {boolean} fromHandle
+   */
+  function beginBeltDrag(event, carriageId, fromIndex, listEl, fromHandle) {
+    if (event.button != null && event.button !== 0) return;
+    const store = beltStore(carriageId);
+    if (!store || store.belts.length <= 1) return;
+    if (beltDrag) endBeltDrag();
+    beltDrag = {
+      carriageId,
+      fromIndex,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      fromHandle,
+      longPressTimer: null,
+      dropIndex: null,
+      listEl,
+    };
+    document.addEventListener('pointermove', onBeltDragMove, { passive: false });
+    document.addEventListener('pointerup', onBeltDragUp);
+    document.addEventListener('pointercancel', onBeltDragUp);
+    const isTouch = event.pointerType === 'touch';
+    if (fromHandle && !isTouch) {
+      activateBeltDrag();
+      event.preventDefault();
+      return;
+    }
+    if (isTouch) {
+      beltDrag.longPressTimer = setTimeout(() => {
+        if (!beltDrag || beltDrag.pointerId !== event.pointerId) return;
+        activateBeltDrag();
+      }, BELT_DRAG_LONG_PRESS_MS);
+    }
   }
 
   /**
@@ -1402,6 +1748,7 @@
 
   /** 卸下弹药箱底栏。 */
   function unmountCrateBottom() {
+    endBeltDrag();
     hideSlotChooser();
     if (crateBottomHost) {
       crateBottomHost.replaceChildren();
@@ -1467,6 +1814,7 @@
     getSelectedId,
     peekFireTypeId,
     advanceFireCursor,
+    takeFireTypeId,
     clearAutoLoadout,
     getAutoLoadout,
     formatBeltPattern,
@@ -1485,6 +1833,7 @@
     cycle,
     addBelt,
     removeBelt,
+    moveBeltToSlot,
     setBeltSlot,
     cycleBeltSlot,
     activateOrInsertBelt,

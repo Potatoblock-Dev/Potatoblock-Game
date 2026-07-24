@@ -25,6 +25,7 @@ STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (3, {"itemId": "scrap", "qty": 20}),
     (4, {"itemId": "turret_ammo", "qty": 80}),
     (5, {"itemId": "small_caliber_ammo", "qty": 90}),
+    (6, {"itemId": "medkit", "qty": 1, "dur": 40}),
     (16, {"itemId": "gur65", "qty": 1, "mag": 27}),
 ]
 
@@ -69,12 +70,27 @@ ITEMS: Dict[str, Dict[str, Any]] = {
         "bagRows": 4,
         "canHold": False,
     },
+    "medkit": {
+        "maxStack": 1,
+        "w": 2,
+        "h": 1,
+        "type": "medical",
+        "canHold": True,
+        "maxDurability": 40,
+        "selfHealPerSec": 12,
+        "allyHealPerSec": 28,
+        "durCostPerSec": 8,
+        "allyRange": 150,
+        "handSlot": 2,
+    },
 }
 
 EQUIP_SLOT_KEYS = ["head", "chest", "legs", "accessory", "accessory", "backpack"]
 PLAYER_BASE = (4, 2)
-HANDS_UTILITY = 2
+HANDS_UTILITY = 2  # 手部 3 号槽（0-based）；医疗箱等工具类
 HANDS_WEAPON_SLOTS = (0, 1)
+PLAYER_MAX_HP = 100
+MEDKIT_ID = "medkit"
 
 
 def max_stack_in(bag_id: Optional[str], item: Optional[Dict[str, Any]]) -> int:
@@ -139,6 +155,14 @@ def _norm_stack(
         except (TypeError, ValueError):
             mag = int(mag_size)
         out["mag"] = max(0, min(int(mag_size), mag))
+    max_dur = item.get("maxDurability")
+    if max_dur:
+        dur_raw = stack.get("dur", max_dur)
+        try:
+            dur = int(dur_raw)
+        except (TypeError, ValueError):
+            dur = int(max_dur)
+        out["dur"] = max(0, min(int(max_dur), dur))
     if _stack_rot(stack) == 90:
         out["rot"] = 90
     return out
@@ -397,6 +421,8 @@ class Inventory:
                 out = {"itemId": slot["itemId"], "qty": slot["qty"]}
                 if slot.get("mag") is not None:
                     out["mag"] = slot["mag"]
+                if slot.get("dur") is not None:
+                    out["dur"] = slot["dur"]
                 if _stack_rot(slot) == 90:
                     out["rot"] = 90
                 slots.append(out)
@@ -454,6 +480,8 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
     incoming["qty"] = min(raw_qty, transit_cap)
     if stack.get("mag") is not None and "mag" not in incoming:
         incoming["mag"] = stack["mag"]
+    if stack.get("dur") is not None and "dur" not in incoming:
+        incoming["dur"] = stack["dur"]
     if _stack_rot(stack) == 90:
         incoming["rot"] = 90
 
@@ -589,10 +617,12 @@ def quick_transfer(source: Inventory, source_index: int, target: Inventory) -> b
 
 
 def _clone_stack_fields(stack: Dict[str, Any]) -> Dict[str, Any]:
-    """拷贝堆叠字段（qty / mag / rot），供整理合并使用。"""
+    """拷贝堆叠字段（qty / mag / dur / rot），供整理合并使用。"""
     out: Dict[str, Any] = {"itemId": stack["itemId"], "qty": int(stack["qty"])}
     if stack.get("mag") is not None:
         out["mag"] = stack["mag"]
+    if stack.get("dur") is not None:
+        out["dur"] = stack["dur"]
     if _stack_rot(stack) == 90:
         out["rot"] = 90
     return out
@@ -620,7 +650,7 @@ def _merge_stacks_for_sort(stacks: List[Dict[str, Any]], bag_id: str) -> List[Di
         if not item:
             continue
         cap = max_stack_in(bag_id, item)
-        if cap <= 1 or stack.get("mag") is not None:
+        if cap <= 1 or stack.get("mag") is not None or stack.get("dur") is not None:
             merged.append(stack)
             continue
         remaining = int(stack["qty"])
@@ -992,7 +1022,8 @@ def refill_storage_infinite(storage: Inventory) -> None:
         leftover = storage.add_item(item_id, need)
         # 武器等带弹匣：若刚补进，把缺 mag 的堆设为满匣
         mag_size = item.get("magazineSize")
-        if mag_size is None or leftover >= need:
+        max_dur = item.get("maxDurability")
+        if leftover >= need:
             continue
         for i in range(storage.size()):
             if storage.is_covered(i):
@@ -1000,8 +1031,10 @@ def refill_storage_infinite(storage: Inventory) -> None:
             st = storage.slots[i]
             if not st or st.get("itemId") != item_id:
                 continue
-            if st.get("mag") is None:
+            if mag_size is not None and st.get("mag") is None:
                 storage.slots[i]["mag"] = int(mag_size)
+            if max_dur is not None and st.get("dur") is None:
+                storage.slots[i]["dur"] = int(max_dur)
 
 
 def refill_player_consumables(personal: PlayerInventories) -> None:
@@ -1037,3 +1070,93 @@ def consume_from_personal(personal: PlayerInventories, item_id: str, qty: int) -
     if rest > 0:
         removed += personal.player.remove_item(item_id, rest)
     return removed
+
+
+def get_held_medkit_slot(
+    personal: PlayerInventories, hand_index: Optional[int] = None
+) -> Optional[Tuple[int, Dict[str, Any], Dict[str, Any]]]:
+    """取手部医疗箱槽；优先 hand_index，否则扫 3 号工具槽。返回 (index, stack, item)。"""
+    hands = personal.hands
+    order: List[int] = []
+    if hand_index is not None:
+        try:
+            hi = int(hand_index)
+        except (TypeError, ValueError):
+            hi = -1
+        if 0 <= hi < hands.size():
+            order.append(hi)
+    if HANDS_UTILITY not in order:
+        order.append(HANDS_UTILITY)
+    for index in order:
+        if hands.is_covered(index):
+            continue
+        stack = hands.get_slot(index)
+        if not stack or stack.get("itemId") != MEDKIT_ID:
+            continue
+        item = ITEMS.get(MEDKIT_ID) or {}
+        if stack.get("dur") is None and item.get("maxDurability"):
+            hands.update_slot(index, {"dur": int(item["maxDurability"])})
+            stack = hands.get_slot(index) or stack
+        return index, stack, item
+    return None
+
+
+def apply_medkit_tick(
+    personal: PlayerInventories,
+    *,
+    hand_index: Optional[int],
+    dt: float,
+    ally: bool,
+) -> Optional[Dict[str, Any]]:
+    """权威结算一帧医疗箱：扣耐久并给出应回复量。耗尽则移除堆叠。
+
+    返回 {amount, durCost, handIndex, emptied}；无效返回 None。
+    """
+    held = get_held_medkit_slot(personal, hand_index)
+    if not held:
+        return None
+    index, stack, item = held
+    dt = max(0.0, min(0.25, float(dt)))
+    if dt <= 0:
+        return None
+    dur = int(stack.get("dur") or 0)
+    if dur <= 0:
+        personal.hands.take_slot(index)
+        return {"amount": 0.0, "durCost": 0, "handIndex": index, "emptied": True}
+    rate = float(item.get("allyHealPerSec") if ally else item.get("selfHealPerSec") or 0)
+    cost_rate = float(item.get("durCostPerSec") or 0)
+    amount = rate * dt
+    dur_cost = cost_rate * dt
+    if dur_cost <= 0 and amount <= 0:
+        return None
+    # 按剩余耐久比例截断本帧治疗
+    if cost_rate > 0 and dur_cost > dur:
+        scale = dur / dur_cost
+        amount *= scale
+        dur_cost = float(dur)
+    next_dur = max(0, int(round(dur - dur_cost)))
+    if next_dur <= 0:
+        personal.hands.take_slot(index)
+        emptied = True
+    else:
+        personal.hands.update_slot(index, {"dur": next_dur})
+        emptied = False
+    return {
+        "amount": amount,
+        "durCost": dur_cost,
+        "handIndex": index,
+        "emptied": emptied,
+        "ally": ally,
+    }
+
+
+def consume_held_medkit(
+    personal: PlayerInventories, *, hand_index: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """权威消耗整箱手部医疗箱（濒死复活）；成功返回 {handIndex}，否则 None。"""
+    held = get_held_medkit_slot(personal, hand_index)
+    if not held:
+        return None
+    index, _stack, _item = held
+    personal.hands.take_slot(index)
+    return {"handIndex": index, "emptied": True}

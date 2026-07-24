@@ -4,28 +4,51 @@
 
 ## 核心原则
 
-1. **两类触发，分开展示**  
-   控制台规则列表拆成两段：**持续判定** 与 **瞬时触发**。不再混在同一优先级队列里。
+1. **统一优先级列表**  
+   控制台只有一段 **规则** 列表。所有规则（持续 / 瞬时）按 **从上到下** 优先级从高到低。不再拆「瞬时触发」独立段。
 
-2. **持续判定才有优先级**  
-   持续判定段内 **从上到下** 优先级从高到低。同一帧内，引擎应按该段顺序检查（运行时后续接入）；更高优先级的规则先判定。瞬时触发 **没有** 优先级：段内 ↑↓ / 换行仅调整显示美观，边沿触发时各自独立执行、互不抢序。
+2. **行位置 = 优先级**  
+   拖拽或 ↑ / ↓ 调整优先级（越靠上越高）。瞬时规则在触发当帧仍参与同一优先级队列。
 
-3. **一行 = 条件 → 行为**  
-   `【触发模式】` + `【条件】`（可带参数）→ `【行为】`（可带参数）。
+3. **冲突域：同 tick 只执行最高优先级匹配项**  
+   同一车厢、同一帧内，若多条规则都「应开火」且行为属于同一冲突域，只执行列表更靠上的那条。无冲突域的行为可并行。
 
-4. **触发模式**
+   | 冲突域 id | 行为 | 说明 |
+   |-----------|------|------|
+   | `ammo` | `select_ammo`（含旧 `turret_ammo`） | 弹种 / 弹链互斥 |
+   | `lock` | `lock_unit` | 锁定目标互斥 |
+   | `alert` | `send_alert` | 警报 / Toast 防刷屏 |
+   | `speed` | `set_speed` | 目标车速互斥（驾驶台自动驾驶接通时规则改速被跳过） |
+   | `var:<名>` | `set_var` | 同一变量名互斥；不同变量可并行 |
+   | （无） | `noop` 等 | 不参与互斥 |
+
+4. **一行 = 条件 → 行为**  
+   `【触发模式】` + `【条件】`（可带参数）→ `【行为】`（可带参数）。触发模式为行属性，可在编辑向导顶部小切换。
+
+5. **触发模式**
    - **持续判定**（`while`）：每帧检查，条件为真就执行（类似 `while`）。
    - **瞬时触发**（`edge`）：仅在条件从假变为真的那一帧执行一次（类似事件边沿）。
 
-5. **玩家编辑步骤**（参数一律在选项行内联，无单独「参数」步）
-   1. 选择触发模式  
-   2. 选择条件（**与当前车厢能力不匹配的条件不会出现**；该条件全部参数在同行内联编辑）  
-   3. 选择行为（**与当前车厢不匹配的行为不会出现**；该行为全部参数在同行内联编辑）  
+6. **默认触发：目录旗标自动选**  
+   条件 / 行为可带 `preferEdge` / `preferWhile`。新建或改条件/行为时（尚未手动改过触发）：
+   - 任一侧 `preferWhile` → `while`（优先于 edge）
+   - 否则任一侧 `preferEdge` → `edge`
+   - 否则 → `while`  
+   玩家仍可在向导顶部切换覆盖。编辑已有规则时保留原 trigger，不自动改写。
 
-6. **行位置**  
-   - 持续判定：拖拽或 ↑ / ↓ 调整 **优先级**（越靠上越高）。  
-   - 瞬时触发：拖拽或 ↑ / ↓ 仅调整 **显示顺序**（无优先级）。  
-   - **跨段拖拽**会改 `trigger`（持续 ↔ 瞬时）；落点用水平插入线提示（桌面拖手柄/摘要；触控长按后拖）。
+   | 条目 | 旗标 | 意图 |
+   |------|------|------|
+   | 条件 `turret_lock_kind`（炮塔当前锁定） | `preferEdge` | 锁定类型**变为**某类时才动 |
+   | 条件 `car_on_fire`（车厢着火） | `preferWhile` | 着火期间持续报警 |
+   | 条件 `platform_ahead` / `at_platform` | `preferWhile` | 月台态持续判定 |
+   | 行为 `send_alert` | `preferEdge` | 警报宜单次，避免每帧刷 |
+   | 行为 `select_ammo` | `preferWhile` | 条件成立期间保持自动装载（同 pattern 不重置游标；盖过锁定类 preferEdge） |
+   | 行为 `lock_unit` 等 | （无） | 如「射程内→锁最近」保持持续 |
+
+7. **玩家编辑步骤**（参数一律在选项行内联）
+   1. 选择条件（与当前车厢不匹配的不出现；参数同行内联）  
+   2. 选择行为（同上）  
+   顶部可切换持续 / 瞬时（自动默认，可覆盖）。
 
 ## 比较符（条件共用）
 
@@ -51,11 +74,16 @@
 | `speed_above` | 车速绝对值 | `gt` | `speed` | 全车 |
 | `var_gt` | 变量 | `gt` | `name`, `value` | 全车 |
 | `compare_values` | 数值比较 | `gt` | `leftKind`/`leftNum`/`leftVar` + `rightKind`/`rightNum`/`rightVar`（任一侧为数值或变量） | 全车 |
-| `targets_in_view` | 视野内目标数 | `gte` | `count`（默认 1） | huigui |
+| `targets_in_view` | 小型目标集群数 | `gte` | `count`（默认 1） | huigui |
+| `large_targets_in_view` | 大型目标数 | `gte` | `count`（默认 1） | huigui |
+| `platform_ahead` | 前方有月台 | — | （无；布尔） | power |
+| `at_platform` | 位于月台 | — | （无；布尔） | power |
+
+`platform_ahead` / `at_platform` 读 `LpAutoSensors.getPlatformSensor()`（`platformAhead` / `atPlatform` / `distanceAhead`）。月台未实现前 stub 恒假、`distanceAhead=null`；调试：`setPlatformStub({ platformAhead, atPlatform, distanceAhead })`。有限距离 ≤ `PLATFORM_AHEAD_DIST`（800）时亦可视为前方有月台。
 
 `compare_values` 行内 UI：`[数值|变量] [值] [比较符] [数值|变量] [值] 时`；求值经 `Catalog.compare`，变量侧用 `LpAutoSensors.readProgramVar`。`var_gt` 仍保留（变量 vs 固定阈值的快捷形式）。
 
-`targets_in_view` 计数与传感器「范围内目标数」同源（`LpAutoSensors.countTargetsInRange('huigui')` / 绘轨探测射程）。
+`targets_in_view`（及别名 `small_target_clusters_in_view`）计数与传感器「小型目标集群数」同源：`LpAutoSensors.countSmallTargetClustersInRange('huigui')`（绘轨探测射程；邻域 300u、簇≥2、按 ground/air 分桶，同雷达密度云）。`large_targets_in_view` 与「大型目标数」同源（`kind=large` 等个体；当前无大型怪时为 0）。
 
 ## 玩家参数（变量）
 
@@ -70,7 +98,9 @@
 | 冲锋速度 | — | 全局 | — | ✓ | 前进冲锋 |
 | 计数器 | `counter` | 车厢局部 | 全车 | ✓ | 通用整数计数（类似 py `counter`） |
 | 锁定计数器 | `lock_counter` | 车厢局部 | 全车 | ✓ | 锁定相关自增计数 |
-| 范围内目标数 | `targets_in_range` | 车厢局部 | guard / huigui | 只读传感 | 本车射程内目标数量（`LpAutoSensors.tick`） |
+| 范围内目标数 | `targets_in_range` | 车厢局部 | guard | 只读传感 | 卫兵武器射程内目标个体数（`LpAutoSensors.tick`） |
+| 大型目标数 | `large_targets_in_range` | 车厢局部 | huigui | 只读传感 | 绘轨探测射程内大型目标个体数 |
+| 小型目标集群数 | `small_target_clusters_in_range` | 车厢局部 | huigui | 只读传感 | 绘轨探测射程内小型目标集群数（同雷达密度云） |
 | 剩余弹药数 | `ammo_remaining` | 车厢局部 | guard | 只读传感 | 弹药箱剩余（同 `LpGuardTurret.ammoCount` / 状态栏「弹药 N」） |
 
 表达式行为里可用 `$变量名`，例如：`$计数器 + 1`。只读传感器不可在控制台改；每帧由运行时覆盖。
@@ -81,7 +111,7 @@
 
 每节车厢程序默认带一行 **持续判定**：
 
-`[持续判定] 若 车厢着火 → 发送警报（{短名}车厢着火！）`
+`[持续] 若 车厢着火 → 发送警报（{短名}车厢着火！）`
 
 | carId | 警报文案 |
 |-------|----------|
@@ -95,6 +125,7 @@
 - **种子**：全新程序 / 某车规则为空 → 写入该默认行。
 - **迁移**：加载/导入时若该车尚无「同 condition.id + action.id」的着火警报，则插入（不覆盖其它自定义规则）；已存在则不去重以外的修改。
 - 玩家可改消息或删行；导出/导入仍走同一规范化路径，空白车会再补默认。
+- `car_on_fire.preferWhile` 覆盖 `send_alert.preferEdge`，故新建同类规则仍默认持续。
 
 ## 范例对照（`程序代码范例.txt`）
 
@@ -102,22 +133,25 @@
 
 ```text
 全车默认:
-  - 持续判定 / 车厢着火 → 发送警报 "{短名}车厢着火！"
+  - 持续 / 车厢着火 → 发送警报 "{短名}车厢着火！"
 
-炮塔规则（建议写在「卫兵」车厢）:
-  - 持续判定 / 射程内存在敌方 → 锁定单位（最近）
-  - 瞬时触发 / 敌方生命值 < 10 → 选择弹种/弹链（穿甲 AP）
-  - 持续判定 / 射程内存在敌方 → 设置 $锁定计数器 = $锁定计数器 + 1
-  - 瞬时触发 / $锁定计数器 > 10 → 锁定单位（生命值最低）；再把计数器清零（可拆两行）
+炮塔规则（建议写在「卫兵」车厢；列表顺序即优先级）:
+  - 持续 / 射程内存在敌方 → 锁定单位（最近）
+  - 瞬时 / 敌方生命值 < 10 → 选择弹种/弹链（穿甲 AP）
+  - 持续 / 射程内存在敌方 → 设置 $锁定计数器 = $锁定计数器 + 1
+  - 瞬时 / $锁定计数器 > 10 → 锁定单位（生命值最低）；再把计数器清零（可拆两行）
 
 卫兵规则（弹药告急）:
-  - 瞬时触发 / 弹药剩余 < 3 → 发送警报 "弹药告急！"
+  - 瞬时 / 弹药剩余 < 3 → 发送警报 "弹药告急！"
 
 动力车厢规则:
-  - 持续判定 / 锅炉燃料 < 20 → 设置速度 $撤退速度
+  - 持续 / 锅炉燃料 < 20 → 设置速度 $撤退速度
 ```
 
-计数器自增必须用 **持续判定**，否则瞬时触发永远到不了阈值。
+**自动驾驶**不在枢机目录：在**动力驾驶台**顶栏「离开」左侧开关接通。接通后 `LpAutoAutopilot` 独占节流（满档巡航 → `platformAhead` 按 `distanceAhead` 降档 → `atPlatform` 停车 → 汽笛上升沿恢复）；关闭开关交还手动拉杆（不改当前档）。制动阀仍可手动急刹。汽笛：下拉驾驶台右上角绳索至「鸣」。月台未落地前传感恒假 → 仅巡航。枢机 `set_speed` 在自动驾驶接通时不执行。
+
+计数器自增必须用 **持续判定**，否则瞬时触发永远到不了阈值。  
+若两条 `lock_unit` 同帧都匹配，只执行更靠上的那条（冲突域 `lock`）。
 
 ## 车厢能力过滤（条件 / 行为）
 
@@ -129,6 +163,7 @@
 | 炮塔当前锁定（分类） | ✓ 无/地/空 | | | | | ✓ 无/大型 |
 | 弹药剩余量（比较） | ✓ | | | | | |
 | 锅炉燃料（比较） | | | ✓ | | | |
+| 前方有月台 / 位于月台 | | | ✓ | | | |
 | 视野内目标数（比较） | | | | ✓ | | |
 | 车速绝对值 / 变量（比较） / 车厢着火 / 总是 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* |
 | 锁定单位 | ✓ | | | ✓ | | |
@@ -145,7 +180,7 @@
 - **复制到剪贴板**：导出**整份**程序（全部车厢规则 + 玩家参数）为纯文本 JSON，可粘贴到聊天 / Discord 发给其他玩家。
 - **从剪贴板导入**：读取剪贴板文本，按 `kind` 分支：
   - `liminal-auto-program` → **覆盖**当前整份程序；成功后出现 **撤销导入** 横幅（约 25 秒，或下次改规则/变量前），可恢复导入前快照。再次覆盖导入会替换旧快照。
-  - `liminal-auto-rule` → **追加**一条规则到**当前选中车厢**的对应触发段（while / edge），不改变量、不碰其它车厢/其它规则。
+  - `liminal-auto-rule` → **追加**一条规则到**当前选中车厢**列表末尾，不改变量、不碰其它车厢/其它规则。
 - 校验失败会提示原因。若浏览器拒绝 `clipboard.readText()`，会弹出文本框让你手粘贴再导入。
 
 每条规则行工具栏（↑↓ 旁）另有 **复制**：只复制该条规则（`kind: liminal-auto-rule`）。Toast：`已复制规则` / 追加成功 `已添加规则`。
@@ -167,6 +202,12 @@
       "锁定计数器": 0,
       "范围内目标数": 0,
       "剩余弹药数": 0
+    },
+    "huigui": {
+      "计数器": 0,
+      "锁定计数器": 0,
+      "大型目标数": 0,
+      "小型目标集群数": 0
     }
   },
   "beltsByCar": {
@@ -216,7 +257,7 @@
 - `version`: 程序当前为 `3`（+`beltsByCar`）；仍接受 v2；单条规则为 `1`；仍接受旧版扁平 `vars`（局部键会迁移进各车）  
 - `vars`: 全局变量；`varsByCar[carId]`: 该车厢局部变量  
 - `beltsByCar[carId]`: 程序弹链数组 `{ id, slots[] }`；`slots.length` = 该车 `LpArmedAmmo.slotsPerBelt`；组数 ≤ `maxBelts`；仅 `supportsBelts` 车厢有意义  
-- `rulesByCar[carId]`: **仍为一数组**（不拆 `continuousRules` / `edgeRules`）。加载/保存时会规范为 **while 段在前、edge 段在后**；while 段内顺序 = 优先级，edge 段内顺序仅美观  
+- `rulesByCar[carId]`: **统一优先级数组**（下标越小越高）。加载旧存档时一次性将旧「while 段 + edge 段」拼接为该数组（while 在前、edge 在后，段内相对顺序不变）；之后编辑不再按 trigger 重排  
 - 单条包内 `carId` 为参考；导入时以控制台**当前选中车厢**为准，并重新分配 `rule.id`  
 - `trigger`: `while` | `edge`  
 - `action.id` = `lock_unit` 时，`params.target` 为：`nearest` | `farthest` | `highest_hp` | `lowest_hp` | `highest_armor` | `lowest_armor`  
@@ -228,13 +269,15 @@
 
 ## 扩展
 
-- 新条件/行为：改 `LpAutoProgramCatalog`。比较类条件复用 `COMPARE_OPS` / `compareOpParam` / `compare`；左右皆可数值或变量时用 `numOrVarParam`（扁平 `*Kind`/`*Num`/`*Var`）+ `compare_values`。  
-- 向导 UI：条件/行为的**全部** params 在选项行内联（`lp-auto-console`）；`numOrVar` / `static` 类型同文件渲染；不再插入独立参数步。  
+- 新条件/行为：改 `LpAutoProgramCatalog`。比较类条件复用 `COMPARE_OPS` / `compareOpParam` / `compare`；左右皆可数值或变量时用 `numOrVarParam`（扁平 `*Kind`/`*Num`/`*Var`）+ `compare_values`。边沿偏好设 `preferEdge` / `preferWhile`；冲突域登记在 `ACTION_CONFLICT_DOMAINS` / `conflictDomainForAction`。  
+- 向导 UI：条件/行为的**全部** params 在选项行内联（`lp-auto-console`）；`numOrVar` / `static` 类型同文件渲染；触发模式为顶部小切换，不再独立一步。  
 - 默认着火警报：`LpAutoProgramCatalog.defaultRulesForCar` / `ensureStockRules`；`LpAutoProgram` 在 `emptyProgram` / `normalizeProgram` 中种子与迁移。  
-- 运行时：主循环 `LpAutoSensors.tick` 后 `LpAutoExecutors.tick`；用 `rulesForRuntime` → 持续规则条件为真则执行，瞬时规则上升沿执行。控制台打开时暂停调度。  
+- 运行时：主循环 `LpAutoSensors.tick` 后 `LpAutoExecutors.tick`；`rulesForRuntime` 返回统一数组；按序求值，冲突域 claim 后跳过低优先级；edge 上升沿仍更新 `edgePrev`。控制台打开时暂停调度。  
 - 条件求值：`LpAutoSensors.evaluateCondition(cond, carId)`；比较类走 `Catalog.compare`；`car_on_fire` 经 `isCarOnFire` / `setCarOnFire` 钩子，着火系统未接入前恒为假。  
-- `select_ammo`：`LpAutoExecutors.executeAction` → `LpArmedAmmo.applyAmmoSelection` 写入内存 `autoByCar`（自动装载；不改弹药箱本机弹链）。`peekFireTypeId` / `advanceFireCursor` 优先用自动装载；玩家手动切组/弹种会 `clearAutoLoadout`。持续规则每帧重复写入同 pattern 时保留 cursor。  
+- 月台 stub：`getPlatformSensor` / `setPlatformStub` / `platform_ahead` / `at_platform`；正式月台接入前恒假。  
+- 自动驾驶：驾驶台开关 → `LpAutoAutopilot.setEngaged`；主循环 `LpAutoExecutors.tick` 末尾 `LpAutoAutopilot.tick`（接通时写节流；与枢机规则无关，控制台打开时仍跑）。汽笛：`LpWhistleAudio.isSounding` 上升沿离开 `stopped`。  
+- `select_ammo`：`LpAutoExecutors.executeAction` → `LpArmedAmmo.applyAmmoSelection` 写入内存 `autoByCar`（自动装载；不改弹药箱本机弹链）。卫士无人开火：`tryFireTurrets` → `peekFireTypeId('guard')` / `advanceFireCursor('guard')` → `spawnProjectile({ ammoType })`（T=绿曳光）。入座 `activate` 清 `autoByCar` 并拒绝再写；离席 `deactivate` 重置 ammo 域边沿闩并允许再写。持续规则同 pattern 保留 cursor。  
 - 程序弹链编辑：卫兵侧栏 `LpAutoProgramBelts`（UX 对齐弹药箱底栏；槽长/组数取车厢配置）。  
-- 传感器局部变量：`LpAutoSensors.tick` → `applySensorVars` 写入 `范围内目标数` / `剩余弹药数`（不刷 localStorage）。  
-- 加载迁移：`migrateConditionParams` 补 `op`；`migrateAction` 迁 `turret_ammo`；`migrateRule` 仍迁旧 `lock_*`。  
+- 传感器局部变量：`LpAutoSensors.tick` → `applySensorVars` 写入卫兵 `范围内目标数` / `剩余弹药数`，绘轨 `大型目标数` / `小型目标集群数`（不刷 localStorage）。  
+- 加载迁移：`migrateConditionParams` 补 `op`；`migrateAction` 迁 `turret_ammo`；`migrateRule` 仍迁旧 `lock_*`；`normalizeRulesOrder` 仅在 `normalizeProgram` 时把旧两段拼成统一列表。  
 - API：`LpAutoConsole.open()` / `.close()`；`LpAutoProgram.getBelts` / `setBelts` / `toShareText()` / `.importShareText(raw, { targetCarId })` / `.undoLastImport()`；交互点 `openAutoConsole`。

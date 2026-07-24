@@ -1,10 +1,12 @@
 /**
  * 枢机自动化传感器：只读局部变量刷新 + 条件求值钩子。
- * - 范围内目标数 / 剩余弹药数：每帧写入武装车厢局部变量
- * - 比较类条件经 Catalog.compare(op)；绘轨「视野内目标数」与范围内计数同源
+ * - 卫兵：范围内目标数 / 剩余弹药数；绘轨：大型目标数 / 小型目标集群数
+ * - 小型集群与雷达密度云同源（LpRadarScope.countSmallTargetClustersInRange）
+ * - 比较类条件经 Catalog.compare(op)
  * - compare_values：左右操作数可为数值或变量（leftKind/rightKind）
  * - turret_lock_kind：读炮塔锁定分类（API / hostile.kind / stub 表）
  * - car_on_fire：着火系统未接入前读 stub 表（默认假）；可用 setCarOnFire 调试
+ * - 月台 stub：platformAhead / atPlatform / distanceAhead（月台未实现前恒假/null；setPlatformStub 调试）
  */
 (() => {
   const Prog = () => window.LpAutoProgram;
@@ -15,6 +17,20 @@
 
   /** @type {Record<string, boolean>} carId → 是否着火（stub；默认无键=假） */
   const carOnFire = Object.create(null);
+
+  /**
+   * 月台传感 stub（列车前进方向）。正式月台系统接入前由 setPlatformStub 写入。
+   * distanceAhead：世界单位；null=未知。platformAhead 亦可由距离阈值推断。
+   * @type {{ platformAhead: boolean, atPlatform: boolean, distanceAhead: number|null }}
+   */
+  const platformStub = {
+    platformAhead: false,
+    atPlatform: false,
+    distanceAhead: null,
+  };
+
+  /** 有距离时视为「接近」的上限（世界单位）；正式月台可改。 */
+  const PLATFORM_AHEAD_DIST = 800;
 
   /**
    * 炮塔当前锁定分类 stub：carId → none|ground|air|large。
@@ -58,6 +74,58 @@
     }
   }
 
+  /**
+   * 月台传感快照：前方有月台 / 已到站 / 前方距离。
+   * 未实现月台前默认全假、distanceAhead=null；调试用 setPlatformStub。
+   * @returns {{ platformAhead: boolean, atPlatform: boolean, distanceAhead: number|null }}
+   */
+  function getPlatformSensor() {
+    let distanceAhead = platformStub.distanceAhead;
+    if (distanceAhead != null && Number.isFinite(Number(distanceAhead))) {
+      distanceAhead = Number(distanceAhead);
+    } else {
+      distanceAhead = null;
+    }
+    const aheadFromDist =
+      distanceAhead != null && distanceAhead >= 0 && distanceAhead <= PLATFORM_AHEAD_DIST;
+    return {
+      platformAhead: Boolean(platformStub.platformAhead) || aheadFromDist,
+      atPlatform: Boolean(platformStub.atPlatform),
+      distanceAhead,
+    };
+  }
+
+  /** 前方是否有月台（含距离推断）。 */
+  function isPlatformAhead() {
+    return getPlatformSensor().platformAhead;
+  }
+
+  /** 是否已位于月台。 */
+  function isAtPlatform() {
+    return getPlatformSensor().atPlatform;
+  }
+
+  /**
+   * 写入月台 stub（正式月台系统或调试）。传 partial；distanceAhead 传 null 清除。
+   * @param {{ platformAhead?: boolean, atPlatform?: boolean, distanceAhead?: number|null }} partial
+   */
+  function setPlatformStub(partial = {}) {
+    if (partial.platformAhead != null) {
+      platformStub.platformAhead = Boolean(partial.platformAhead);
+    }
+    if (partial.atPlatform != null) {
+      platformStub.atPlatform = Boolean(partial.atPlatform);
+    }
+    if (Object.prototype.hasOwnProperty.call(partial, 'distanceAhead')) {
+      const d = partial.distanceAhead;
+      if (d == null || !Number.isFinite(Number(d))) {
+        platformStub.distanceAhead = null;
+      } else {
+        platformStub.distanceAhead = Number(d);
+      }
+    }
+  }
+
   /** 车厢走道中心世界坐标。 */
   function carCenter(carId) {
     const Spec = window.LiminalCarriageSpec;
@@ -85,7 +153,7 @@
     return 6000;
   }
 
-  /** 某武装车用于「范围内目标数」的射程。 */
+  /** 某武装车用于目标传感的射程（卫兵武器 / 绘轨探测）。 */
   function rangeForCar(carId) {
     if (carId === 'guard') return guardWeaponRange();
     if (carId === 'huigui') return huiguiDetectRange();
@@ -93,14 +161,42 @@
   }
 
   /**
-   * 收集敌方候选：优先 LpCombat.listHostiles；否则用本模块 setHostiles；
-   * 再合并雷达外部 contacts（若暴露 getContacts）。
+   * 是否大型目标：kind/class 分类为 large（含 capital / artillery / 巨）；当前小怪仅 ground/air → 恒假。
+   * @param {{ kind?: string, targetClass?: string, class?: string }|null|undefined} hostile
+   */
+  function isLargeHostile(hostile) {
+    return classifyHostileLockKind(hostile) === 'large';
+  }
+
+  /**
+   * 收集 carId 射程内的敌方（世界距离）。
+   * @param {string} carId
+   * @returns {Array<{ id?: string, x: number, y?: number, kind?: string, hp?: number }>}
+   */
+  function hostilesInRange(carId) {
+    const origin = carCenter(carId);
+    const range = rangeForCar(carId);
+    if (!origin || range <= 0) return [];
+    const range2 = range * range;
+    const out = [];
+    for (const h of collectHostiles()) {
+      if (h?.x == null || !Number.isFinite(h.x)) continue;
+      const dy = (h.y != null && Number.isFinite(h.y) ? h.y : origin.y) - origin.y;
+      const dx = h.x - origin.x;
+      if (dx * dx + dy * dy <= range2) out.push(h);
+    }
+    return out;
+  }
+
+  /**
+   * 收集敌方候选：优先 LpCombat.listHostiles（含空数组，避免场上清空后仍用过期 setHostiles）；
+   * 无战斗列表时回退本模块缓存；再合并雷达外部 contacts（跳过 own*）。
    */
   function collectHostiles() {
     const combatList = window.LpCombat?.listHostiles?.();
-    if (Array.isArray(combatList) && combatList.length) return combatList;
     const fromRadar = window.LpRadarScope?.getContacts?.();
-    const merged = hostiles.slice();
+    /** @type {object[]} */
+    const merged = Array.isArray(combatList) ? combatList.slice() : hostiles.slice();
     if (Array.isArray(fromRadar)) {
       for (const c of fromRadar) {
         if (!c || c.x == null) continue;
@@ -113,7 +209,7 @@
   }
 
   /**
-   * 统计 carId 射程内的目标数量。
+   * 统计 carId 射程内的个体目标数量（卫兵传感 / enemy_in_range）。
    * 优先 LpCombat.countHostilesInRange(carId)；否则按中心距离过滤。
    */
   function countTargetsInRange(carId) {
@@ -121,17 +217,35 @@
     if (typeof fromCombat === 'number' && Number.isFinite(fromCombat)) {
       return Math.max(0, Math.floor(fromCombat));
     }
+    return hostilesInRange(carId).length;
+  }
+
+  /**
+   * 统计 carId 探测/武器射程内的大型目标个体数（kind=large 等；尚无大型怪时为 0）。
+   * @param {string} carId
+   */
+  function countLargeTargetsInRange(carId) {
+    let n = 0;
+    for (const h of hostilesInRange(carId)) {
+      if (isLargeHostile(h)) n += 1;
+    }
+    return n;
+  }
+
+  /**
+   * 统计 carId 射程内小型目标集群数（同雷达密度云：300u 邻域、簇 ≥2、按 ground/air 分桶）。
+   * @param {string} carId
+   */
+  function countSmallTargetClustersInRange(carId) {
     const origin = carCenter(carId);
     const range = rangeForCar(carId);
     if (!origin || range <= 0) return 0;
-    let n = 0;
-    for (const h of collectHostiles()) {
-      if (h?.x == null || !Number.isFinite(h.x)) continue;
-      const dy = (h.y != null && Number.isFinite(h.y) ? h.y : origin.y) - origin.y;
-      const dx = h.x - origin.x;
-      if (dx * dx + dy * dy <= range * range) n += 1;
+    const small = hostilesInRange(carId).filter((h) => !isLargeHostile(h));
+    const fromRadar = window.LpRadarScope?.countSmallTargetClustersInRange?.(small, origin, range);
+    if (typeof fromRadar === 'number' && Number.isFinite(fromRadar)) {
+      return Math.max(0, Math.floor(fromRadar));
     }
-    return n;
+    return 0;
   }
 
   /** 卫兵剩余弹药（与状态栏「弹药 N」同源）。 */
@@ -180,8 +294,16 @@
     if (!hostile) return 'none';
     const raw = String(hostile.kind || hostile.targetClass || hostile.class || '').toLowerCase();
     if (TURRET_LOCK_KINDS.has(raw) && raw !== 'none') return raw;
+    if (
+      raw.includes('large') ||
+      raw.includes('capital') ||
+      raw.includes('artillery') ||
+      raw.includes('巨') ||
+      raw.includes('炮')
+    ) {
+      return 'large';
+    }
     if (raw.includes('air') || raw.includes('aerial') || raw.includes('fly')) return 'air';
-    if (raw.includes('large') || raw.includes('capital') || raw.includes('巨')) return 'large';
     if (raw.includes('ground') || raw.includes('surface') || raw.includes('地')) return 'ground';
     if (hostile.x != null && Number.isFinite(Number(hostile.x))) return 'ground';
     return 'none';
@@ -292,7 +414,14 @@
     const prog = Prog();
     if (!prog?.applySensorVars) return;
     for (const carId of ARMED_TARGET_CARS) {
-      const map = { 范围内目标数: countTargetsInRange(carId) };
+      /** @type {Record<string, number>} */
+      const map = {};
+      if (carId === 'huigui') {
+        map['大型目标数'] = countLargeTargetsInRange(carId);
+        map['小型目标集群数'] = countSmallTargetClustersInRange(carId);
+      } else {
+        map['范围内目标数'] = countTargetsInRange(carId);
+      }
       if (AMMO_CARS.includes(carId)) {
         map['剩余弹药数'] = readAmmo(carId);
       }
@@ -315,7 +444,8 @@
   }
 
   /**
-   * 求值一条条件；未知 id 为假。着火系统落地前 car_on_fire 仅读 stub 表。
+   * 求值一条条件；未知 id 为假。
+   * 着火 / 月台系统落地前 car_on_fire、platform_* 仅读 stub（默认假）。
    * @param {{ id?: string, params?: Record<string, unknown> }|null|undefined} condition
    * @param {string} carId
    * @param {object} [_ctx] 预留给完整运行时（变量、弹药等）
@@ -328,6 +458,10 @@
     switch (id) {
       case 'car_on_fire':
         return isCarOnFire(carId);
+      case 'platform_ahead':
+        return isPlatformAhead();
+      case 'at_platform':
+        return isAtPlatform();
       case 'always':
         return true;
       case 'enemy_in_range':
@@ -343,9 +477,17 @@
           resolveNumber(params, 'count')
         );
       case 'targets_in_view':
+      case 'small_target_clusters_in_view':
         if (carId !== 'huigui') return false;
         return compareValues(
-          countTargetsInRange(carId),
+          countSmallTargetClustersInRange(carId),
+          resolveOp(params, id, 'gte'),
+          resolveNumber(params, 'count', 1)
+        );
+      case 'large_targets_in_view':
+        if (carId !== 'huigui') return false;
+        return compareValues(
+          countLargeTargetsInRange(carId),
           resolveOp(params, id, 'gte'),
           resolveNumber(params, 'count', 1)
         );
@@ -388,6 +530,10 @@
     setHostiles,
     getHostiles,
     countTargetsInRange,
+    countLargeTargetsInRange,
+    countSmallTargetClustersInRange,
+    hostilesInRange,
+    isLargeHostile,
     readAmmo,
     readFuelLevel,
     readAbsSpeed,
@@ -399,6 +545,11 @@
     rangeForCar,
     isCarOnFire,
     setCarOnFire,
+    getPlatformSensor,
+    isPlatformAhead,
+    isAtPlatform,
+    setPlatformStub,
+    PLATFORM_AHEAD_DIST,
     evaluateCondition,
   };
 })();

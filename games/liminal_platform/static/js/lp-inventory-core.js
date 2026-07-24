@@ -14,9 +14,10 @@
   /** 未装备扩容包时的背包尺寸。 */
   const PLAYER_BASE_COLS = 4;
   const PLAYER_BASE_ROWS = 2;
-  /** 手部：左/右主手 + 快捷槽（禁枪）。 */
+  /** 手部：左/右主手（0/1）+ 3 号工具槽（index 2，禁枪；医疗箱等）。 */
   const HANDS_COLS = 3;
   const HANDS_ROWS = 1;
+  /** 手部 3 号槽（0-based index 2）：工具/医疗箱。 */
   const HANDS_UTILITY_INDEX = 2;
 
   /** 按库存身份返回有效叠加上限（委托图鉴 maxStackIn）。 */
@@ -47,7 +48,7 @@
     return Number(rot) === 90 ? 0 : 90;
   }
 
-  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；保留 rot）。bagId 决定叠加上限。 */
+  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；医疗箱保留耐久；保留 rot）。bagId 决定叠加上限。 */
   function normalizeStack(stack, bagId = null) {
     if (!stack?.itemId || !stack.qty) return null;
     if (stack.occupiedBy != null) return null;
@@ -59,6 +60,10 @@
     if (item.type === 'weapon' && item.magazineSize) {
       const magRaw = stack.mag != null ? Number(stack.mag) : item.magazineSize;
       out.mag = Math.max(0, Math.min(item.magazineSize, Math.floor(magRaw)));
+    }
+    if (item.maxDurability) {
+      const durRaw = stack.dur != null ? Number(stack.dur) : item.maxDurability;
+      out.dur = Math.max(0, Math.min(item.maxDurability, Math.floor(durRaw)));
     }
     if (stackRot(stack) === 90) out.rot = 90;
     return out;
@@ -109,7 +114,7 @@
         if (!Catalog.canHoldInHand(itemId)) return false;
         const isWeapon = Boolean(Catalog.isWeapon?.(itemId));
         if (index == null) {
-          // 未指定槽：武器可进 0/1，其它可进快捷槽；具体格由 canPlaceAt 判定。
+          // 未指定槽：武器可进 0/1，其它可进 3 号槽（index 2）；具体格由 canPlaceAt 判定。
           return true;
         }
         if (index === HANDS_UTILITY_INDEX) return !isWeapon;
@@ -382,6 +387,7 @@
           if (!slot || isOccupancyMarker(slot)) return null;
           const out = { itemId: slot.itemId, qty: slot.qty };
           if (slot.mag != null) out.mag = slot.mag;
+          if (slot.dur != null) out.dur = slot.dur;
           if (stackRot(slot) === 90) out.rot = 90;
           return out;
         }),
@@ -436,6 +442,7 @@
     { index: 3, stack: { itemId: 'scrap', qty: 20 } },
     { index: 4, stack: { itemId: 'turret_ammo', qty: 80 } },
     { index: 5, stack: { itemId: 'small_caliber_ammo', qty: 90 } },
+    { index: 6, stack: { itemId: 'medkit', qty: 1, dur: 40 } },
     { index: 16, stack: { itemId: 'gur65', qty: 1, mag: 27 } },
   ];
 
@@ -471,16 +478,17 @@
     return list;
   }
 
-  /** 拷贝堆叠字段（qty / mag / rot），供整理合并使用。 */
+  /** 拷贝堆叠字段（qty / mag / dur / rot），供整理合并使用。 */
   function cloneStackFields(stack) {
     const out = { itemId: stack.itemId, qty: stack.qty };
     if (stack.mag != null) out.mag = stack.mag;
+    if (stack.dur != null) out.dur = stack.dur;
     if (stackRot(stack) === 90) out.rot = 90;
     return out;
   }
 
   /**
-   * 合并可叠加同类堆叠至该库存叠加上限；带 mag 或 cap≤1 的堆保持独立。
+   * 合并可叠加同类堆叠至该库存叠加上限；带 mag/dur 或 cap≤1 的堆保持独立。
    * @returns {object[]}
    */
   function mergeStacksForSort(stacks, bagId) {
@@ -491,7 +499,7 @@
       const item = Catalog.getItem(stack.itemId);
       if (!item) continue;
       const cap = maxStackFor(bagId, item);
-      if (cap <= 1 || stack.mag != null) {
+      if (cap <= 1 || stack.mag != null || stack.dur != null) {
         merged.push(stack);
         continue;
       }
@@ -666,12 +674,14 @@
       if (have >= want) continue;
       storage.addItem(itemId, want - have);
       const magSize = item?.magazineSize;
-      if (magSize == null) continue;
+      const maxDur = item?.maxDurability;
+      if (magSize == null && maxDur == null) continue;
       for (let i = 0; i < storage.size(); i += 1) {
         if (storage.isCovered(i)) continue;
         const st = storage.slots[i];
         if (!st || st.itemId !== itemId) continue;
-        if (st.mag == null) st.mag = magSize;
+        if (magSize != null && st.mag == null) st.mag = magSize;
+        if (maxDur != null && st.dur == null) st.dur = maxDur;
       }
     }
   }
@@ -931,6 +941,7 @@
     const transitCap = item.maxStack > 1 ? (Catalog.STORAGE_MAX_STACK || rawQty) : 1;
     const incoming = { ...probe, qty: Math.min(rawQty, transitCap) };
     if (stack?.mag != null && incoming.mag == null) incoming.mag = stack.mag;
+    if (stack?.dur != null && incoming.dur == null) incoming.dur = stack.dur;
     if (stackRot(stack) === 90) incoming.rot = 90;
 
     const origin = inventory.originIndex(index);
@@ -946,6 +957,7 @@
       if (leftoverQty <= 0) return null;
       const leftover = { itemId: incoming.itemId, qty: leftoverQty };
       if (incoming.mag != null) leftover.mag = incoming.mag;
+      if (incoming.dur != null) leftover.dur = incoming.dur;
       if (stackRot(incoming) === 90) leftover.rot = 90;
       return leftover;
     }
@@ -959,6 +971,7 @@
       if (leftoverQty <= 0) return null;
       const leftover = { itemId: incoming.itemId, qty: leftoverQty };
       if (incoming.mag != null) leftover.mag = incoming.mag;
+      if (incoming.dur != null) leftover.dur = incoming.dur;
       if (stackRot(incoming) === 90) leftover.rot = 90;
       return leftover;
     }

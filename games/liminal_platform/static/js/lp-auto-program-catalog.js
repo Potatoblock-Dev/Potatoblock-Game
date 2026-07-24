@@ -1,9 +1,9 @@
 /**
  * 枢机车厢自动化：条件 / 行为目录（按车厢过滤行为）。
- * 规则语义见 docs/liminal-auto-program.md；持续判定段内上→下为优先级，瞬时触发无优先级。
+ * 规则语义见 docs/liminal-auto-program.md；统一列表上→下为优先级；trigger 区分 while/edge。
  */
 (() => {
-  /** 触发模式。 */
+  /** 触发模式元数据（执行用；UI 不展示选择器，由 preferredTrigger 写入）。 */
   const TRIGGERS = [
     {
       id: 'while',
@@ -13,9 +13,24 @@
     {
       id: 'edge',
       label: '瞬时触发',
-      hint: '仅在条件从假变真的那一帧执行一次；列表顺序无优先级',
+      hint: '仅在条件从假变真的那一帧执行一次；仍参与列表优先级',
     },
   ];
+
+  /**
+   * 冲突域：同车厢同 tick 内，同一 domain 只执行优先级最高（列表更靠上）且本帧应开火的那条。
+   * null = 不参与互斥（可与其它规则并行）。
+   * @type {Record<string, string|null>}
+   */
+  const ACTION_CONFLICT_DOMAINS = {
+    select_ammo: 'ammo',
+    turret_ammo: 'ammo',
+    lock_unit: 'lock',
+    send_alert: 'alert',
+    set_speed: 'speed',
+    set_var: null /* 运行时按变量名扩成 var:name */,
+    noop: null,
+  };
 
   /**
    * 比较符选项（条件共用）：eq/neq/gt/lt/gte/lte。
@@ -156,7 +171,8 @@
   /**
    * 条件目录。cars: null=全车可用；否则为允许的 carId 列表。params 为空数组表示无需填参。
    * 比较类条件统一带 `op` + 阈值；id 保留旧名以兼容存档。
-   * @type {Array<{ id:string, label:string, hint?:string, cars:string[]|null, params:Array<object> }>}
+   * preferEdge / preferWhile：新建或改条件/行为时的默认 trigger（preferWhile 优先）。
+   * @type {Array<{ id:string, label:string, hint?:string, cars:string[]|null, params:Array<object>, preferEdge?:boolean, preferWhile?:boolean }>}
    */
   const CONDITIONS = [
     {
@@ -171,6 +187,7 @@
       label: '炮塔当前锁定',
       hint: '当前炮塔锁定分类是否匹配所选类型（机炮：无/地面/空中；火炮：无/大型）',
       cars: ['guard', 'artillery'],
+      preferEdge: true,
       params: [
         {
           key: 'kind',
@@ -260,8 +277,18 @@
     },
     {
       id: 'targets_in_view',
-      label: '视野内目标数',
-      hint: '绘轨雷达探测射程内目标数量（同「范围内目标数」传感）',
+      label: '小型目标集群数',
+      hint: '绘轨探测射程内小型目标集群数（同「小型目标集群数」传感；与雷达密度云同源，簇≥2）。旧 id targets_in_view 仍可用。',
+      cars: ['huigui'],
+      params: [
+        compareOpParam('gte'),
+        { key: 'count', label: '数量', type: 'number', min: 0, max: 99, default: 1 },
+      ],
+    },
+    {
+      id: 'large_targets_in_view',
+      label: '大型目标数',
+      hint: '绘轨探测射程内大型目标个体数（同「大型目标数」传感；尚无大型怪时为 0）',
       cars: ['huigui'],
       params: [
         compareOpParam('gte'),
@@ -273,6 +300,25 @@
       label: '车厢着火',
       hint: '本车厢是否着火（着火系统尚未接入；运行时暂恒为假）',
       cars: null,
+      preferWhile: true,
+      params: [],
+    },
+    {
+      id: 'platform_ahead',
+      label: '前方有月台',
+      hint:
+        '列车前方接近月台（LpAutoSensors.platformAhead；月台未实现前恒假，可用 setPlatformStub 调试）',
+      cars: ['power'],
+      preferWhile: true,
+      params: [],
+    },
+    {
+      id: 'at_platform',
+      label: '位于月台',
+      hint:
+        '列车已停靠/对准月台（LpAutoSensors.atPlatform；月台未实现前恒假，可用 setPlatformStub 调试）',
+      cars: ['power'],
+      preferWhile: true,
       params: [],
     },
     {
@@ -286,12 +332,13 @@
   /**
    * 行为目录。cars: null=全车可用；否则为允许的 carId 列表。
    * 不提供「控制炮塔角度」类行为；瞄准由锁定单位驱动。
+   * preferEdge / preferWhile：与条件一并决定默认 trigger。
    */
   const ACTIONS = [
     {
       id: 'lock_unit',
       label: '锁定单位',
-      hint: '按选项锁定射程内敌方（最近/最远/生命值/护甲）',
+      hint: '按选项锁定射程内敌方（最近/最远/生命值/护甲）；卫兵多塔分塔索敌并尽量不锁同一目标',
       cars: ['guard', 'huigui'],
       params: [
         {
@@ -314,8 +361,9 @@
       id: 'select_ammo',
       label: '选择弹种/弹链',
       hint:
-        '连发车只编辑弹链槽位；火炮车只点选弹种。模式由车厢类型自动决定，无需手输 id',
+        '连发车只编辑弹链槽位；火炮车只点选弹种。模式由车厢类型自动决定，无需手输 id。持续装载：同 pattern 保留游标；入座清自动、离席后可再写入',
       cars: ['guard', 'artillery'],
+      preferWhile: true,
       params: [
         {
           key: 'target',
@@ -359,6 +407,7 @@
       id: 'send_alert',
       label: '发送警报',
       cars: null,
+      preferEdge: true,
       params: [
         { key: 'message', label: '内容', type: 'text', default: '弹药告急！' },
       ],
@@ -401,9 +450,27 @@
       id: 'targets_in_range',
       default: 0,
       scope: 'car',
-      cars: ['guard', 'huigui'],
+      cars: ['guard'],
       readonly: true,
-      hint: '本车武器/探测射程内的目标数量（运行时传感器）',
+      hint: '卫兵武器射程内的目标个体数量（运行时传感器）',
+    },
+    {
+      name: '大型目标数',
+      id: 'large_targets_in_range',
+      default: 0,
+      scope: 'car',
+      cars: ['huigui'],
+      readonly: true,
+      hint: '绘轨探测射程内大型目标个体数（kind=large 等；当前无大型怪时为 0）',
+    },
+    {
+      name: '小型目标集群数',
+      id: 'small_target_clusters_in_range',
+      default: 0,
+      scope: 'car',
+      cars: ['huigui'],
+      readonly: true,
+      hint: '绘轨探测射程内小型目标集群数（与雷达密度云同：300u 邻域、簇≥2）',
     },
     {
       name: '剩余弹药数',
@@ -564,6 +631,39 @@
 
   function triggerById(id) {
     return TRIGGERS.find((t) => t.id === id) || TRIGGERS[0];
+  }
+
+  /**
+   * 根据条件/行为目录旗标给出默认 trigger。
+   * preferWhile（任一侧）优先于 preferEdge；皆无则 while。
+   * @param {string} [conditionId]
+   * @param {string} [actionId]
+   * @returns {'while'|'edge'}
+   */
+  function preferredTrigger(conditionId, actionId) {
+    const cond = conditionById(conditionId);
+    const act = actionById(actionId);
+    if (cond?.preferWhile || act?.preferWhile) return 'while';
+    if (cond?.preferEdge || act?.preferEdge) return 'edge';
+    return 'while';
+  }
+
+  /**
+   * 行为冲突域：同 domain 同 tick 只执行列表更靠上的一条；无域则不互斥。
+   * set_var → `var:<变量名>`；未知 id → null。
+   * @param {{ id?: string, params?: Record<string, unknown> }|null|undefined} action
+   * @returns {string|null}
+   */
+  function conflictDomainForAction(action) {
+    if (!action?.id) return null;
+    if (action.id === 'set_var') {
+      const name = String(action.params?.name || '').trim();
+      return name ? `var:${name}` : 'var';
+    }
+    if (Object.prototype.hasOwnProperty.call(ACTION_CONFLICT_DOMAINS, action.id)) {
+      return ACTION_CONFLICT_DOMAINS[action.id];
+    }
+    return null;
   }
 
   /**
@@ -917,6 +1017,7 @@
     TRIGGERS,
     CONDITIONS,
     ACTIONS,
+    ACTION_CONFLICT_DOMAINS,
     COMPARE_OPS,
     LEGACY_COMPARE_OPS,
     NUM_OR_VAR_KINDS,
@@ -932,6 +1033,8 @@
     staticTextParam,
     migrateConditionParams,
     migrateAction,
+    preferredTrigger,
+    conflictDomainForAction,
     parseAmmoTarget,
     normalizeSelectAmmoParams,
     normalizeAmmoSlots,

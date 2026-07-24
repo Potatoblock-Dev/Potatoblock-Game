@@ -1,6 +1,7 @@
 /**
- * 阈限月台移动端触控：左移摇杆 + 奔跑键；右瞄准摇杆 + 物品/交互情境键 + 开火/跳跃。
+ * 阈限月台移动端触控：左下背包+移摇杆；右上跑走+手部栏；右下瞄准/地图/开火/跳跃。
  * 瞄准采用双摇杆（类合金弹头）：方向 + 把手离中心距离（mag）驱动准星；松手保持最后方向与距离。
+ * 入座机炮：左摇杆改瞄准，右侧只留开火；「离开」情境键留在左侧簇。
  */
 (() => {
   const controls = document.getElementById('lpMobileControls');
@@ -12,6 +13,7 @@
   const fireButton = document.getElementById('lpMobileFireButton');
   const actionButton = document.getElementById('lpMobileInventoryButton');
   const sprintButton = document.getElementById('lpMobileSprintButton');
+  const moveCluster = controls?.querySelector('.lp-mobile-move-cluster');
   if (!controls || !joystick || !knob || !jumpButton) return;
 
   /** 瞄准摇杆死区（归一化半径 0–1）；进入死区不改方向/距离。 */
@@ -25,8 +27,8 @@
     interactQueued: false,
     fire: false,
     fireQueued: false,
-    /** 奔跑锁定（点按切换）。 */
-    sprintToggle: Boolean(window.LpInputBindings?.getAutoRun?.()),
+    /** 奔跑锁定（点按 / 桌面 Shift 边沿切换；进房时跟自动奔跑偏好）。 */
+    sprintToggle: false,
     /** 情境键：inventory | interact */
     actionMode: 'inventory',
     lookX: 0,
@@ -35,6 +37,8 @@
     lookMag: 0,
     lookActive: false,
     lookReady: false,
+    /** 入座机炮：左摇杆瞄准、右侧仅开火。 */
+    turretMode: false,
     enabled: true,
   };
   let joystickPointer = null;
@@ -43,7 +47,12 @@
   let firePointer = null;
   let storageHint = false;
 
-  /** 重置移动摇杆到中心。 */
+  /** 阻止长按选中 / iOS 呼出菜单（摇杆与触控键）。 */
+  function suppressSelect(event) {
+    event.preventDefault();
+  }
+
+  /** 重置移动摇杆到中心（非炮塔模式）。 */
   function resetMoveJoystick() {
     joystickPointer = null;
     state.direction = 0;
@@ -51,14 +60,32 @@
     joystick.setAttribute('aria-valuenow', '0');
   }
 
-  /** 仅复位瞄准摇杆外观，不清除已锁定的瞄准方向。 */
+  /** 仅复位瞄准把手外观，不清除已锁定的瞄准方向。 */
+  function resetLookKnobVisual(targetKnob) {
+    if (targetKnob) targetKnob.style.transform = 'translate(0, 0)';
+  }
+
+  /** 松手后复位右瞄准摇杆外观。 */
   function resetLookKnob() {
     lookPointer = null;
     state.lookActive = false;
-    if (lookKnob) lookKnob.style.transform = 'translate(0, 0)';
+    resetLookKnobVisual(lookKnob);
   }
 
-  /** 根据触点更新移动摇杆。 */
+  /**
+   * 松开左侧摇杆：步行模式清方向；炮塔模式只复位把手，保留准星方向/距离。
+   */
+  function releaseLeftStick() {
+    if (state.turretMode) {
+      joystickPointer = null;
+      state.lookActive = false;
+      resetLookKnobVisual(knob);
+      return;
+    }
+    resetMoveJoystick();
+  }
+
+  /** 根据触点更新移动摇杆（水平方向）。 */
   function updateMoveJoystick(clientX, clientY) {
     const rect = joystick.getBoundingClientRect();
     const radius = rect.width * 0.3;
@@ -75,12 +102,12 @@
   }
 
   /**
-   * 根据触点更新瞄准摇杆：单位方向 + 死区重映射后的距离（0–1）。
-   * 死区内仅保持按住态，不改 lookX/Y/mag（松手后仍保留上次瞄准）。
+   * 将触点写入瞄准状态（单位方向 + 死区重映射距离 0–1）。
+   * stickEl/knobEl 可为左或右摇杆；死区内仅保持按住态。
    */
-  function updateLookJoystick(clientX, clientY) {
-    if (!lookStick || !lookKnob) return;
-    const rect = lookStick.getBoundingClientRect();
+  function applyLookFromStick(stickEl, knobEl, clientX, clientY) {
+    if (!stickEl || !knobEl) return;
+    const rect = stickEl.getBoundingClientRect();
     const radius = rect.width * 0.34;
     let dx = clientX - (rect.left + rect.width / 2);
     let dy = clientY - (rect.top + rect.height / 2);
@@ -89,7 +116,7 @@
       dx = (dx / distance) * radius;
       dy = (dy / distance) * radius;
     }
-    lookKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
 
     const nx = dx / radius;
     const ny = dy / radius;
@@ -101,6 +128,11 @@
     state.lookY = ny / mag;
     state.lookMag = remapped;
     state.lookReady = true;
+  }
+
+  /** 右瞄准摇杆更新（非炮塔）。 */
+  function updateLookJoystick(clientX, clientY) {
+    applyLookFromStick(lookStick, lookKnob, clientX, clientY);
   }
 
   /** 同步奔跑切换按钮（图标 + aria；文案不写进 DOM 以免冲掉 Kenney 图标）。 */
@@ -117,6 +149,22 @@
     );
   }
 
+  /** 将奔跑锁定设为指定状态（进房 / 自动奔跑偏好 / 桌面 Shift 共用）。 */
+  function setSprintToggle(on) {
+    state.sprintToggle = Boolean(on);
+    syncSprintButton();
+  }
+
+  /** 切换奔跑锁定并刷新按钮。 */
+  function toggleSprint() {
+    setSprintToggle(!state.sprintToggle);
+  }
+
+  /** 按自动奔跑偏好重置锁定：开=进房即跑，关=进房行走。 */
+  function applyAutoRunPreference() {
+    setSprintToggle(Boolean(window.LpInputBindings?.getAutoRun?.()));
+  }
+
   /** 同步物品/交互共用键外观。 */
   function syncActionButton() {
     if (!actionButton) return;
@@ -129,8 +177,40 @@
       actionButton.title = label;
       actionButton.setAttribute('aria-label', label);
     } else {
-      actionButton.title = storageHint ? '打开物品栏（仓库）' : '打开物品栏';
-      actionButton.setAttribute('aria-label', '物品栏');
+      actionButton.title = storageHint ? '打开背包（仓库）' : '打开背包';
+      actionButton.setAttribute('aria-label', '背包');
+    }
+  }
+
+  /**
+   * 入座/离席机炮时切换触控布局：左摇杆瞄准、右侧仅开火；背包键改「离开」（已在左侧）。
+   */
+  function setTurretMode(active) {
+    const next = Boolean(active);
+    if (state.turretMode === next) {
+      controls.classList.toggle('is-turret-mode', next);
+      return;
+    }
+    state.turretMode = next;
+    controls.classList.toggle('is-turret-mode', next);
+
+    joystickPointer = null;
+    lookPointer = null;
+    state.direction = 0;
+    state.lookActive = false;
+    resetLookKnobVisual(knob);
+    resetLookKnobVisual(lookKnob);
+    joystick.setAttribute('aria-valuenow', '0');
+    joystick.setAttribute('aria-label', next ? '瞄准' : '水平移动');
+
+    /* 背包键默认在左簇；炮塔时确保仍在左侧并切成离开 */
+    if (actionButton && moveCluster && actionButton.parentElement !== moveCluster) {
+      moveCluster.insertBefore(actionButton, joystick);
+    }
+    if (next) {
+      setInteractVisible(true, '离开');
+    } else {
+      setInteractVisible(false);
     }
   }
 
@@ -164,31 +244,45 @@
     return false;
   }
 
+  controls.addEventListener('selectstart', suppressSelect);
+
   joystick.addEventListener('pointerdown', (event) => {
     if (!state.enabled || joystickPointer !== null) return;
+    suppressSelect(event);
     joystickPointer = event.pointerId;
-    updateMoveJoystick(event.clientX, event.clientY);
+    if (state.turretMode) {
+      applyLookFromStick(joystick, knob, event.clientX, event.clientY);
+    } else {
+      updateMoveJoystick(event.clientX, event.clientY);
+    }
     joystick.setPointerCapture(event.pointerId);
   });
 
   joystick.addEventListener('pointermove', (event) => {
-    if (event.pointerId === joystickPointer) updateMoveJoystick(event.clientX, event.clientY);
+    if (event.pointerId !== joystickPointer) return;
+    if (state.turretMode) {
+      applyLookFromStick(joystick, knob, event.clientX, event.clientY);
+    } else {
+      updateMoveJoystick(event.clientX, event.clientY);
+    }
   });
 
   for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
     joystick.addEventListener(eventName, (event) => {
-      if (event.pointerId === joystickPointer) resetMoveJoystick();
+      if (event.pointerId === joystickPointer) releaseLeftStick();
     });
   }
 
   if (lookStick && lookKnob) {
     lookStick.addEventListener('pointerdown', (event) => {
-      if (!state.enabled || lookPointer !== null) return;
+      if (!state.enabled || state.turretMode || lookPointer !== null) return;
+      suppressSelect(event);
       lookPointer = event.pointerId;
       updateLookJoystick(event.clientX, event.clientY);
       lookStick.setPointerCapture(event.pointerId);
     });
     lookStick.addEventListener('pointermove', (event) => {
+      if (state.turretMode) return;
       if (event.pointerId === lookPointer) updateLookJoystick(event.clientX, event.clientY);
     });
     for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
@@ -199,7 +293,8 @@
   }
 
   jumpButton.addEventListener('pointerdown', (event) => {
-    if (!state.enabled) return;
+    if (!state.enabled || state.turretMode) return;
+    suppressSelect(event);
     jumpPointer = event.pointerId;
     state.jump = true;
     state.jumpQueued = true;
@@ -219,6 +314,7 @@
   if (fireButton) {
     fireButton.addEventListener('pointerdown', (event) => {
       if (!state.enabled) return;
+      suppressSelect(event);
       firePointer = event.pointerId;
       state.fire = true;
       state.fireQueued = true;
@@ -238,9 +334,14 @@
 
   /**
    * 靠近交互点时，物品键切换为交互；离开后恢复物品栏。
+   * 炮塔模式强制「离开」，避免 mid-session 被改回物品栏。
    */
   function setInteractVisible(visible, label) {
     if (!actionButton) return;
+    if (state.turretMode) {
+      visible = true;
+      label = label || '离开';
+    }
     if (visible) {
       state.actionMode = 'interact';
       if (label) actionButton.dataset.interactLabel = label;
@@ -257,6 +358,7 @@
   if (actionButton) {
     actionButton.addEventListener('pointerdown', (event) => {
       if (!state.enabled) return;
+      suppressSelect(event);
       actionButton.classList.add('is-active');
       if (state.actionMode === 'interact') {
         state.interact = true;
@@ -277,10 +379,9 @@
 
   if (sprintButton) {
     sprintButton.addEventListener('pointerdown', (event) => {
-      if (!state.enabled) return;
-      event.preventDefault();
-      state.sprintToggle = !state.sprintToggle;
-      syncSprintButton();
+      if (!state.enabled || state.turretMode) return;
+      suppressSelect(event);
+      toggleSprint();
       sprintButton.classList.add('is-active');
       sprintButton.setPointerCapture?.(event.pointerId);
     });
@@ -297,9 +398,15 @@
     syncActionButton();
   }
 
+  /** 与 body.lp-turret-mode / 进出事件对齐触控布局。 */
+  function syncTurretModeFromDom() {
+    setTurretMode(document.body.classList.contains('lp-turret-mode'));
+  }
+
+  window.addEventListener('lp:turret-enter', () => setTurretMode(true));
+  window.addEventListener('lp:turret-exit', () => setTurretMode(false));
   window.addEventListener('lp:settings-changed', () => {
-    state.sprintToggle = Boolean(window.LpInputBindings?.getAutoRun?.());
-    syncSprintButton();
+    applyAutoRunPreference();
   });
 
   window.addEventListener('blur', () => setEnabled(false));
@@ -318,8 +425,8 @@
         };
       }
       const input = {
-        direction: state.direction,
-        jump: state.jump || state.jumpQueued,
+        direction: state.turretMode ? 0 : state.direction,
+        jump: state.turretMode ? false : state.jump || state.jumpQueued,
         interact: state.interact || state.interactQueued,
         fire: state.fire || state.fireQueued,
         sprintToggle: state.sprintToggle,
@@ -353,12 +460,17 @@
     isSprintOn() {
       return state.sprintToggle;
     },
+    setSprintToggle,
+    toggleSprint,
+    applyAutoRunPreference,
     setEnabled,
     setInteractVisible,
     setStorageHint,
+    setTurretMode,
   };
 
-  syncSprintButton();
+  applyAutoRunPreference();
   syncActionButton();
+  syncTurretModeFromDom();
   setEnabled(!isUiBlockingInput());
 })();

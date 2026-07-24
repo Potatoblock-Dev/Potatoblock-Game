@@ -3,6 +3,7 @@
  * 拖动时滑块跟手；外部改档 / 松手吸附时滑块缓动就位。
  * 汽笛为本地音效（不下发协议）；下拉 intro→loop，松手 outro 回弹；关面板硬停。
  * 绳体用轻量弹簧/单摆（CSS transform + rAF），无物理引擎。
+ * 自动驾驶开关在顶栏「离开」左侧：接通时独占节流，拉杆/刻度改档无效。
  */
 (() => {
   const root = document.getElementById('lpBoilerPanelRoot');
@@ -16,6 +17,7 @@
   const speedNeedle = document.getElementById('lpSpeedoNeedle');
   const speedDir = document.getElementById('lpSpeedoDir');
   const closeButton = document.getElementById('lpBoilerPanelClose');
+  const autopilotToggle = document.getElementById('lpAutopilotToggle');
   const fuelFill = document.getElementById('lpFuelGaugeFill');
   const cabStencilDesktop = document.getElementById('lpCabStencilDesktop');
   const whistleRope = document.getElementById('lpWhistleRope');
@@ -77,11 +79,27 @@
     return open;
   }
 
+  /** 自动驾驶是否接通（接通时节流由 LpAutoAutopilot 独占）。 */
+  function autopilotOwnsThrottle() {
+    return Boolean(window.LpAutoAutopilot?.isEngaged?.());
+  }
+
+  /** 同步顶栏自动驾驶开关与机柜接通样式。 */
+  function syncAutopilotToggle() {
+    const on = autopilotOwnsThrottle();
+    if (autopilotToggle) {
+      autopilotToggle.checked = on;
+      autopilotToggle.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+    root.classList.toggle('lp-autopilot-on', on);
+  }
+
   /** 同步桌面离席提示（交互键与 Esc）。 */
   function syncLeaveHint() {
     if (!cabStencilDesktop) return;
     const key = window.LpInputBindings?.formatAction('interact') || 'F';
-    cabStencilDesktop.textContent = `拖动拉杆或点刻度 · 下拉汽笛 · ${key} / Esc 离开`;
+    const apHint = autopilotOwnsThrottle() ? ' · 自动驾驶接管节流' : '';
+    cabStencilDesktop.textContent = `拖动拉杆或点刻度 · 下拉汽笛${apHint} · ${key} / Esc 离开`;
   }
 
   /** 一维弹簧积分：加速度 = stiff*(target−x) − damp*v。 */
@@ -274,6 +292,7 @@
     root.setAttribute('aria-hidden', 'false');
     document.body.classList.add('lp-boiler-panel-open');
     window.LpTouchControls?.setEnabled(false);
+    syncAutopilotToggle();
     syncLeaveHint();
     window.LpGame?.faceTrainForward?.();
     const state = Drive.getState();
@@ -364,11 +383,12 @@
     paint(state);
   }
 
-  /** 从指针位置写入拉杆（拖动中连续、跟手）。 */
+  /** 从指针位置写入拉杆（拖动中连续、跟手）。自动驾驶接通时忽略节流拖拽。 */
   function applyPointer(track, clientY, kind) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
     if (kind === 'throttle') {
+      if (autopilotOwnsThrottle()) return;
       const throttle = ratioToThrottle(ratio);
       Drive.setThrottleRaw(throttle);
       const st = Drive.getState();
@@ -386,6 +406,7 @@
   function bindLever(track, kind) {
     track.addEventListener('pointerdown', (event) => {
       if (!open) return;
+      if (kind === 'throttle' && autopilotOwnsThrottle()) return;
       drag = { kind, pointerId: event.pointerId };
       track.setPointerCapture(event.pointerId);
       applyPointer(track, event.clientY, kind);
@@ -440,8 +461,16 @@
   closeButton?.addEventListener('click', closePanel);
   root.querySelector('.lp-boiler-backdrop')?.addEventListener('click', closePanel);
 
+  autopilotToggle?.addEventListener('change', () => {
+    window.LpAutoAutopilot?.setEngaged?.(autopilotToggle.checked);
+    syncAutopilotToggle();
+    syncLeaveHint();
+    syncFromState();
+  });
+
   for (const mark of root.querySelectorAll('[data-throttle-notch]')) {
     mark.addEventListener('click', () => {
+      if (autopilotOwnsThrottle()) return;
       Drive.setThrottle(Number(mark.dataset.throttleNotch));
       syncFromState();
     });
@@ -459,10 +488,17 @@
   }
 
   window.addEventListener('liminal:train-drive', syncFromState);
+  window.addEventListener('liminal:autopilot', () => {
+    syncAutopilotToggle();
+    syncLeaveHint();
+    if (open) syncFromState();
+  });
   window.addEventListener('liminal:fuel-changed', () => {
     syncFuelGauge();
   });
   window.addEventListener('lp:bindings-changed', syncLeaveHint);
+
+  syncAutopilotToggle();
 
   /** 同步锅炉燃料玻璃管与读数。 */
   function syncFuelGauge() {

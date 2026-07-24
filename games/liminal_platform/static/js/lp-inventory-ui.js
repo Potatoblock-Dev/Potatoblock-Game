@@ -480,7 +480,9 @@
       detailQty.textContent =
         item.magazineSize != null
           ? `弹匣 ${stack.mag ?? 0}/${item.magazineSize}`
-          : `×${stack.qty}`;
+          : item.maxDurability != null
+            ? `耐久 ${stack.dur ?? item.maxDurability}/${item.maxDurability}`
+            : `×${stack.qty}`;
     }
     if (detailType) detailType.textContent = Catalog.typeLabel(item.type);
     if (detailSize) {
@@ -638,6 +640,8 @@
     qty.className = 'lp-inventory-item-qty';
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
+    } else if (item.maxDurability != null) {
+      qty.textContent = `${stack.dur ?? item.maxDurability}/${item.maxDurability}`;
     } else {
       qty.textContent = stack.qty > 1 ? String(stack.qty) : '';
     }
@@ -1131,6 +1135,8 @@
     qty.className = 'lp-inventory-item-qty';
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
+    } else if (item.maxDurability != null) {
+      qty.textContent = `${stack.dur ?? item.maxDurability}/${item.maxDurability}`;
     } else {
       qty.textContent = stack.qty > 1 ? String(stack.qty) : '';
     }
@@ -1313,6 +1319,7 @@
         inventory.slots[origin].qty = stack.qty - half;
         const halfStack = { itemId: stack.itemId, qty: half };
         if (stack.mag != null) halfStack.mag = stack.mag;
+        if (stack.dur != null) halfStack.dur = stack.dur;
         if (Core.stackRot(stack) === 90) halfStack.rot = 90;
         state.cursor = halfStack;
       }
@@ -1529,11 +1536,12 @@
     }
     cursorSource = null;
     const leftoverQty = player.addItem(stack.itemId, stack.qty);
-    if (leftoverQty < stack.qty && (stack.mag != null || Core.stackRot(stack) === 90)) {
+    if (leftoverQty < stack.qty && (stack.mag != null || stack.dur != null || Core.stackRot(stack) === 90)) {
       for (let i = 0; i < player.size(); i += 1) {
         const raw = player.slots[i];
-        if (raw && raw.itemId === stack.itemId && raw.mag == null && raw.rot == null) {
+        if (raw && raw.itemId === stack.itemId && raw.mag == null && raw.dur == null && raw.rot == null) {
           if (stack.mag != null) raw.mag = stack.mag;
+          if (stack.dur != null) raw.dur = stack.dur;
           if (Core.stackRot(stack) === 90) raw.rot = 90;
           break;
         }
@@ -1542,6 +1550,7 @@
     if (leftoverQty > 0) {
       const drop = { itemId: stack.itemId, qty: leftoverQty };
       if (stack.mag != null) drop.mag = stack.mag;
+      if (stack.dur != null) drop.dur = stack.dur;
       if (Core.stackRot(stack) === 90) drop.rot = 90;
       window.LpGroundLoot?.dropStacks?.(state.openWorldX, [drop]);
     }
