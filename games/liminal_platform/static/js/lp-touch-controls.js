@@ -1,6 +1,6 @@
 /**
  * 阈限月台移动端触控：左移摇杆 + 奔跑键；右瞄准摇杆 + 物品/交互情境键 + 开火/跳跃。
- * 瞄准采用双摇杆（类合金弹头）：松手后保持最后瞄准方向。
+ * 瞄准采用双摇杆（类合金弹头）：方向 + 把手离中心距离（mag）驱动准星；松手保持最后方向与距离。
  */
 (() => {
   const controls = document.getElementById('lpMobileControls');
@@ -14,6 +14,7 @@
   const sprintButton = document.getElementById('lpMobileSprintButton');
   if (!controls || !joystick || !knob || !jumpButton) return;
 
+  /** 瞄准摇杆死区（归一化半径 0–1）；进入死区不改方向/距离。 */
   const LOOK_DEADZONE = 0.18;
 
   const state = {
@@ -30,6 +31,8 @@
     actionMode: 'inventory',
     lookX: 0,
     lookY: 0,
+    /** 死区外把手距离 → 0–1（满推为 1），映射准星领先距离。 */
+    lookMag: 0,
     lookActive: false,
     lookReady: false,
     enabled: true,
@@ -71,7 +74,10 @@
     joystick.setAttribute('aria-valuenow', String(state.direction));
   }
 
-  /** 根据触点更新瞄准摇杆（全方向）。 */
+  /**
+   * 根据触点更新瞄准摇杆：单位方向 + 死区重映射后的距离（0–1）。
+   * 死区内仅保持按住态，不改 lookX/Y/mag（松手后仍保留上次瞄准）。
+   */
   function updateLookJoystick(clientX, clientY) {
     if (!lookStick || !lookKnob) return;
     const rect = lookStick.getBoundingClientRect();
@@ -88,13 +94,12 @@
     const nx = dx / radius;
     const ny = dy / radius;
     const mag = Math.hypot(nx, ny);
-    if (mag < LOOK_DEADZONE) {
-      state.lookActive = true;
-      return;
-    }
+    state.lookActive = true;
+    if (mag < LOOK_DEADZONE) return;
+    const remapped = Math.min(1, (mag - LOOK_DEADZONE) / (1 - LOOK_DEADZONE));
     state.lookX = nx / mag;
     state.lookY = ny / mag;
-    state.lookActive = true;
+    state.lookMag = remapped;
     state.lookReady = true;
   }
 
@@ -309,7 +314,7 @@
           interact: false,
           fire: false,
           sprintToggle: state.sprintToggle,
-          look: { x: 0, y: 0, active: false, ready: false },
+          look: { x: 0, y: 0, mag: 0, active: false, ready: false },
         };
       }
       const input = {
@@ -321,6 +326,7 @@
         look: {
           x: state.lookX,
           y: state.lookY,
+          mag: state.lookMag,
           active: state.lookActive,
           ready: state.lookReady,
         },
@@ -330,11 +336,13 @@
       state.fireQueued = false;
       return input;
     },
+    /** 当前瞄准摇杆：单位方向 (x,y) + 距离 mag(0–1) + active/ready。 */
     getLook() {
-      if (!state.enabled) return { x: 0, y: 0, active: false, ready: false };
+      if (!state.enabled) return { x: 0, y: 0, mag: 0, active: false, ready: false };
       return {
         x: state.lookX,
         y: state.lookY,
+        mag: state.lookMag,
         active: state.lookActive,
         ready: state.lookReady,
       };

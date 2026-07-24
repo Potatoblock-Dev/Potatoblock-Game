@@ -67,7 +67,7 @@
         jump: false,
         interact: false,
         fire: false,
-        look: { x: 0, y: 0, active: false, ready: false },
+        look: { x: 0, y: 0, mag: 0, active: false, ready: false },
       }
     );
   }
@@ -161,13 +161,17 @@
     };
   }
 
-  /** 移动端：由瞄准摇杆驱动虚拟准星（松手保持方向）。 */
+  /**
+   * 移动端：瞄准摇杆方向 × 把手距离 → 准星屏幕位置（松手保持方向与距离）。
+   * lead = maxLead * mag；mag 为死区外归一化 0–1。
+   */
   function syncTouchAimPointer() {
     if (!isCoarsePointer() || isUiOpen()) return;
     const look =
       window.LpTouchControls?.getLook?.() || {
         x: 0,
         y: 0,
+        mag: 0,
         ready: false,
       };
     const view = provisionalCameraView();
@@ -176,8 +180,9 @@
     const maxLead = Math.min(viewW, viewH) * 0.42 * (window.LpGuardTurret?.getAimLeadScale?.() ?? 1);
     const maxLeadY = maxLead * (window.LpGuardTurret?.isManned?.() ? 1.15 : 0.9);
     if (look.ready) {
-      pointer.x = playerScreen.x + look.x * maxLead;
-      pointer.y = playerScreen.y + look.y * maxLeadY;
+      const mag = Math.min(1, Math.max(0, Number(look.mag) || 0));
+      pointer.x = playerScreen.x + look.x * maxLead * mag;
+      pointer.y = playerScreen.y + look.y * maxLeadY * mag;
     } else {
       const facing = avatar.facing >= 0 ? 1 : -1;
       pointer.x = playerScreen.x + facing * maxLead * 0.55;
