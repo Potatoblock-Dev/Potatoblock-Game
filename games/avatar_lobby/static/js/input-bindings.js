@@ -185,16 +185,32 @@
   }
 
   function renderBindings() {
+    const promptBase = '/static/games/avatar-lobby/img/input-prompts';
     for (const button of document.querySelectorAll('[data-binding-action]')) {
       const action = button.dataset.bindingAction;
       const slot = Number(button.dataset.bindingSlot);
       const capturing = isCapturing(action, slot);
-      const modifierText = [...capturedModifiers].map(formatKey).join(' + ');
-      button.textContent = capturing
-        ? (modifierText ? `${modifierText} + …` : '请按按键…')
-        : formatBinding(bindings[action][slot]);
       button.classList.toggle('is-capturing', capturing);
-      button.classList.toggle('is-empty', bindings[action][slot].length === 0);
+      button.classList.toggle('is-empty', !capturing && bindings[action][slot].length === 0);
+      if (window.KeyPrompts) {
+        if (capturing) {
+          window.KeyPrompts.renderCapturing(button, [...capturedModifiers], {
+            baseUrl: promptBase,
+            formatKey,
+          });
+        } else {
+          window.KeyPrompts.renderButton(button, bindings[action][slot], {
+            baseUrl: promptBase,
+            emptyLabel: '添加',
+            formatKey,
+          });
+        }
+      } else {
+        const modifierText = [...capturedModifiers].map(formatKey).join(' + ');
+        button.textContent = capturing
+          ? (modifierText ? `${modifierText} + …` : '请按按键…')
+          : formatBinding(bindings[action][slot]);
+      }
     }
     document.getElementById('controlHint').textContent =
       `${formatAction('left')} 向左，${formatAction('right')} 向右，` +

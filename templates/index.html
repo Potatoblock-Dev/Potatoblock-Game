@@ -56,7 +56,8 @@
       padding: 0;
     }
     .topbar-icon-btn:hover { background: rgb(148 163 184 / .18); }
-    .topbar-icon-btn svg { width: 15px; height: 15px; display: block; }
+    .topbar-icon-btn svg,
+    .topbar-icon-btn .ui-icon { width: 15px; height: 15px; display: block; }
     a.topbar-icon-btn { text-decoration: none; color: inherit; }
     a.topbar-icon-btn.sponsor-btn {
       border-color: #ef4444;
@@ -75,8 +76,22 @@
       padding: 0;
     }
     .settings-button:hover { background: rgb(148 163 184 / .18); }
-    .settings-button svg { width: 15px; height: 15px; display: block; }
-    .settings-close svg { width: 14px; height: 14px; display: block; margin: 0 auto; }
+    .settings-button svg,
+    .settings-button .ui-icon { width: 15px; height: 15px; display: block; }
+    .settings-close svg,
+    .settings-close .ui-icon { width: 14px; height: 14px; display: block; margin: 0 auto; }
+
+    /* Kenney Game Icons（CC0）— mask 随 currentColor / 主题变色 */
+    .ui-icon {
+      display: block;
+      flex-shrink: 0;
+      background-color: currentColor;
+      -webkit-mask: var(--ui-icon) center / contain no-repeat;
+      mask: var(--ui-icon) center / contain no-repeat;
+    }
+    .ui-icon--gear { --ui-icon: url('/static/img/ui/gear.png'); }
+    .ui-icon--cross { --ui-icon: url('/static/img/ui/cross.png'); }
+    .ui-icon--menu-list { --ui-icon: url('/static/img/ui/menuList.png'); }
     .changelog-badge {
       position: absolute; top: -2px; right: -2px;
       width: 8px; height: 8px; border-radius: 999px;
@@ -113,7 +128,7 @@
     }
     html[data-theme='light'] .settings-panel { background: #ffffff; box-shadow: 0 16px 48px rgb(15 23 42 / .18); }
     .settings-title { display: flex; align-items: center; justify-content: space-between; font-size: 17px; font-weight: 700; }
-    .settings-close { width: 30px; height: 30px; border-radius: 999px; font-size: 14px; cursor: pointer; }
+    .settings-close { width: 30px; height: 30px; border-radius: 999px; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: inherit; padding: 0; }
     .settings-close:hover { background: rgb(148 163 184 / .18); }
     .settings-section { margin-top: 18px; }
     .settings-label { font-size: 12px; letter-spacing: .06em; opacity: .6; }
@@ -338,17 +353,11 @@
             </svg>
         </a>
         <button id="changelogButton" type="button" class="topbar-icon-btn" title="更新日志" aria-label="更新日志">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z" stroke="currentColor" stroke-width="1.7"/>
-                <path d="m5.2 7.2 6.1 4.4c.4.3.9.3 1.3 0l6.2-4.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            <span class="ui-icon ui-icon--menu-list" aria-hidden="true"></span>
             <span id="changelogBadge" class="changelog-badge hidden" aria-hidden="true"></span>
         </button>
         <button id="settingsButton" type="button" class="settings-button" title="系统设置" aria-label="系统设置">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" stroke-width="1.7"/>
-                <path d="M19.4 13.1a1.5 1.5 0 0 0 .3 1.6l.1.1a1.8 1.8 0 1 1-2.5 2.5l-.1-.1a1.5 1.5 0 0 0-1.6-.3 1.5 1.5 0 0 0-.9 1.4V18a1.8 1.8 0 1 1-3.6 0v-.1a1.5 1.5 0 0 0-1-1.4 1.5 1.5 0 0 0-1.6.3l-.1.1a1.8 1.8 0 1 1-2.5-2.5l.1-.1a1.5 1.5 0 0 0 .3-1.6 1.5 1.5 0 0 0-1.4-.9H6a1.8 1.8 0 1 1 0-3.6h.1a1.5 1.5 0 0 0 1.4-1 1.5 1.5 0 0 0-.3-1.6l-.1-.1a1.8 1.8 0 1 1 2.5-2.5l.1.1a1.5 1.5 0 0 0 1.6.3h.1a1.5 1.5 0 0 0 .9-1.4V6a1.8 1.8 0 1 1 3.6 0v.1a1.5 1.5 0 0 0 .9 1.4 1.5 1.5 0 0 0 1.6-.3l.1-.1a1.8 1.8 0 1 1 2.5 2.5l-.1.1a1.5 1.5 0 0 0-.3 1.6v.1a1.5 1.5 0 0 0 1.4.9H18a1.8 1.8 0 1 1 0 3.6h-.1a1.5 1.5 0 0 0-1.4.9Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-            </svg>
+            <span class="ui-icon ui-icon--gear" aria-hidden="true"></span>
         </button>
         </div>
     </div>
@@ -391,7 +400,7 @@
             <div class="settings-title">
                 <span id="changelogTitle">更新日志</span>
                 <button id="changelogCloseButton" type="button" class="settings-close" aria-label="关闭">
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                    <span class="ui-icon ui-icon--cross" aria-hidden="true"></span>
                 </button>
             </div>
             <div id="changelogList" class="settings-section"></div>
@@ -404,7 +413,7 @@
             <div class="settings-title">
                 <span>系统设置</span>
                 <button id="settingsCloseButton" type="button" class="settings-close" aria-label="关闭">
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                    <span class="ui-icon ui-icon--cross" aria-hidden="true"></span>
                 </button>
             </div>
             <div class="settings-section">
@@ -448,7 +457,7 @@
             <div class="pwa-guide-title">
                 <h2 id="pwaGuideTitle">添加到主屏幕</h2>
                 <button id="pwaGuideClose" type="button" class="settings-close" aria-label="关闭">
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                    <span class="ui-icon ui-icon--cross" aria-hidden="true"></span>
                 </button>
             </div>
             <p class="pwa-guide-lead">请用 <strong>Safari</strong> 打开本站，按下面步骤操作。必须从系统分享菜单添加，网页无法代替这一步。</p>

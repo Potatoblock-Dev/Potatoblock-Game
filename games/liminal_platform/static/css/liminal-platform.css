@@ -1707,6 +1707,7 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   min-height: 40px;
   padding: 8px 12px;
   border-radius: var(--lp-radius);
@@ -1718,6 +1719,39 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   font-weight: 600;
   white-space: nowrap;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+
+/* Kenney Game Icons（CC0）— mask 着色跟随 currentColor */
+.lp-ui-icon {
+  display: block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background-color: currentColor;
+  -webkit-mask: var(--lp-ui-icon) center / contain no-repeat;
+  mask: var(--lp-ui-icon) center / contain no-repeat;
+}
+
+.lp-ui-icon--gear {
+  --lp-ui-icon: url('/static/games/liminal-platform/img/ui/gear.png');
+  width: 22px;
+  height: 22px;
+}
+
+.lp-ui-icon--larger {
+  --lp-ui-icon: url('/static/games/liminal-platform/img/ui/larger.png');
+}
+
+.lp-ui-icon--smaller {
+  --lp-ui-icon: url('/static/games/liminal-platform/img/ui/smaller.png');
+}
+
+.lp-ui-icon--return {
+  --lp-ui-icon: url('/static/games/liminal-platform/img/ui/return.png');
+}
+
+.lp-ui-icon--singleplayer {
+  --lp-ui-icon: url('/static/games/liminal-platform/img/ui/singleplayer.png');
 }
 
 .lp-fullscreen-btn {
@@ -1934,6 +1968,11 @@ body.lp-inventory-open .lp-hud-top {
   display: block;
 }
 
+.lp-inv-settings-fab .lp-ui-icon--gear {
+  width: 22px;
+  height: 22px;
+}
+
 .lp-inv-settings-fab:hover,
 .lp-inv-settings-fab.is-active {
   border-color: rgb(212 212 212 / 0.7);
@@ -2134,13 +2173,36 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-binding-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   min-height: 34px;
+  padding: 4px 8px;
   border-radius: var(--lp-radius);
   border: 1px solid var(--lp-line);
   background: rgb(28 28 28 / 0.95);
   color: #e5e5e5;
   font-size: 12px;
   font-weight: 600;
+}
+
+.lp-binding-row .kp-key {
+  display: block;
+  height: 28px;
+  width: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  -ms-interpolation-mode: nearest-neighbor;
+  pointer-events: none;
+  user-select: none;
+}
+
+.lp-binding-row .kp-plus,
+.lp-binding-row .kp-wait,
+.lp-binding-row .kp-fallback {
+  line-height: 1;
+  opacity: 0.85;
 }
 
 .lp-binding-row button.is-capturing {

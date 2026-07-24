@@ -60,6 +60,10 @@
     const shortEl = button.querySelector('[data-lp-fs-text="short"]');
     if (longEl) longEl.textContent = active ? '退出全屏' : '全屏';
     if (shortEl) shortEl.textContent = active ? '退出' : '全屏';
+    const enterIcon = button.querySelector('[data-lp-fs-enter]');
+    const exitIcon = button.querySelector('[data-lp-fs-exit]');
+    if (enterIcon) enterIcon.hidden = active;
+    if (exitIcon) exitIcon.hidden = !active;
   }
 
   /** 用户手势触发切换；忽略拒绝（如策略限制）。 */
