@@ -5133,6 +5133,105 @@ body.lp-inventory-open .lp-hud-top {
   cursor: auto;
 }
 
+/* ---- 本地调试：任意物品丢脚下 (?debugHold=1) ---- */
+
+.lp-debug-spawn {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 80;
+  width: min(300px, calc(100vw - 24px));
+  padding: 10px 12px 12px;
+  background: var(--lp-panel);
+  color: #e5e5e5;
+  border: 1px solid rgb(163 163 163 / 0.35);
+  box-shadow: var(--lp-frame);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+
+.lp-debug-spawn[hidden] {
+  display: none !important;
+}
+
+.lp-dbg-spawn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.lp-dbg-spawn-head strong {
+  font-size: 13px;
+}
+
+.lp-dbg-spawn-hint {
+  flex: 1;
+  color: var(--lp-text-muted);
+  font-size: 10px;
+}
+
+.lp-dbg-spawn-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  background: var(--lp-panel-inset);
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.lp-dbg-spawn-status {
+  margin: 0 0 8px;
+  color: #86efac;
+  min-height: 1.2em;
+}
+
+.lp-dbg-spawn-row {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.lp-dbg-spawn-row span {
+  color: var(--lp-text-muted);
+  font-size: 11px;
+}
+
+.lp-debug-spawn select,
+.lp-debug-spawn input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid rgb(163 163 163 / 0.35);
+  background: #0a0a0a;
+  color: inherit;
+  font-size: 12px;
+}
+
+.lp-dbg-spawn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lp-dbg-spawn-actions button {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  background: var(--lp-panel-inset);
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.lp-dbg-spawn-actions button:hover {
+  border-color: rgb(251 191 36 / 0.55);
+}
+
 /* ---- 绘轨车厢 · 雷达示波器（战斗机 PPI） ---- */
 
 .lp-radar-scope-root {

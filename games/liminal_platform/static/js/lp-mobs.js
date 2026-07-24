@@ -675,12 +675,12 @@
   }
 
   /**
-   * 描边已绘制的当前 path（命中闪白叠在描边前由调用方处理）。
+   * 回退：用 mob.stroke 描当前已构建的 path（无 Bub 流动描边时）。
    * @param {CanvasRenderingContext2D} ctx
    * @param {ReturnType<typeof createMob>} m
    * @param {number} lineScale
    */
-  function strokeMobOutline(ctx, m, lineScale) {
+  function strokeMobOutlineSolid(ctx, m, lineScale) {
     ctx.lineWidth = Math.max(1.5, m.radius * lineScale);
     ctx.strokeStyle = m.stroke;
     ctx.lineJoin = 'round';
@@ -688,7 +688,7 @@
   }
 
   /**
-   * 用泡泡填充圆并描边；无 Bub 时纯色填充。
+   * 封闭圆：半透明泡泡填充 + 流动彩虹描边（无 Bub 时纯色+实线）。
    * @param {CanvasRenderingContext2D} ctx
    * @param {object | null | undefined} Bub
    * @param {number} x
@@ -708,13 +708,75 @@
       ctx.fillStyle = m.color;
       ctx.fill();
     }
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
-    strokeMobOutline(ctx, m, lineScale);
+    const lw = Math.max(1.5, m.radius * lineScale);
+    if (Bub?.strokeFlowingCircle) {
+      Bub.strokeFlowingCircle(ctx, x, y, rad, seed, {
+        lineWidth: lw,
+        palette: fillOpts.palette,
+      });
+    } else if (Bub?.strokeFlowingOutline) {
+      Bub.strokeFlowingOutline(ctx, { cx: x, cy: y, rx: rad, ry: rad }, seed, {
+        lineWidth: lw,
+        palette: fillOpts.palette,
+      });
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      strokeMobOutlineSolid(ctx, m, lineScale);
+    }
   }
 
   /**
-   * 侧视保龄球：驼峰主体 + 前头圆 + 双脚球 + 后钩尾；各封闭区泡泡填充。
+   * 椭圆 / 任意 path：半透明泡泡填充后画流动描边；无 Bub 时实色+实线。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {object | null | undefined} Bub
+   * @param {ReturnType<typeof createMob>} m
+   * @param {string|number} seed
+   * @param {Function|{ cx: number, cy: number, rx: number, ry: number }} pathOrBounds
+   * @param {object} fillOpts
+   * @param {number} lineScale
+   * @param {'path'|'ellipse'} mode
+   */
+  function fillStrokeClosed(ctx, Bub, m, seed, pathOrBounds, fillOpts, lineScale, mode) {
+    const lw = Math.max(1.5, m.radius * lineScale);
+    if (mode === 'ellipse' && Bub?.fillEllipse) {
+      const b = pathOrBounds;
+      Bub.fillEllipse(ctx, b.cx, b.cy, b.rx, b.ry, seed, fillOpts);
+    } else if (mode === 'path' && Bub?.fillPath) {
+      Bub.fillPath(ctx, pathOrBounds, seed, fillOpts);
+    } else if (Bub?.drawBubbleFill) {
+      Bub.drawBubbleFill(ctx, pathOrBounds, 0, seed, fillOpts);
+    } else if (mode === 'ellipse') {
+      const b = pathOrBounds;
+      ctx.beginPath();
+      ctx.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      pathOrBounds(ctx);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    }
+    if (Bub?.strokeFlowingOutline) {
+      Bub.strokeFlowingOutline(ctx, pathOrBounds, seed, {
+        lineWidth: lw,
+        palette: fillOpts.palette,
+      });
+    } else if (mode === 'ellipse') {
+      const b = pathOrBounds;
+      ctx.beginPath();
+      ctx.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, Math.PI * 2);
+      strokeMobOutlineSolid(ctx, m, lineScale);
+    } else {
+      ctx.beginPath();
+      pathOrBounds(ctx);
+      strokeMobOutlineSolid(ctx, m, lineScale);
+    }
+  }
+
+  /**
+   * 侧视保龄球：驼峰主体 + 前头圆 + 双脚球 + 后钩尾；半透明泡泡 + 流动描边。
    * @param {CanvasRenderingContext2D} ctx
    * @param {ReturnType<typeof createMob>} m
    * @param {object | null | undefined} Bub
@@ -736,9 +798,13 @@
       { x: m.x - f * r * 0.38, y: footY - r * 0.02 },
     ];
     const sid = m.id || 'bowl';
+    // 不传不透明 base，让 clip 内只剩半透明洗/流/泡。
     const fillOpts = {
-      base: m.color,
       palette: BOWLING_PALETTE,
+      alpha: 0.05,
+      flowAlpha: 0.07,
+      bubbleAlpha: 0.18,
+      bubblePulse: 0.14,
     };
 
     const tailCx = m.x - f * r * 0.55;
@@ -772,19 +838,16 @@
       ry: tailRy * 1.1,
     });
 
-    if (Bub?.fillPath) {
-      Bub.fillPath(ctx, pathTail, `${sid}:tail`, { ...fillOpts, count: 3 });
-    } else if (Bub?.drawBubbleFill) {
-      Bub.drawBubbleFill(ctx, pathTail, 0, `${sid}:tail`, { ...fillOpts, count: 3 });
-    } else {
-      ctx.beginPath();
-      pathTail(ctx);
-      ctx.fillStyle = m.color;
-      ctx.fill();
-    }
-    ctx.beginPath();
-    pathTail(ctx);
-    strokeMobOutline(ctx, m, 0.09);
+    fillStrokeClosed(
+      ctx,
+      Bub,
+      m,
+      `${sid}:tail`,
+      pathTail,
+      { ...fillOpts, count: 3 },
+      0.09,
+      'path'
+    );
 
     fillStrokeCircle(
       ctx,
@@ -798,20 +861,16 @@
       0.1
     );
 
-    if (Bub?.fillEllipse) {
-      Bub.fillEllipse(ctx, bodyCx, bodyCy, bodyRx, bodyRy, `${sid}:body`, {
-        ...fillOpts,
-        count: 8,
-      });
-    } else {
-      ctx.beginPath();
-      ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
-      ctx.fillStyle = m.color;
-      ctx.fill();
-    }
-    ctx.beginPath();
-    ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
-    strokeMobOutline(ctx, m, 0.11);
+    fillStrokeClosed(
+      ctx,
+      Bub,
+      m,
+      `${sid}:body`,
+      { cx: bodyCx, cy: bodyCy, rx: bodyRx, ry: bodyRy },
+      { ...fillOpts, count: 8 },
+      0.11,
+      'ellipse'
+    );
 
     fillStrokeCircle(
       ctx,
@@ -858,7 +917,7 @@
   }
 
   /**
-   * 侧视气球：大主体圆 + 内核圆 + 左右附属球；各封闭区泡泡填充。
+   * 侧视气球：大主体圆 + 内核圆 + 左右附属球；半透明泡泡 + 流动描边。
    * @param {CanvasRenderingContext2D} ctx
    * @param {ReturnType<typeof createMob>} m
    * @param {object | null | undefined} Bub
@@ -877,8 +936,11 @@
     ];
     const sid = m.id || 'balloon';
     const fillOpts = {
-      base: m.color,
       palette: BALLOON_PALETTE,
+      alpha: 0.05,
+      flowAlpha: 0.08,
+      bubbleAlpha: 0.2,
+      bubblePulse: 0.15,
     };
 
     for (let i = 0; i < sats.length; i += 1) {

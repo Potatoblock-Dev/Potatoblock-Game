@@ -127,26 +127,45 @@
     return pile;
   }
 
+  /**
+   * 将完整堆叠（含 mag/dur/rot）放入地面；足迹放不下则另开新堆。
+   * @returns {boolean} 是否放入成功
+   */
+  function dropFullStack(worldX, rawStack, worldY) {
+    const stack = Core.normalizeStack(rawStack);
+    if (!stack) return false;
+    let pile = findMergeTarget(worldX) || createPile(worldX, worldY);
+    const tryPlace = (target) => {
+      for (let i = 0; i < target.inv.size(); i += 1) {
+        if (target.inv.isCovered?.(i)) continue;
+        if (target.inv.placeStack(i, stack)) return true;
+      }
+      return false;
+    };
+    if (!tryPlace(pile)) {
+      pile = createPile(worldX + piles.length * 14, worldY);
+      if (!tryPlace(pile)) return false;
+    }
+    piles = piles.filter((p) => !isEmpty(p));
+    save();
+    return true;
+  }
+
   /** 把堆叠放入地面（满则另开新堆）。 */
   function dropStacks(worldX, stacks, worldY) {
     if (!stacks?.length) return;
     if (window.LpInventoryNet?.isActive?.()) {
       // 联机掉落应由 inventory UI / 服务端 drop 意图处理；此处仅作本地预览时不写盘
     }
-    let pile = findMergeTarget(worldX) || createPile(worldX, worldY);
     for (const raw of stacks) {
       const stack = Core.normalizeStack(raw);
       if (!stack) continue;
-      let leftover = pile.inv.addItem(stack.itemId, stack.qty);
-      if (stack.mag != null && leftover < stack.qty) {
-        for (let i = 0; i < pile.inv.size(); i += 1) {
-          const slot = pile.inv.slots[i];
-          if (slot && slot.itemId === stack.itemId && slot.mag == null) {
-            slot.mag = stack.mag;
-            break;
-          }
-        }
+      if (stack.mag != null || stack.dur != null || Core.stackRot?.(stack) === 90) {
+        dropFullStack(worldX, stack, worldY);
+        continue;
       }
+      let pile = findMergeTarget(worldX) || createPile(worldX, worldY);
+      let leftover = pile.inv.addItem(stack.itemId, stack.qty);
       while (leftover > 0) {
         pile = createPile(worldX + piles.length * 12, worldY);
         leftover = pile.inv.addItem(stack.itemId, leftover);
@@ -208,6 +227,7 @@
     load,
     save,
     dropStacks,
+    dropFullStack,
     hasNearby,
     getNearbyPile,
     findNearest,

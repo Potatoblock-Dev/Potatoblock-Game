@@ -829,13 +829,13 @@ class LiminalLobbyManager:
         if getattr(other, "life_state", "alive") != "downed":
             await player.connection.enqueue(player.inv_message(room))
             return
-        item = Inv.ITEMS.get(Inv.MEDKIT_ID) or {}
+        item = Inv.ITEMS.get(Inv.FIRST_AID_KIT_ID) or Inv.ITEMS.get(Inv.MEDKIT_ID) or {}
         ally_range = float(item.get("allyRange") or 150)
         dist = ((other.x - player.x) ** 2 + (other.y - player.y) ** 2) ** 0.5
         if dist > ally_range + 40:
             await player.connection.enqueue(player.inv_message(room))
             return
-        consumed = Inv.consume_held_medkit(
+        consumed = Inv.consume_held_first_aid(
             player.inventories, hand_index=payload.get("handIndex")
         )
         await player.connection.enqueue(player.inv_message(room))

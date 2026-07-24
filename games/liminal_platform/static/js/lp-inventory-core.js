@@ -443,6 +443,7 @@
     { index: 4, stack: { itemId: 'turret_ammo', qty: 80 } },
     { index: 5, stack: { itemId: 'small_caliber_ammo', qty: 90 } },
     { index: 6, stack: { itemId: 'medkit', qty: 1, dur: 40 } },
+    { index: 8, stack: { itemId: 'first_aid_kit', qty: 1 } },
     { index: 16, stack: { itemId: 'gur65', qty: 1, mag: 27 } },
     { index: 19, stack: { itemId: 'hummingbird_drone', qty: 1, mag: 120 } },
   ];

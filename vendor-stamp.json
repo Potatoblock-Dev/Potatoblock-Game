@@ -1,0 +1,23 @@
+{
+  "source": "liminal-platform",
+  "repository_config": "potatoblock-vendor.json",
+  "files": 284,
+  "runtime": {
+    "mcs_upload_dir": "/app",
+    "note": "Game CD (deploy.py) zips repo root → MCSM_UPLOAD_DIR (default /app). Static mounts come from each game_info.static_url.",
+    "routes": {
+      "liminal_platform": {
+        "page": "/liminal-platform",
+        "ws": "/liminal-platform/ws",
+        "static_url": "/static/games/liminal-platform",
+        "server_dir": "/app/games/liminal_platform"
+      },
+      "avatar_lobby": {
+        "page": "/avatar-lobby",
+        "ws": "/avatar-lobby/ws",
+        "static_url": "/static/games/avatar-lobby",
+        "server_dir": "/app/games/avatar_lobby"
+      }
+    }
+  }
+}

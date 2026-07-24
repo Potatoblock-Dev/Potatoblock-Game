@@ -61,6 +61,8 @@ async def liminal_platform_page(request: Request, identity=Depends(get_optional_
         return RedirectResponse(url="/login?next=/liminal-platform", status_code=302)
     user_id, nickname = identity
     nickname = await _resolve_nickname(str(user_id), nickname)
+    host = str(request.url.hostname or "").lower()
+    lp_local_debug = host in ("localhost", "127.0.0.1", "::1")
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -68,6 +70,7 @@ async def liminal_platform_page(request: Request, identity=Depends(get_optional_
             "game": game_info,
             "user_id": user_id,
             "nickname": nickname,
+            "lp_local_debug": lp_local_debug,
         },
     )
 
