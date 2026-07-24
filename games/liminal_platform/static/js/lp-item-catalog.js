@@ -343,57 +343,37 @@
       fireSoundVolume: 0.4,
     },
     /**
-     * 医疗箱：手部 3 号槽持有；对准自己或近距队友按开火键持续治疗（回血）。
-     * 足迹宽 1 × 高 2；耐久存 stack.dur。不用于濒死复活。
+     * 急救箱：手部 3 号槽（index 2，工具槽）持有；对准自己或近距队友按开火键持续治疗。
+     * 足迹宽 2 × 高 2；耐久存 stack.dur。
      */
     medkit: {
       id: 'medkit',
-      name: '医疗箱',
-      short: '医',
-      type: 'medical',
-      use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
-      icon: '/static/games/liminal-platform/img/items/medkit-icon.png?v=3',
-      color: '#7f1d1d',
-      accent: '#fca5a5',
-      maxStack: 1,
-      w: 1,
-      h: 2,
-      canHoldInHand: true,
-      handSlot: 2,
-      maxDurability: 40,
-      selfHealPerSec: 12,
-      allyHealPerSec: 28,
-      durCostPerSec: 8,
-      allyRange: 150,
-      selfAimRadius: 72,
-      allyAimRadius: 88,
-      /** 持续治疗用；不可整箱复活。 */
-      canHeal: true,
-      canRevive: false,
-    },
-    /**
-     * 急救箱：手部 3 号槽持有；对准濒死队友开火消耗整箱复活。
-     * 足迹宽 2 × 高 2。不提供持续回血。
-     */
-    first_aid_kit: {
-      id: 'first_aid_kit',
       name: '急救箱',
       short: '救',
       type: 'medical',
-      use: '濒死救援专用。对准倒地队友按开火，消耗整箱将其拉起——平时包扎请用医疗箱。',
-      icon: '/static/games/liminal-platform/img/items/first-aid-kit-icon.png?v=1',
-      color: '#991b1b',
-      accent: '#fde047',
+      use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
+      icon: '/static/games/liminal-platform/img/items/medkit-icon.png?v=2',
+      color: '#7f1d1d',
+      accent: '#fca5a5',
       maxStack: 1,
       w: 2,
       h: 2,
       canHoldInHand: true,
+      /** 仅手部 3 号（utility index 2）；主手 0/1 仍只收武器。 */
       handSlot: 2,
+      maxDurability: 40,
+      /** 自疗回复（HP/秒）。 */
+      selfHealPerSec: 12,
+      /** 近距队友回复（HP/秒，快于自疗）。 */
+      allyHealPerSec: 28,
+      /** 持续使用时耐久消耗（点/秒）。 */
+      durCostPerSec: 8,
+      /** 可治疗队友的最大距离（世界像素）。 */
       allyRange: 150,
+      /** 瞄准点落在自身附近视为自疗。 */
       selfAimRadius: 72,
+      /** 瞄准点落在队友附近视为队友治疗。 */
       allyAimRadius: 88,
-      canHeal: false,
-      canRevive: true,
     },
   };
 
@@ -550,21 +530,10 @@
     return Boolean(item && item.type === 'ammo');
   }
 
-  /** 是否为医疗箱（持续回血）。 */
+  /** 是否为医疗箱（可持用治疗）。 */
   function isMedkit(itemOrId) {
     const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
-    return Boolean(item && item.id === 'medkit');
-  }
-
-  /** 是否为急救箱（濒死整箱复活）。 */
-  function isFirstAidKit(itemOrId) {
-    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
-    return Boolean(item && item.id === 'first_aid_kit');
-  }
-
-  /** 手部医疗类工具（医疗箱或急救箱）。 */
-  function isMedicalTool(itemOrId) {
-    return isMedkit(itemOrId) || isFirstAidKit(itemOrId);
+    return Boolean(item && (item.id === 'medkit' || item.type === 'medical'));
   }
 
   /**
@@ -604,8 +573,6 @@
     iconFollowsRot,
     isAmmo,
     isMedkit,
-    isFirstAidKit,
-    isMedicalTool,
     isFullAuto,
     getWeaponId,
     weaponAcceptsAmmo,
