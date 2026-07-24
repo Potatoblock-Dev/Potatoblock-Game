@@ -66,11 +66,31 @@
   const MIN_ENGAGE_BARREL_SCALE = 1.25;
   /** 独立炮管贴图（炮口朝 +X；整图绘制，禁止从 guard-car 裁切）。 */
   const BARREL_URL = '/static/games/liminal-platform/img/cars/guard-barrel.png?v=12';
-  const SHOT_SFX = '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1';
+  /**
+   * 机炮单发（BV1HQW9e3Eoo 01:34–01:41；见 autocannon-fire.PROCESSING.txt）。
+   * 卫士只用这一轨；远近仅靠 LpSfx soft distanceMul 调音量，不分 near/far clip。
+   */
+  const SHOT_SFX =
+    '/static/games/liminal-platform/audio/weapons/autocannon-fire.wav?v=5';
   /** 开完一发后的装弹机装填（CC0）。 */
   const FEED_SFX = '/static/games/liminal-platform/audio/weapons/guard-turret-feed.wav?v=1';
   /** 装填音相对枪声的延迟（秒），贴近「打完再进弹」。 */
   const FEED_SFX_DELAY = 0.05;
+  /** 大幅转管：钉枪启动拆成 intro → loop → outro（见 turret-rotate.PROCESSING.txt）。 */
+  const ROTATE_INTRO_SFX =
+    '/static/games/liminal-platform/audio/turret-rotate-intro.wav?v=1';
+  const ROTATE_LOOP_SFX =
+    '/static/games/liminal-platform/audio/turret-rotate-loop.wav?v=1';
+  const ROTATE_OUTRO_SFX =
+    '/static/games/liminal-platform/audio/turret-rotate-outro.wav?v=1';
+  /** 转管三段式基础音量（再乘 heavyDistanceMul）。 */
+  const ROTATE_SFX_VOL = 0.52;
+  /**
+   * 大幅转向滞回：剩余角 ≥ ENTER 进入 bout；≤ EXIT 结束。
+   * 避开跟踪微抖；TURN_RATE≈150°/s 时 22° 约需 0.15s 满转。
+   */
+  const LARGE_ROTATE_ENTER = (22 * Math.PI) / 180;
+  const LARGE_ROTATE_EXIT = (5 * Math.PI) / 180;
   /**
    * 闲置朝向：各塔朝车厢外侧（左塔← / 右塔→），避免闲置炮管指向货箱或友塔。
    */
@@ -163,6 +183,26 @@
     recycleInv: null,
     /** 本机最近一次瞄准世界坐标（供准星门控着色在炮管回转时仍可查询）。 */
     lastAim: { x: 0, y: 0, valid: false },
+    /**
+     * 大幅转管音效：全局单床（intro→loop→outro 不可叠层）。
+     * want[] 按塔滞回；owner 为当前可闻床归属（最近听者 / sticky）。
+     * @type {{
+     *   want: Record<'left'|'right', boolean>,
+     *   owner: 'left'|'right'|null,
+     *   phase: 'idle'|'intro'|'loop'|'outro',
+     *   token: number,
+     *   introTimer: ReturnType<typeof setTimeout>|null,
+     *   outroTimer: ReturnType<typeof setTimeout>|null,
+     * }}
+     */
+    rotateSfx: {
+      want: { left: false, right: false },
+      owner: null,
+      phase: 'idle',
+      token: 0,
+      introTimer: null,
+      outroTimer: null,
+    },
   };
 
   /** 读取或新建弹药箱 / 回收箱库存；本机 crate 若含 belts 且 LpArmedAmmo 尚无数据则迁移灌入。 */
@@ -550,7 +590,13 @@
     }
     state.manned = id;
     document.body.classList.add('lp-turret-mode');
-    window.LpSfx?.preload?.([SHOT_SFX, FEED_SFX]);
+    window.LpSfx?.preload?.([
+      SHOT_SFX,
+      FEED_SFX,
+      ROTATE_INTRO_SFX,
+      ROTATE_LOOP_SFX,
+      ROTATE_OUTRO_SFX,
+    ]);
     const soloHint = operatorCount() <= 1 ? '（双联）' : '';
     window.LiminalInteract?.showToast?.(
       (id === 'left' ? '进入左侧炮塔' : '进入右侧炮塔') + soloHint
@@ -852,20 +898,25 @@
   }
 
   /**
-   * 回收箱已满时的抛壳视觉：从枪口偏后散落（不飞入黄箱、不入库存）。
+   * 回收箱已满时的抛壳视觉：沿枪管朝向外抛（可落车外轨面；不飞入黄箱、不入库存）。
    * 复用 LpCombat 弹壳粒子，避免卫士侧再维护一套 casings。
    */
   function spawnCasingFx(originX, originY, dirX, dirY) {
     const item = Catalog?.getItem?.(CASING_ID) || null;
     const fxItem = {
-      shellEjectSpeed: item?.shellEjectSpeed || { forward: -55, up: 165 },
+      shellEjectSpeed: item?.shellEjectSpeed || {
+        forward: 340,
+        up: 110,
+        side: 48,
+      },
       shellCasingScale: item?.shellCasingScale ?? 1.2,
     };
     const len = Math.hypot(dirX, dirY) || 1;
     const fx = dirX / len;
     const fy = dirY / len;
-    const ejectX = originX - fx * 16;
-    const ejectY = originY - fy * 16;
+    /* 略靠枪口后方弹出，初速仍沿枪口向外。 */
+    const ejectX = originX - fx * 10;
+    const ejectY = originY - fy * 10;
     window.LpCombat?.spawnShellCasing?.(ejectX, ejectY, fx, fy, fxItem);
   }
 
@@ -1196,28 +1247,229 @@
   }
 
   /**
-   * 在枪口世界坐标播放机炮开火+进弹音（经 LpSfx：同车厢满音量，否则距离衰减）。
+   * 在枪口世界坐标播放机炮开火+进弹音（同一 autocannon-fire buffer）。
+   * 同车厢：LpSfx sameCarriage 短路满音；跨车/车外：soft distanceMul 只衰减音量。
+   * 开火不用 heavyDistanceMul（转管专用；MAX≈1 节会过早静音）。
    * @param {number} x
    * @param {number} y
    */
   function playTurretFireSfxAt(x, y) {
     if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const listener = window.LpGame?.getLocalAvatar?.();
+    const sameCar = !!(
+      listener &&
+      Number.isFinite(listener.x) &&
+      window.LpSfx?.sameCarriage?.(x, listener.x)
+    );
     window.LpSfx?.play?.(SHOT_SFX, {
-      volume: 0.45,
+      volume: 0.50,
       rateJitter: 0.06,
-      playbackRate: 0.82,
+      playbackRate: 0.96,
       x,
       y,
+      heavy: false,
     });
     window.setTimeout(() => {
       window.LpSfx?.play?.(FEED_SFX, {
-        volume: 0.55,
+        volume: sameCar ? 0.55 : 0.38,
         rateJitter: 0.03,
         playbackRate: 1,
         x,
         y,
+        heavy: false,
       });
     }, Math.round(FEED_SFX_DELAY * 1000));
+  }
+
+  /** 全局转管 loop 键（左右共用，本地听者最多一床）。 */
+  const ROTATE_LOOP_KEY = 'turret-rotate';
+  /** intro/outro 互斥 one-shot 键（同键新播停旧，防钉枪叠层）。 */
+  const ROTATE_ONESHOT_KEY = 'turret-rotate-oneshot';
+
+  /** 塔枢轴世界坐标（转管音效声源点）。 */
+  function turretPivotWorld(turretId) {
+    const id = turretId === 'right' ? 'right' : 'left';
+    const pivot = ART_PIVOTS.find((p) => p.id === id) || ART_PIVOTS[0];
+    return artToWorld(pivot.x, pivot.y);
+  }
+
+  /** 清除转管 intro/outro 定时器（换 bout 或硬停时）。 */
+  function clearRotateSfxTimers() {
+    const st = state.rotateSfx;
+    if (st.introTimer != null) {
+      window.clearTimeout(st.introTimer);
+      st.introTimer = null;
+    }
+    if (st.outroTimer != null) {
+      window.clearTimeout(st.outroTimer);
+      st.outroTimer = null;
+    }
+  }
+
+  /**
+   * 在候选塔中选可闻床归属：当前 owner 仍候选则 sticky；否则取距听者最近。
+   * @param {Array<'left'|'right'>} candidates
+   * @returns {'left'|'right'|null}
+   */
+  function pickRotateOwner(candidates) {
+    if (!candidates.length) return null;
+    const st = state.rotateSfx;
+    if (st.owner && candidates.includes(st.owner)) return st.owner;
+    const avatar = window.LpGame?.getLocalAvatar?.();
+    const lx = avatar && Number.isFinite(avatar.x) ? avatar.x : 0;
+    const ly = avatar && Number.isFinite(avatar.y) ? avatar.y : 0;
+    let best = candidates[0];
+    let bestD = Infinity;
+    for (const id of candidates) {
+      const p = turretPivotWorld(id);
+      const d = Math.hypot(p.x - lx, p.y - ly);
+      if (d < bestD) {
+        bestD = d;
+        best = id;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * 开始或抢占大幅转管音：全局单床；steal 时若原在 loop 则跳过 intro 直切 loop。
+   * @param {'left'|'right'} turretId
+   * @param {{ skipIntro?: boolean }} [opts]
+   */
+  function beginLargeRotateSfx(turretId, opts = {}) {
+    const id = turretId === 'right' ? 'right' : 'left';
+    const st = state.rotateSfx;
+    if (st.owner === id && (st.phase === 'intro' || st.phase === 'loop')) return;
+
+    const skipIntro = Boolean(opts.skipIntro);
+    clearRotateSfxTimers();
+    window.LpSfx?.stopLoop?.(ROTATE_LOOP_KEY, { fadeOut: 0.05 });
+    const token = (st.token += 1);
+    st.owner = id;
+
+    if (skipIntro) {
+      st.phase = 'loop';
+      const pos = turretPivotWorld(id);
+      window.LpSfx?.startLoop?.(ROTATE_LOOP_SFX, {
+        key: ROTATE_LOOP_KEY,
+        replace: true,
+        volume: ROTATE_SFX_VOL,
+        fadeIn: 0.04,
+        x: pos.x,
+        y: pos.y,
+        heavy: true,
+      });
+      return;
+    }
+
+    st.phase = 'intro';
+    const world = turretPivotWorld(id);
+    const introStartedAt = performance.now();
+    window.LpSfx?.play?.(ROTATE_INTRO_SFX, {
+      key: ROTATE_ONESHOT_KEY,
+      volume: ROTATE_SFX_VOL,
+      x: world.x,
+      y: world.y,
+      heavy: true,
+    });
+    /** intro 播完后切入 loop；delay 相对 intro 起播时刻，避免 await load 拖长。 */
+    const startLoopAfterIntro = (delayMs) => {
+      st.introTimer = window.setTimeout(() => {
+        st.introTimer = null;
+        if (st.token !== token || st.phase !== 'intro' || st.owner !== id) return;
+        st.phase = 'loop';
+        const pos = turretPivotWorld(id);
+        window.LpSfx?.startLoop?.(ROTATE_LOOP_SFX, {
+          key: ROTATE_LOOP_KEY,
+          replace: true,
+          volume: ROTATE_SFX_VOL,
+          fadeIn: 0.04,
+          x: pos.x,
+          y: pos.y,
+          heavy: true,
+        });
+      }, Math.max(0, delayMs));
+    };
+    const bufP = window.LpSfx?.load?.(ROTATE_INTRO_SFX);
+    if (bufP && typeof bufP.then === 'function') {
+      bufP.then((buf) => {
+        if (st.token !== token || st.phase !== 'intro') return;
+        const durMs = (buf?.duration > 0 ? buf.duration : 0.55) * 1000;
+        const elapsed = performance.now() - introStartedAt;
+        startLoopAfterIntro(durMs - elapsed);
+      });
+    } else {
+      startLoopAfterIntro(550);
+    }
+  }
+
+  /**
+   * 结束全局转管床：停 loop，互斥播 outro，回到 idle。
+   */
+  function endLargeRotateSfx() {
+    const st = state.rotateSfx;
+    if (st.phase !== 'intro' && st.phase !== 'loop') return;
+    const endOwner = st.owner;
+    clearRotateSfxTimers();
+    window.LpSfx?.stopLoop?.(ROTATE_LOOP_KEY, { fadeOut: 0.05 });
+    st.owner = null;
+    st.phase = 'outro';
+    const token = (st.token += 1);
+    const world = turretPivotWorld(endOwner || 'left');
+    window.LpSfx?.play?.(ROTATE_OUTRO_SFX, {
+      key: ROTATE_ONESHOT_KEY,
+      volume: ROTATE_SFX_VOL,
+      x: world.x,
+      y: world.y,
+      heavy: true,
+    });
+    st.outroTimer = window.setTimeout(() => {
+      st.outroTimer = null;
+      if (st.token !== token) return;
+      if (st.phase === 'outro') st.phase = 'idle';
+    }, 320);
+  }
+
+  /**
+   * 每帧：按各塔剩余转角滞回更新 want，选唯一 owner 驱动 intro/loop/outro。
+   */
+  function tickRotateSfx() {
+    const st = state.rotateSfx;
+    for (const pivot of ART_PIVOTS) {
+      const id = pivot.id === 'right' ? 'right' : 'left';
+      const remaining = angleDist(state.angles[id], state.targetAngles[id]);
+      st.want[id] = st.want[id]
+        ? remaining > LARGE_ROTATE_EXIT
+        : remaining >= LARGE_ROTATE_ENTER;
+    }
+    /** @type {Array<'left'|'right'>} */
+    const candidates = [];
+    if (st.want.left) candidates.push('left');
+    if (st.want.right) candidates.push('right');
+    const winner = pickRotateOwner(candidates);
+    const bedLive = st.phase === 'intro' || st.phase === 'loop';
+
+    if (!winner) {
+      if (bedLive) endLargeRotateSfx();
+      return;
+    }
+
+    if (!bedLive) {
+      beginLargeRotateSfx(winner);
+    } else if (st.owner !== winner) {
+      /* steal：原在 loop 则跳 intro；原在 intro 则重播 intro 一次（oneshot 键停旧）。 */
+      beginLargeRotateSfx(winner, { skipIntro: st.phase === 'loop' });
+    }
+
+    if (st.phase === 'loop' && st.owner) {
+      const world = turretPivotWorld(st.owner);
+      window.LpSfx?.updateLoop?.(ROTATE_LOOP_KEY, {
+        x: world.x,
+        y: world.y,
+        volume: ROTATE_SFX_VOL,
+        heavy: true,
+      });
+    }
   }
 
   /**
@@ -1317,6 +1569,7 @@
         );
       }
     }
+    tickRotateSfx();
     /* 入座时每帧同步准星空隙与双联门控色（炮管回转也会改变 canTurretFire）。 */
     if (state.manned) {
       window.LpCombat?.syncCrosshairBloom?.();

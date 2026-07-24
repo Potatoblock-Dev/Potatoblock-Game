@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request, WebSocket
@@ -27,6 +28,8 @@ from app.routers.auth import (
     get_optional_identity,
     get_passport_nickname,
 )
+
+_LOCAL_DEBUG_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 GAME_ROOT = Path(__file__).resolve().parent
 GAME_ID = "liminal_platform"
@@ -50,8 +53,22 @@ game_info = {
 
 
 async def _resolve_nickname(user_id: str, nickname: str | None) -> str:
+    """解析通行证昵称，缺省为旅人。"""
     passport = await get_passport_nickname(user_id)
     return passport or nickname or "旅人"
+
+
+def _is_local_debug_request(request: Request) -> bool:
+    """是否注入本地调试脚本：LP_LOCAL_DEBUG=1，或 Host/URL/对端为本机环回。"""
+    flag = os.environ.get("LP_LOCAL_DEBUG", "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    if flag in ("0", "false", "no", "off"):
+        return False
+    host_header = str(request.headers.get("host") or "").split(":", 1)[0].lower()
+    url_host = str(request.url.hostname or "").lower()
+    peer = str(request.client.host if request.client else "").lower()
+    return host_header in _LOCAL_DEBUG_HOSTS or url_host in _LOCAL_DEBUG_HOSTS or peer in _LOCAL_DEBUG_HOSTS
 
 
 @router.get("/liminal-platform", response_class=HTMLResponse)
@@ -61,8 +78,6 @@ async def liminal_platform_page(request: Request, identity=Depends(get_optional_
         return RedirectResponse(url="/login?next=/liminal-platform", status_code=302)
     user_id, nickname = identity
     nickname = await _resolve_nickname(str(user_id), nickname)
-    host = str(request.url.hostname or "").lower()
-    lp_local_debug = host in ("localhost", "127.0.0.1", "::1")
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -70,7 +85,7 @@ async def liminal_platform_page(request: Request, identity=Depends(get_optional_
             "game": game_info,
             "user_id": user_id,
             "nickname": nickname,
-            "lp_local_debug": lp_local_debug,
+            "lp_local_debug": _is_local_debug_request(request),
         },
     )
 

@@ -50,30 +50,73 @@
    */
   const MOB_CLUSTER_LINK = 300;
   const MOB_CLUSTER_MIN = 2;
-  /** 集群标：绿色方块边长（CSS 像素）。 */
-  const CLUSTER_MARK_PX = 8;
+  /**
+   * PPI 屏幕元素比例（相对 ~560–600px 示波器）：
+   * 接触点 < 集群方块 < 敌方框 ≈ 月台半宽；轨半宽不超过集群；矢量不压过标。
+   */
+  const CLUSTER_MARK_PX = 6.5;
+  /** 敌方接触方框边长（CSS 像素）。 */
+  const HOSTILE_MARK_PX = 8;
+  /** 普通接触圆点半径（CSS 像素）。 */
+  const CONTACT_DOT_R_PX = 3;
   /** 上/下划线相对方块外缘的间隙与线长余量（CSS 像素）。 */
-  const CLUSTER_BAR_GAP_PX = 2;
+  const CLUSTER_BAR_GAP_PX = 1.5;
   const CLUSTER_BAR_PAD_PX = 1;
+  /** 站心十字半臂 / PPI 圆相对画布内缩（给外侧钟点字留边）。 */
+  const STATION_CROSS_HALF_PX = 5;
+  const PPI_RADIUS_INSET_PX = 14;
+  /** 编组/接触/月台图例字号；TRACK/方位主刻度略大一档。 */
+  const SCOPE_LABEL_FONT_PX = 8;
+  const SCOPE_LEGEND_FONT_PX = 9;
   /**
    * 速度矢量：世界速度 × 秒数 → 示波器位移（再 × scale 成像素）。
    * 低于 VECTOR_MIN_SPEED 不画；屏幕长度夹在 [VECTOR_MIN_PX, VECTOR_MAX_PX]。
    */
   const VECTOR_LEAD_S = 3.5;
   const VECTOR_MIN_SPEED = 18;
-  const VECTOR_MIN_PX = 7;
-  const VECTOR_MAX_PX = 40;
+  const VECTOR_MIN_PX = 6;
+  const VECTOR_MAX_PX = 28;
   /**
    * 本列俯视车体比例：沿轨长度 / 车宽。
-   * 旧 beam=length×0.28（≈3.6:1）过胖；现 ≈7.4:1，更接近窄长车厢。
+   * 旧 beam=length×0.28（≈3.6:1）过胖；现 ≈8.3:1，更接近窄长车厢。
    */
-  const OWN_CAR_BEAM_RATIO = 0.135;
+  const OWN_CAR_BEAM_RATIO = 0.12;
   /**
    * 单节车厢屏幕可读下限（CSS 像素）。
    * 沿轨长度或车宽任一项低于此 → 整列改画一条统一矩形（避免缩成难辨碎块）。
    */
-  const OWN_CAR_MIN_LENGTH_PX = 12;
-  const OWN_CAR_MIN_BEAM_PX = 3.5;
+  const OWN_CAR_MIN_LENGTH_PX = 10;
+  const OWN_CAR_MIN_BEAM_PX = 3;
+  /**
+   * 单节车厢屏幕上限（CSS 像素）；近距量程下按比例整体缩小，避免盖过集群/月台标。
+   * 不改世界尺寸，仅限制 PPI 观感。
+   */
+  const OWN_CAR_MAX_LENGTH_PX = 44;
+  const OWN_CAR_MAX_BEAM_PX = 7;
+  /** 绘轨本车相对其它节的屏幕放大（观感强调，非世界尺寸）。 */
+  const OWN_SCOPE_LENGTH_BOOST = 1.04;
+  const OWN_SCOPE_BEAM_BOOST = 1.06;
+  /**
+   * 月台标半宽/半高：BASE + BOOST×scale，再夹 MAX。
+   * 旧式 max(5, 10×scale×40) 近距过大。
+   */
+  const PLATFORM_HALF_W_BASE_PX = 6;
+  const PLATFORM_HALF_H_BASE_PX = 3.5;
+  const PLATFORM_HALF_W_MAX_PX = 11;
+  const PLATFORM_HALF_H_MAX_PX = 6.5;
+  const PLATFORM_SCALE_BOOST = 80;
+  /**
+   * 轨带半宽（CSS 像素）夹制；世界参考半宽 × scale 后再夹。
+   * 旧 max(3, 22×scale) 近距偏粗、远距贴下限。
+   */
+  const TRACK_WORLD_HALF = 15;
+  const TRACK_HALF_MIN_PX = 2.25;
+  const TRACK_HALF_MAX_PX = 5;
+  /** 折线轨填充描边夹制；中心亮线固定细线。 */
+  const TRACK_STROKE_MIN_PX = 2.75;
+  const TRACK_STROKE_MAX_PX = 5.5;
+  const TRACK_POLY_FILL_MULT = 1.3;
+  const TRACK_CENTERLINE_PX = 1.25;
   /** 搜索雷达角速度（rad/s）；满圈约 2π/1.35 ≈ 4.65s。 */
   const SEARCH_SWEEP_RAD_PER_S = 1.35;
   /** 搜索雷达满圈周期（ms）；由角速度推导，扫速变更时自动同步。 */
@@ -93,6 +136,19 @@
   const BLIP_FADE_MS = SEARCH_PERIOD_MS * 1.08;
   /** 扫描线命中半宽（弧度）；方位落在此内或本帧扫过即涂磷光。 */
   const SWEEP_HIT_HALF_RAD = 0.04;
+  /**
+   * 圆形搜索扫描命中目标时的声呐 ping（三段轮播）。
+   * 扇区快扫不播；处理说明见 static/audio/radar-sonar.PROCESSING.txt。
+   */
+  const SONAR_SFX_URLS = [
+    '/static/games/liminal-platform/audio/radar-sonar-a.wav?v=1',
+    '/static/games/liminal-platform/audio/radar-sonar-b.wav?v=1',
+    '/static/games/liminal-platform/audio/radar-sonar-c.wav?v=1',
+  ];
+  /** 声呐 UI 音量（ambient，不衰减）。 */
+  const SONAR_SFX_VOLUME = 0.48;
+  /** 多目标同帧/近邻命中时的全局最短间隔（ms），防刷屏。 */
+  const SONAR_PING_COOLDOWN_MS = 90;
   /** 量程档位 localStorage 键（关面板 / 刷新后仍保留）。 */
   const RANGE_STORAGE_KEY = 'lp-radar-range-v1';
   /** 未持久化或无效时的默认量程档。 */
@@ -125,6 +181,17 @@
    * }>}
    */
   let phosphorBlips = new Map();
+  /**
+   * 当前搜索雷达一圈内已播过声呐的目标 key（每目标每圈最多一次）。
+   * @type {Set<string>}
+   */
+  let sonarPingedThisPass = new Set();
+  /** 上次搜索圈序号；变化时清空 sonarPingedThisPass。 */
+  let sonarSearchPass = -1;
+  /** 声呐三段轮播下标。 */
+  let sonarSfxIndex = 0;
+  /** 上次成功播放声呐的时间戳（ms）。 */
+  let lastSonarPingAt = 0;
   /** 锁定扇区角平分线（canvas 弧度，0 = 右，顺时针为正）。 */
   let lockAimAngle = -Math.PI / 2;
   let mouseAimActive = false;
@@ -208,6 +275,80 @@
   }
 
   /**
+   * 世界车体尺寸 × PPI scale → 屏幕长宽；等比夹到 [MIN, MAX]，近距不盖过集群/月台。
+   * @param {number} lengthWorld
+   * @param {number} beamWorld
+   * @param {number} scale
+   * @returns {{ lengthPx: number, beamPx: number }}
+   */
+  function clampCarScreenSize(lengthWorld, beamWorld, scale) {
+    return clampOwnCarScreenSize(lengthWorld * scale, beamWorld * scale);
+  }
+
+  /**
+   * 已换算到屏幕像素的车体长宽 → 等比夹到 [MIN, MAX]。
+   * @param {number} lengthPx
+   * @param {number} beamPx
+   * @returns {{ lengthPx: number, beamPx: number }}
+   */
+  function clampOwnCarScreenSize(lengthPx, beamPx) {
+    const shrink = Math.min(
+      1,
+      OWN_CAR_MAX_LENGTH_PX / Math.max(1e-6, lengthPx),
+      OWN_CAR_MAX_BEAM_PX / Math.max(1e-6, beamPx),
+    );
+    return {
+      lengthPx: Math.max(OWN_CAR_MIN_LENGTH_PX, lengthPx * shrink),
+      beamPx: Math.max(OWN_CAR_MIN_BEAM_PX, beamPx * shrink),
+    };
+  }
+
+  /**
+   * 轨带半宽（像素）：世界参考半宽 × scale 后夹制，避免近粗远糊。
+   * @param {number} scale
+   */
+  function trackHalfPx(scale) {
+    return Math.min(
+      TRACK_HALF_MAX_PX,
+      Math.max(TRACK_HALF_MIN_PX, TRACK_WORLD_HALF * scale),
+    );
+  }
+
+  /**
+   * 折线轨底描边宽度（像素）。
+   * @param {number} trackHalf
+   */
+  function trackStrokePx(trackHalf) {
+    return Math.min(
+      TRACK_STROKE_MAX_PX,
+      Math.max(TRACK_STROKE_MIN_PX, trackHalf * TRACK_POLY_FILL_MULT),
+    );
+  }
+
+  /**
+   * 月台标半宽/半高（像素）：基准 + 轻度随量程放大，再夹上限。
+   * @param {number} scale
+   * @returns {{ hw: number, hh: number }}
+   */
+  function platformMarkHalfPx(scale) {
+    const hw = Math.min(
+      PLATFORM_HALF_W_MAX_PX,
+      Math.max(
+        PLATFORM_HALF_W_BASE_PX,
+        PLATFORM_HALF_W_BASE_PX + PLATFORM_SCALE_BOOST * scale * 0.55,
+      ),
+    );
+    const hh = Math.min(
+      PLATFORM_HALF_H_MAX_PX,
+      Math.max(
+        PLATFORM_HALF_H_BASE_PX,
+        PLATFORM_HALF_H_BASE_PX + PLATFORM_SCALE_BOOST * scale * 0.32,
+      ),
+    );
+    return { hw, hh };
+  }
+
+  /**
    * 绘制俯视车体矩形（填充 + 描边）；调用前须已 translate 到车心。
    * @param {number} lengthPx
    * @param {number} beamPx
@@ -217,7 +358,7 @@
   function strokeTrainBodyRect(lengthPx, beamPx, stroke, fill) {
     ctx.strokeStyle = stroke;
     ctx.fillStyle = fill;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.25;
     ctx.beginPath();
     ctx.rect(-beamPx / 2, -lengthPx / 2, beamPx, lengthPx);
     ctx.fill();
@@ -254,8 +395,8 @@
     if (n < 1 || !(uMax > uMin)) return;
     const uMid = (uMin + uMax) / 2;
     const vMid = vSum / n;
-    const lengthPx = Math.max(OWN_CAR_MIN_LENGTH_PX, (uMax - uMin) * scale);
-    const beamPx = Math.max(OWN_CAR_MIN_BEAM_PX, beamWorld * scale * 1.05);
+    const sized = clampCarScreenSize(uMax - uMin, beamWorld * 1.05, scale);
+    const { lengthPx, beamPx } = sized;
     const scr = headingToScreen(uMid, vMid, cx, cy, scale);
     ctx.save();
     ctx.translate(scr.x, scr.y);
@@ -266,11 +407,80 @@
       'rgba(80, 255, 120, 0.35)',
     );
     ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
-    ctx.font = '9px ui-monospace, monospace';
+    ctx.font = `${SCOPE_LABEL_FONT_PX}px ui-monospace, monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('编组', beamPx / 2 + 4, 0);
+    ctx.fillText('编组', beamPx / 2 + 3, 0);
     ctx.restore();
+  }
+
+  /**
+   * 绘制可拐弯铁轨折线（世界点 → PPI）；双线轨 guage。
+   * @param {Array<{ x: number, y: number }>} points
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} forwardSign
+   * @param {number} trackHalf
+   */
+  function paintTrackPolyline(points, cx, cy, scale, forwardSign, trackHalf) {
+    const screen = [];
+    for (const p of points) {
+      const sc = worldToScope(p.x, p.y);
+      if (Math.hypot(sc.x, sc.y) > rangeWorld * 1.35) continue;
+      screen.push(scopeToPpi(sc.x, sc.y, cx, cy, scale, forwardSign));
+    }
+    if (screen.length < 2) return;
+    ctx.strokeStyle = 'rgba(60, 200, 100, 0.18)';
+    ctx.lineWidth = trackStrokePx(trackHalf);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(screen[0].x, screen[0].y);
+    for (let i = 1; i < screen.length; i += 1) {
+      ctx.lineTo(screen[i].x, screen[i].y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(100, 255, 140, 0.62)';
+    ctx.lineWidth = TRACK_CENTERLINE_PX;
+    ctx.beginPath();
+    ctx.moveTo(screen[0].x, screen[0].y);
+    for (let i = 1; i < screen.length; i += 1) {
+      ctx.lineTo(screen[i].x, screen[i].y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(120, 255, 160, 0.42)';
+    ctx.font = `${SCOPE_LEGEND_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TRACK', screen[screen.length - 1].x + 6, screen[screen.length - 1].y);
+  }
+
+  /**
+   * 绘制月台 PPI 标（基准 + 轻度随量程，夹上限；近距不再巨型）。
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} scale
+   * @param {number} forwardSign
+   */
+  function paintPlatformBlip(cx, cy, scale, forwardSign) {
+    const blip = window.LpPlatform?.getRadarPlatformBlip?.();
+    if (!blip || !Number.isFinite(blip.x)) return;
+    const sc = worldToScope(blip.x, blip.y);
+    if (Math.hypot(sc.x, sc.y) > rangeWorld * 1.05) return;
+    const scr = scopeToPpi(sc.x, sc.y, cx, cy, scale, forwardSign);
+    const docked = Boolean(window.LpPlatform?.isAtPlatform?.());
+    ctx.fillStyle = docked ? 'rgba(220, 220, 230, 0.95)' : 'rgba(180, 200, 210, 0.85)';
+    ctx.strokeStyle = 'rgba(40, 50, 60, 0.8)';
+    ctx.lineWidth = 1;
+    const { hw, hh } = platformMarkHalfPx(scale);
+    ctx.fillRect(scr.x - hw, scr.y - hh, hw * 2, hh * 2);
+    ctx.strokeRect(scr.x - hw, scr.y - hh, hw * 2, hh * 2);
+    ctx.fillStyle = 'rgba(200, 220, 230, 0.9)';
+    ctx.font = `${SCOPE_LABEL_FONT_PX}px ui-monospace, monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(blip.label || '月台', scr.x + hw + 3, scr.y);
   }
 
   /** 轨道在示波器上的参考 Y（本车高度附近的「轨面」带）。 */
@@ -333,15 +543,15 @@
     return Math.atan2(-h.u, h.v);
   }
 
-  /** 按外壳宽度调整 canvas 像素尺寸，保持 PPI 圆形；右侧量程档预留约 78px。 */
+  /** 按外壳宽度调整 canvas 像素尺寸，保持 PPI 圆形；量程档 + 边距尽量让圆占主导。 */
   function resizeCanvas() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const shell = root.querySelector('.lp-radar-shell');
     const gear = root.querySelector('.lp-radar-gear');
     const basis = shell?.clientWidth || root.clientWidth;
-    const gearW = gear?.offsetWidth || 84;
-    const avail = Math.max(200, Math.floor(basis - gearW - 56));
-    const css = Math.min(560, Math.max(220, avail));
+    const gearW = gear?.offsetWidth || 72;
+    const avail = Math.max(180, Math.floor(basis - gearW - 36));
+    const css = Math.min(600, Math.max(200, avail));
     canvas.style.width = `${css}px`;
     canvas.style.height = `${css}px`;
     canvas.width = Math.round(css * dpr);
@@ -563,10 +773,10 @@
   function paintBearingLabels(cx, cy, radius, forwardSign) {
     const zero = forwardCanvasAngle(forwardSign);
     const tickOuter = radius;
-    const tickInnerMajor = radius - 10;
-    const tickInnerMinor = radius - 6;
-    const clockR = radius + 11;
-    const degR = radius - 18;
+    const tickInnerMajor = radius - 8;
+    const tickInnerMinor = radius - 5;
+    const clockR = radius + 12;
+    const degR = radius - 16;
 
     ctx.strokeStyle = 'rgba(140, 255, 170, 0.55)';
     ctx.fillStyle = 'rgba(170, 255, 190, 0.92)';
@@ -579,15 +789,15 @@
       const sin = Math.sin(ang);
       const major = deg % 90 === 0;
       const inner = major ? tickInnerMajor : tickInnerMinor;
-      ctx.lineWidth = major ? 1.5 : 1;
+      ctx.lineWidth = major ? 1.35 : 0.9;
       ctx.beginPath();
       ctx.moveTo(cx + cos * inner, cy + sin * inner);
       ctx.lineTo(cx + cos * tickOuter, cy + sin * tickOuter);
       ctx.stroke();
 
       ctx.font = major
-        ? '10px ui-monospace, SFMono-Regular, Menlo, monospace'
-        : '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ? `${SCOPE_LEGEND_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`
+        : `${SCOPE_LABEL_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
       const degLabel = deg === 0 ? '0°' : `${deg}°`;
       ctx.fillText(degLabel, cx + cos * degR, cy + sin * degR);
     }
@@ -598,7 +808,7 @@
       { hour: 6, deg: 180 },
       { hour: 9, deg: 270 },
     ];
-    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
     ctx.fillStyle = 'rgba(200, 255, 210, 0.95)';
     for (const c of clocks) {
       const ang = zero + (c.deg * Math.PI) / 180;
@@ -791,12 +1001,48 @@
   }
 
   /**
+   * 由动画时钟推导搜索雷达当前圈序号（满圈 +1）。
+   * @param {number} now
+   */
+  function searchSweepPassIndex(now) {
+    return Math.floor(((now / 1000) * SEARCH_SWEEP_RAD_PER_S) / (Math.PI * 2));
+  }
+
+  /**
+   * 圆形搜索线首次命中某目标时播一声呐（边沿；每目标每圈一次；全局冷却）。
+   * 扇区快扫不调用。副作用：轮播下标、冷却时间、pinged 集合。
+   * @param {string} key
+   * @param {number} now
+   */
+  function tryPlaySearchSonarPing(key, now) {
+    const pass = searchSweepPassIndex(now);
+    if (pass !== sonarSearchPass) {
+      sonarSearchPass = pass;
+      sonarPingedThisPass = new Set();
+    }
+    if (sonarPingedThisPass.has(key)) return;
+    sonarPingedThisPass.add(key);
+    if (now - lastSonarPingAt < SONAR_PING_COOLDOWN_MS) return;
+    const url = SONAR_SFX_URLS[sonarSfxIndex % SONAR_SFX_URLS.length];
+    sonarSfxIndex = (sonarSfxIndex + 1) % SONAR_SFX_URLS.length;
+    lastSonarPingAt = now;
+    window.LpSfx?.play?.(url, {
+      volume: SONAR_SFX_VOLUME,
+      ambient: true,
+      rateJitter: 0.02,
+    });
+  }
+
+  /**
    * 清空磷光表与扫描角历史（关面板时调用，避免残留）。
    */
   function clearPhosphorState() {
     phosphorBlips.clear();
     prevSearchSweep = null;
     prevSectorSweep = null;
+    sonarPingedThisPass = new Set();
+    sonarSearchPass = -1;
+    lastSonarPingAt = 0;
   }
 
   /**
@@ -880,6 +1126,7 @@
 
   /**
    * 按搜索线与锁定扇区快扫线更新磷光表（扫过才涂；扇区内两条线均可涂）。
+   * 圆形搜索首次涂覆时边沿触发声呐；扇区快扫只涂磷光不播。
    * @param {number} now
    * @param {number} forwardSign
    */
@@ -891,6 +1138,7 @@
       const bySector =
         inSector && sweepIlluminates(prevSectorSweep, sectorSweepAngle, t.bearing);
       if (!bySearch && !bySector) continue;
+      if (bySearch) tryPlaySearchSonarPing(t.key, now);
       paintPhosphorBlip(t, now);
     }
     prevSearchSweep = sweepAngle;
@@ -956,26 +1204,28 @@
     ctx.globalAlpha = alpha;
     ctx.translate(scr.x, scr.y);
     if (style === 'hostile') {
+      const half = HOSTILE_MARK_PX / 2;
       ctx.strokeStyle = '#ff6b4a';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(-5, -5, 10, 10);
+      ctx.lineWidth = 1.75;
+      ctx.strokeRect(-half, -half, HOSTILE_MARK_PX, HOSTILE_MARK_PX);
     } else if (style === 'train') {
-      const len = Math.max(8, (blip.length || 900) * scale);
-      const beam = Math.max(3, (blip.beam || 250) * scale);
+      const sized = clampCarScreenSize(blip.length || 900, blip.beam || 250, scale);
+      const len = sized.lengthPx;
+      const beam = sized.beamPx;
       ctx.fillStyle = '#7ec8ff';
       ctx.fillRect(-beam / 2, -len / 2, beam, len);
     } else {
       ctx.fillStyle = '#9dffb0';
       ctx.beginPath();
-      ctx.arc(0, 0, 3, 0, Math.PI * 2);
+      ctx.arc(0, 0, CONTACT_DOT_R_PX, 0, Math.PI * 2);
       ctx.fill();
     }
     if (blip.label && style !== 'train') {
       ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
-      ctx.font = '9px ui-monospace, monospace';
+      ctx.font = `${SCOPE_LABEL_FONT_PX}px ui-monospace, monospace`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(blip.label, 6, 0);
+      ctx.fillText(blip.label, HOSTILE_MARK_PX / 2 + 3, 0);
     }
     drawVelocityVector(blip.vx || 0, blip.vy || 0, scale, forwardSign);
     ctx.restore();
@@ -1016,10 +1266,10 @@
     ctx.lineTo(barHalf, barY);
     ctx.stroke();
     ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
-    ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.font = `${SCOPE_LABEL_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, half + 4, 0);
+    ctx.fillText(label, half + 3, 0);
     drawVelocityVector(blip.vx || 0, blip.vy || 0, scale, forwardSign);
     ctx.restore();
   }
@@ -1067,12 +1317,15 @@
       const p = worldToScope(car.x, car.y);
       if (Math.hypot(p.x, p.y) > rangeWorld * 1.05) continue;
       const scr = scopeToPpi(p.x, p.y, cx, cy, scale, forwardSign);
-      let length = Math.max(8, car.length * scale);
-      let beam = Math.max(3, car.beam * scale);
+      let lengthWorld = car.length;
+      let beamWorld = car.beam;
       if (car.kind === 'own-scope') {
-        length *= 1.08;
-        beam *= 1.12;
+        lengthWorld *= OWN_SCOPE_LENGTH_BOOST;
+        beamWorld *= OWN_SCOPE_BEAM_BOOST;
       }
+      const sized = clampCarScreenSize(lengthWorld, beamWorld, scale);
+      const length = sized.lengthPx;
+      const beam = sized.beamPx;
       ctx.save();
       ctx.translate(scr.x, scr.y);
       strokeTrainBodyRect(
@@ -1083,10 +1336,10 @@
       );
       if (car.label) {
         ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
-        ctx.font = '9px ui-monospace, monospace';
+        ctx.font = `${SCOPE_LABEL_FONT_PX}px ui-monospace, monospace`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(car.label, beam / 2 + 4, 0);
+        ctx.fillText(car.label, beam / 2 + 3, 0);
       }
       ctx.restore();
     }
@@ -1162,7 +1415,7 @@
     const cssH = canvas.clientHeight || 360;
     const cx = cssW / 2;
     const cy = cssH / 2;
-    const radius = Math.min(cx, cy) - 10;
+    const radius = Math.min(cx, cy) - PPI_RADIUS_INSET_PX;
     const scale = radius / rangeWorld;
 
     refreshLockAimFromSticks();
@@ -1186,8 +1439,8 @@
     ctx.clip();
 
     /* 量程环 */
-    ctx.strokeStyle = 'rgba(80, 255, 120, 0.28)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(80, 255, 120, 0.22)';
+    ctx.lineWidth = 0.9;
     for (let i = 1; i <= 4; i += 1) {
       const r = (radius * i) / 4;
       ctx.beginPath();
@@ -1201,26 +1454,31 @@
     ctx.lineTo(cx + radius, cy);
     ctx.moveTo(cx, cy - radius);
     ctx.lineTo(cx, cy + radius);
-    ctx.strokeStyle = 'rgba(80, 255, 120, 0.22)';
+    ctx.strokeStyle = 'rgba(80, 255, 120, 0.18)';
     ctx.stroke();
 
-    /* 铁轨：过站心沿前进轴（12↔6）的俯视轨带 */
-    const trackHalf = Math.max(3, 22 * scale);
-    ctx.fillStyle = 'rgba(60, 200, 100, 0.12)';
-    ctx.fillRect(cx - trackHalf, cy - radius, trackHalf * 2, radius * 2);
-    ctx.strokeStyle = 'rgba(100, 255, 140, 0.55)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(cx - trackHalf, cy - radius);
-    ctx.lineTo(cx - trackHalf, cy + radius);
-    ctx.moveTo(cx + trackHalf, cy - radius);
-    ctx.lineTo(cx + trackHalf, cy + radius);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(120, 255, 160, 0.45)';
-    ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('TRACK', cx + trackHalf + 6, cy - radius + 14);
+    /* 铁轨：优先画可拐弯折线；无折线时回退直线轨带 */
+    const trackPoly = window.LpPlatform?.getRadarTrackPolyline?.() || [];
+    const trackHalf = trackHalfPx(scale);
+    if (trackPoly.length >= 2) {
+      paintTrackPolyline(trackPoly, cx, cy, scale, forwardSign, trackHalf);
+    } else {
+      ctx.fillStyle = 'rgba(60, 200, 100, 0.1)';
+      ctx.fillRect(cx - trackHalf, cy - radius, trackHalf * 2, radius * 2);
+      ctx.strokeStyle = 'rgba(100, 255, 140, 0.5)';
+      ctx.lineWidth = TRACK_CENTERLINE_PX;
+      ctx.beginPath();
+      ctx.moveTo(cx - trackHalf, cy - radius);
+      ctx.lineTo(cx - trackHalf, cy + radius);
+      ctx.moveTo(cx + trackHalf, cy - radius);
+      ctx.lineTo(cx + trackHalf, cy + radius);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(120, 255, 160, 0.4)';
+      ctx.font = `${SCOPE_LEGEND_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('TRACK', cx + trackHalf + 5, cy - radius + 12);
+    }
 
     /* 搜索雷达扫描线（满圈 ~4.65s） */
     sweepAngle = ((now / 1000) * SEARCH_SWEEP_RAD_PER_S) % (Math.PI * 2);
@@ -1261,14 +1519,17 @@
     /* 本列俯视编组（常显，不依赖扫描余晖） */
     paintOwnTrainTopDown(cx, cy, scale, forwardSign);
 
+    /* 月台标（路线前方 / 停靠） */
+    paintPlatformBlip(cx, cy, scale, forwardSign);
+
     /* 站心十字 = 本站（绘轨）；始终可见 */
     ctx.strokeStyle = 'rgba(220, 255, 230, 0.9)';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.35;
     ctx.beginPath();
-    ctx.moveTo(cx - 6, cy);
-    ctx.lineTo(cx + 6, cy);
-    ctx.moveTo(cx, cy - 6);
-    ctx.lineTo(cx, cy + 6);
+    ctx.moveTo(cx - STATION_CROSS_HALF_PX, cy);
+    ctx.lineTo(cx + STATION_CROSS_HALF_PX, cy);
+    ctx.moveTo(cx, cy - STATION_CROSS_HALF_PX);
+    ctx.lineTo(cx, cy + STATION_CROSS_HALF_PX);
     ctx.stroke();
 
     ctx.restore();
@@ -1297,7 +1558,7 @@
     raf = requestAnimationFrame(tick);
   }
 
-  /** 打开示波器；量程吸附到 RANGE_GEARS 档位。 */
+  /** 打开示波器；量程吸附到 RANGE_GEARS 档位；预热声呐缓冲。 */
   function openPanel() {
     if (open) return;
     open = true;
@@ -1306,6 +1567,7 @@
     root.hidden = false;
     root.setAttribute('aria-hidden', 'false');
     document.body.classList.add('lp-radar-panel-open');
+    window.LpSfx?.preload?.(SONAR_SFX_URLS);
     resizeCanvas();
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(tick);

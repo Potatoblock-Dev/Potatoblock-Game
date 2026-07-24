@@ -14,6 +14,7 @@
     ammo: '弹药',
     apparel: '服装',
     accessory: '配件',
+    facility: '设施',
   };
 
   const EQUIP_SLOT_LABELS = {
@@ -93,6 +94,15 @@
       w: 2,
       h: 1,
       canHoldInHand: true,
+      /** 选中手槽时在角色手上绘制（复用 icon，无单独 holdSprite）。 */
+      drawHeld: true,
+      icon: '/static/games/liminal-platform/img/items/wrench-icon.png?v=1',
+      gripOffset: { x: 20, y: -18 },
+      /* 256×96 贴图；握把在左侧，头朝右沿 facing */
+      holdDrawW: 52,
+      holdDrawH: 20,
+      holdPivotX: 12,
+      holdPivotY: 11,
     },
     turret_ammo: {
       id: 'turret_ammo',
@@ -121,6 +131,9 @@
       h: 2,
       canHoldInHand: true,
       icon: '/static/games/liminal-platform/img/items/turret-casing-icon.png?v=1',
+      /** 卫士抛壳 FX：沿枪管外抛 + 上抛 + 小侧向散布。 */
+      shellEjectSpeed: { forward: 340, up: 110, side: 48 },
+      shellCasingScale: 1.2,
     },
     small_caliber_ammo: {
       id: 'small_caliber_ammo',
@@ -130,7 +143,7 @@
       use: '用于冲锋枪和手枪的弹药，威力勉强够用。主要用于GUR-65等武器上。',
       color: '#713f12',
       accent: '#fbbf24',
-      maxStack: 90,
+      maxStack: 240,
       w: 1,
       h: 1,
       canHoldInHand: true,
@@ -202,8 +215,8 @@
       recoilDecay: 1.8,
       spreadBaseDeg: 1.2,
       spreadBloomDeg: 7.5,
-      /** 抛壳初速（沿枪口法向，世界单位/秒近似）。 */
-      shellEjectSpeed: { forward: -35, up: 145 },
+      /** 抛壳初速：沿枪管 forward + 世界向上 up + 法向 side（世界单位/秒近似）。 */
+      shellEjectSpeed: { forward: 30, up: 70, side: 145 },
       /** 弹壳绘制缩放（小口径）。 */
       shellCasingScale: 0.42,
       /** 飞行弹种：离散子弹实体（非激光）。 */
@@ -304,7 +317,7 @@
       weaponId: 'hummingbird_drone',
       weaponClass: 'companion_drone',
       companion: true,
-      use: '便携护卫无人机。放入手部栏即伴飞开火；选中时环绕准星优先打击准星附近的敌人，未选中时守护持有者。使用小口径子弹，弹匣 120。',
+      use: '基础款便携护卫无人机，放入手部栏即伴飞并自动消灭潜在的威胁。使用小口径弹药，备弹量高达120发。',
       color: '#3f5f4a',
       accent: '#9ec9b0',
       maxStack: 1,
@@ -337,7 +350,7 @@
       hoverOffsetY: -78,
       leashRadius: 110,
       bobAmp: 5.5,
-      bobHz: 2.2,
+      bobHz: 1.1,
       projectileStyle: 'bullet',
       damage: 5,
       maxRange: 1400,
@@ -355,7 +368,7 @@
       name: '医疗箱',
       short: '医',
       type: 'medical',
-      use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
+      use: '标准的伤口处理医疗箱，能够处理简单创伤。给队友包扎会更顺手。',
       icon: '/static/games/liminal-platform/img/items/medkit-icon.png?v=3',
       color: '#7f1d1d',
       accent: '#fca5a5',
@@ -384,11 +397,11 @@
       name: '急救箱',
       short: '救',
       type: 'medical',
-      use: '濒死救援专用。对准倒地队友按开火，消耗整箱将其拉起——平时包扎请用医疗箱。',
+      use: '命悬一线时的最后手段。器械更大更复杂，无法处理简单创伤。',
       icon: '/static/games/liminal-platform/img/items/first-aid-kit-icon.png?v=1',
       color: '#991b1b',
       accent: '#fde047',
-      maxStack: 1,
+      maxStack: 3,
       w: 2,
       h: 2,
       canHoldInHand: true,
@@ -398,6 +411,121 @@
       allyAimRadius: 88,
       canHeal: false,
       canRevive: true,
+    },
+    /**
+     * 手提灭火器：可装入手部 1/2/3 任一槽；弹药 stack.ammo（0–100，HUD 进度条）。
+     * 满罐连续喷射约 15 秒；不可普通换弹，须靠近灭火器站按 R 补满。
+     */
+    fire_extinguisher: {
+      id: 'fire_extinguisher',
+      name: '灭火器',
+      short: '灭',
+      type: 'tool',
+      use: '手提式干粉灭火器。对准火源长按开火喷射，满罐约可喷十五秒。耗尽后不能自行装填，须靠近灭火器站按装填键补充。',
+      color: '#b91c1c',
+      accent: '#fecaca',
+      maxStack: 1,
+      w: 1,
+      h: 2,
+      canHoldInHand: true,
+      canHoldAnyHandSlot: true,
+      drawHeld: true,
+      icon: '/static/games/liminal-platform/img/items/fire-extinguisher-icon.png?v=1',
+      holdSprite: '/static/games/liminal-platform/img/items/fire-extinguisher.png?v=1',
+      gripOffset: { x: 18, y: -24 },
+      holdDrawW: 20,
+      holdDrawH: 46,
+      holdPivotX: 10,
+      holdPivotY: 38,
+      muzzleLength: 28,
+      muzzleOffsetY: -18,
+      maxAmmo: 100,
+      sprayDurationSec: 15,
+    },
+    /**
+     * 可摆放设施：存于仓储，P 编辑模式下拖到舱内格子。
+     * facilityW/H = 舱内占格；背包 w/h 与之对齐。
+     */
+    facility_crate: {
+      id: 'facility_crate',
+      name: '储物箱',
+      short: '箱',
+      type: 'facility',
+      placeable: true,
+      facilityW: 1,
+      facilityH: 1,
+      use: '简易储物箱，可摆进可编辑车厢的舱内格子。',
+      color: '#78350f',
+      accent: '#fbbf24',
+      maxStack: 20,
+      w: 1,
+      h: 1,
+      canHoldInHand: false,
+    },
+    facility_workbench: {
+      id: 'facility_workbench',
+      name: '工作台',
+      short: '台',
+      type: 'facility',
+      placeable: true,
+      facilityW: 2,
+      facilityH: 1,
+      use: '检修与装配用的矮工作台，占两格宽。',
+      color: '#44403c',
+      accent: '#a8a29e',
+      maxStack: 10,
+      w: 2,
+      h: 1,
+      canHoldInHand: false,
+    },
+    facility_shelf: {
+      id: 'facility_shelf',
+      name: '货架',
+      short: '架',
+      type: 'facility',
+      placeable: true,
+      facilityW: 1,
+      facilityH: 2,
+      use: '靠墙货架，占两格高。',
+      color: '#57534e',
+      accent: '#d6d3d1',
+      maxStack: 10,
+      w: 1,
+      h: 2,
+      canHoldInHand: false,
+    },
+    facility_locker: {
+      id: 'facility_locker',
+      name: '储物柜',
+      short: '柜',
+      type: 'facility',
+      placeable: true,
+      facilityW: 1,
+      facilityH: 2,
+      use: '立式储物柜，占两格高。',
+      color: '#1e3a5f',
+      accent: '#93c5fd',
+      maxStack: 10,
+      w: 1,
+      h: 2,
+      canHoldInHand: false,
+    },
+    facility_fire_extinguisher_station: {
+      id: 'facility_fire_extinguisher_station',
+      name: '灭火器站',
+      short: '灭站',
+      type: 'facility',
+      placeable: true,
+      facilityW: 2,
+      facilityH: 3,
+      use: '固定灭火器补给架，占两格宽、三格高。靠近后手持灭火器按装填键即可补满。',
+      color: '#4b5563',
+      accent: '#ef4444',
+      maxStack: 8,
+      w: 2,
+      h: 3,
+      canHoldInHand: false,
+      icon: '/static/games/liminal-platform/img/facilities/fire-extinguisher-station.png?v=5',
     },
   };
 
@@ -424,6 +552,21 @@
     const item = getItem(itemId);
     if (!item) return false;
     return item.canHoldInHand !== false;
+  }
+
+  /**
+   * 是否可装入任意手部槽（含武器槽 1/2）；灭火器等。
+   * 默认武器仅 0/1、工具仅 2；本标记绕过该限制。
+   */
+  function canHoldAnyHandSlot(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && item.canHoldAnyHandSlot === true);
+  }
+
+  /** 是否为手提灭火器。 */
+  function isFireExtinguisher(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && item.id === 'fire_extinguisher');
   }
 
   /** 是否可装入指定装备槽位键。 */
@@ -469,6 +612,19 @@
   function isWeapon(itemId) {
     const item = getItem(itemId);
     return Boolean(item && (item.type === 'weapon' || item.weaponId));
+  }
+
+  /**
+   * 选中手槽时是否在角色身上绘制手持贴图（武器或 drawHeld 工具等）。
+   * 伴飞无人机占槽但不画在手上。
+   * @param {string|object|null|undefined} itemOrId
+   */
+  function showsHeldSprite(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    if (!item) return false;
+    if (isCompanionDrone(item)) return false;
+    if (item.drawHeld === true) return true;
+    return isWeapon(item.id);
   }
 
   /**
@@ -527,13 +683,17 @@
     return item.weaponId || item.id;
   }
 
-  /** 共享仓库库存 id（与 Inventory.id === 'storage' 对齐）。 */
+  /** 共享物资仓库库存 id（与 Inventory.id === 'storage' 对齐）。 */
   const STORAGE_BAG_ID = 'storage';
+  /** 设施专用仓库库存 id（与 Inventory.id === 'storage_facility' 对齐）。 */
+  const FACILITY_STORAGE_BAG_ID = 'storage_facility';
+  /** 两类仓储均可用 STORAGE_MAX_STACK。 */
+  const STORAGE_BAG_IDS = new Set([STORAGE_BAG_ID, FACILITY_STORAGE_BAG_ID]);
   /** 仓储可叠加物品叠加上限；背包/手部等仍用物品自身 maxStack。 */
   const STORAGE_MAX_STACK = 9999;
 
   /**
-   * 按库存返回叠加上限：仓储对可叠加物用 STORAGE_MAX_STACK，其它用图鉴 maxStack。
+   * 按库存返回叠加上限：物资/设施仓储对可叠加物用 STORAGE_MAX_STACK，其它用图鉴 maxStack。
    * @param {string|null|undefined} bagId
    * @param {string|object|null|undefined} itemOrId
    */
@@ -541,7 +701,7 @@
     const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
     const base = Math.max(1, Number(item?.maxStack) || 1);
     if (base <= 1) return base;
-    if (bagId === STORAGE_BAG_ID) return STORAGE_MAX_STACK;
+    if (STORAGE_BAG_IDS.has(bagId)) return STORAGE_MAX_STACK;
     return base;
   }
 
@@ -584,11 +744,33 @@
     return weapon.ammoId === ammoItemId;
   }
 
+  /** 是否为舱内可摆放设施。 */
+  function isPlaceableFacility(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && (item.placeable === true || item.type === 'facility'));
+  }
+
+  /** 设施在舱内网格的占格（缺省回落背包 w/h）。 */
+  function getFacilitySize(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    if (!item) return { w: 1, h: 1 };
+    return {
+      w: Math.max(1, item.facilityW || item.w || 1),
+      h: Math.max(1, item.facilityH || item.h || 1),
+    };
+  }
+
+  /** 列出全部可摆放设施定义。 */
+  function listPlaceableFacilities() {
+    return Object.values(ITEMS).filter((item) => isPlaceableFacility(item));
+  }
+
   window.LpItemCatalog = {
     ITEMS,
     TYPE_LABELS,
     EQUIP_SLOT_LABELS,
     STORAGE_BAG_ID,
+    FACILITY_STORAGE_BAG_ID,
     STORAGE_MAX_STACK,
     TEST_AUTO_REFILL_CONSUMABLES,
     isConsumableItem,
@@ -596,6 +778,8 @@
     getItemSize,
     maxStackIn,
     canHoldInHand,
+    canHoldAnyHandSlot,
+    isFireExtinguisher,
     canEquipInSlot,
     equipSlotLabel,
     typeLabel,
@@ -603,6 +787,7 @@
     getBoilerFuelValue,
     listBoilerFuels,
     isWeapon,
+    showsHeldSprite,
     isCompanionDrone,
     isEquipment,
     iconFollowsRot,
@@ -613,5 +798,8 @@
     isFullAuto,
     getWeaponId,
     weaponAcceptsAmmo,
+    isPlaceableFacility,
+    getFacilitySize,
+    listPlaceableFacilities,
   };
 })();

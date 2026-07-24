@@ -6,7 +6,7 @@
  * - compare_values：左右操作数可为数值或变量（leftKind/rightKind）
  * - turret_lock_kind：读炮塔锁定分类（API / hostile.kind / stub 表）
  * - car_on_fire：着火系统未接入前读 stub 表（默认假）；可用 setCarOnFire 调试
- * - 月台 stub：platformAhead / atPlatform / distanceAhead（月台未实现前恒假/null；setPlatformStub 调试）
+ * - 月台 stub：platformAhead / atPlatform / distanceAhead（由 LpPlatform 写入；亦可 setPlatformStub 调试）
  */
 (() => {
   const Prog = () => window.LpAutoProgram;
@@ -18,9 +18,8 @@
   /** @type {Record<string, boolean>} carId → 是否着火（stub；默认无键=假） */
   const carOnFire = Object.create(null);
 
-  /**
-   * 月台传感 stub（列车前进方向）。正式月台系统接入前由 setPlatformStub 写入。
-   * distanceAhead：世界单位；null=未知。platformAhead 亦可由距离阈值推断。
+  /** 月台传感 stub（列车前进方向）。由 LpPlatform.syncSensorStub 每帧写入；亦可 setPlatformStub 调试。
+   * distanceAhead：路线单位；null=未知。platformAhead 亦可由距离阈值推断。
    * @type {{ platformAhead: boolean, atPlatform: boolean, distanceAhead: number|null }}
    */
   const platformStub = {
@@ -76,7 +75,7 @@
 
   /**
    * 月台传感快照：前方有月台 / 已到站 / 前方距离。
-   * 未实现月台前默认全假、distanceAhead=null；调试用 setPlatformStub。
+   * 运行时由 LpPlatform 刷新 stub；无写入时默认假/null。
    * @returns {{ platformAhead: boolean, atPlatform: boolean, distanceAhead: number|null }}
    */
   function getPlatformSensor() {

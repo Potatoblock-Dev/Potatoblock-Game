@@ -1,7 +1,7 @@
 /**
  * 动力车厢「自动驾驶」状态机。
- * 由驾驶台开关接通/释放；接通时独占节流阀（巡航→接近减速→到站停车→汽笛上升沿恢复）。
- * 月台传感未落地前 platformAhead/atPlatform 恒假，故常驻巡航；钩子已接好。
+ * 由驾驶台开关接通/释放；接通时独占节流阀（巡航→接近减速→近站急刹→到站停车→汽笛上升沿恢复）。
+ * 月台距离由 LpPlatform → LpAutoSensors.setPlatformStub 写入；读 getPlatformSensor。
  * 汽笛：动力驾驶台绳索 → LpWhistleAudio.isSounding()；停车态上升沿恢复。
  */
 (() => {
@@ -9,10 +9,15 @@
   const CRUISE_THROTTLE = 5;
   /** 接近月台但距离未知时的中档。 */
   const APPROACH_THROTTLE_DEFAULT = 3;
-  /** distanceAhead（世界单位）→ 节流档映射阈值。 */
-  const DIST_STOP = 50;
-  const DIST_CREEP = 200;
-  const DIST_SLOW = 500;
+  /**
+   * distanceAhead（与 LpPlatform 路线单位同量纲）→ 节流档映射阈值。
+   * 须与 LpPlatform.DOCK_DIST / AHEAD 配套：近站必须主动刹停，不能只靠惰行。
+   */
+  const DIST_STOP = 120;
+  const DIST_CREEP = 320;
+  const DIST_SLOW = 700;
+  /** 进入此距离后触发急刹，避免冲过停靠窗。 */
+  const DIST_EMERGENCY = 280;
 
   /**
    * @typedef {'cruise'|'approach'|'stopped'} AutopilotPhase
@@ -40,7 +45,7 @@
     return CRUISE_THROTTLE;
   }
 
-  /** 读取月台 stub 传感（经 LpAutoSensors；未实现时恒假/null）。 */
+  /** 读取月台传感（经 LpAutoSensors，由 LpPlatform 每帧刷新）。 */
   function readPlatform() {
     const s = window.LpAutoSensors;
     if (!s?.getPlatformSensor) {
@@ -62,6 +67,34 @@
     const drive = window.LpTrainDrive;
     if (typeof drive?.setThrottle !== 'function') return;
     drive.setThrottle(notch);
+  }
+
+  /** 近站主动急刹（惰行刹不住，会冲过 DOCK 窗）。 */
+  function applyStationBrake() {
+    const drive = window.LpTrainDrive;
+    if (typeof drive?.triggerEmergencyBrake === 'function') {
+      drive.triggerEmergencyBrake();
+      return;
+    }
+    applyThrottle(0);
+    drive?.setBrake?.(1, { fromUser: true });
+  }
+
+  /** 离站恢复：松开制动拉杆（急刹闩锁在停稳后会自行解除）。 */
+  function releaseStationBrake() {
+    const drive = window.LpTrainDrive;
+    drive?.setBrake?.(0, { fromUser: true });
+  }
+
+  /**
+   * 是否应在接近阶段使用急刹。
+   * @param {number|null|undefined} distanceAhead
+   */
+  function shouldEmergencyForApproach(distanceAhead) {
+    if (distanceAhead == null || !Number.isFinite(Number(distanceAhead))) {
+      return false;
+    }
+    return Number(distanceAhead) <= DIST_EMERGENCY;
   }
 
   /** 是否已接通自动驾驶（节流由本模块接管）。 */
@@ -112,7 +145,14 @@
     if (phase === 'stopped') {
       applyThrottle(0);
       if (whistleEdge) {
+        /* 仍有人在月台时不许发车：保持停车 */
+        if (window.LpPlatform && !window.LpPlatform.canDepart?.()) {
+          const reason = window.LpPlatform.getDepartBlockReason?.();
+          if (reason) window.LiminalInteract?.showToast?.(reason, 1400);
+          return true;
+        }
         phase = 'cruise';
+        releaseStationBrake();
         applyThrottle(CRUISE_THROTTLE);
       }
       return true;
@@ -120,13 +160,18 @@
 
     if (plat.atPlatform) {
       phase = 'stopped';
-      applyThrottle(0);
+      applyStationBrake();
       return true;
     }
 
     if (plat.platformAhead) {
       phase = 'approach';
-      applyThrottle(approachThrottle(plat.distanceAhead));
+      const notch = approachThrottle(plat.distanceAhead);
+      if (notch <= 0 || shouldEmergencyForApproach(plat.distanceAhead)) {
+        applyStationBrake();
+      } else {
+        applyThrottle(notch);
+      }
       return true;
     }
 
@@ -162,6 +207,7 @@
     DIST_STOP,
     DIST_CREEP,
     DIST_SLOW,
+    DIST_EMERGENCY,
     isEngaged,
     setEngaged,
     toggleEngaged,

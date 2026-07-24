@@ -15,8 +15,11 @@ CONSUMABLE_TYPES = frozenset({"fuel", "ammo"})
 
 # 与 create_default_storage 对齐；无限仓储按此种子补到图鉴 maxStack（或缺省 qty）。
 STORAGE_BAG_ID = "storage"
+# 设施专用仓库（可摆放 facility_*）；与物资仓并列，房间共享。
+FACILITY_STORAGE_BAG_ID = "storage_facility"
 # 仓储可叠加物叠加上限；背包/手部仍用物品 maxStack（与 LpItemCatalog.maxStackIn 对齐）。
 STORAGE_MAX_STACK = 9999
+STORAGE_BAG_IDS = frozenset({STORAGE_BAG_ID, FACILITY_STORAGE_BAG_ID})
 
 STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (0, {"itemId": "coal", "qty": 100}),
@@ -29,6 +32,16 @@ STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (8, {"itemId": "first_aid_kit", "qty": 1}),
     (16, {"itemId": "gur65", "qty": 1, "mag": 27}),
     (19, {"itemId": "hummingbird_drone", "qty": 1, "mag": 120}),
+    (24, {"itemId": "fire_extinguisher", "qty": 1, "ammo": 100}),
+]
+
+# 设施仓库开局种子（与客户端 FACILITY_STORAGE_SEED 对齐）。
+FACILITY_STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
+    (0, {"itemId": "facility_crate", "qty": 8}),
+    (1, {"itemId": "facility_workbench", "qty": 2}),
+    (3, {"itemId": "facility_shelf", "qty": 4}),
+    (5, {"itemId": "facility_locker", "qty": 3}),
+    (8, {"itemId": "facility_fire_extinguisher_station", "qty": 2}),
 ]
 
 # 与 lp-item-catalog.js 关键字段对齐（校验用）
@@ -40,7 +53,7 @@ ITEMS: Dict[str, Dict[str, Any]] = {
     "wrench": {"maxStack": 1, "w": 2, "h": 1, "type": "tool", "canHold": True},
     "turret_ammo": {"maxStack": 100, "w": 1, "h": 2, "type": "ammo", "canHold": True},
     "shell_casing": {"maxStack": 100, "w": 1, "h": 2, "type": "material", "canHold": True},
-    "small_caliber_ammo": {"maxStack": 90, "w": 1, "h": 1, "type": "ammo", "canHold": True},
+    "small_caliber_ammo": {"maxStack": 240, "w": 1, "h": 1, "type": "ammo", "canHold": True},
     "gur65": {
         "maxStack": 1,
         "w": 3,
@@ -100,7 +113,7 @@ ITEMS: Dict[str, Dict[str, Any]] = {
         "canRevive": False,
     },
     "first_aid_kit": {
-        "maxStack": 1,
+        "maxStack": 3,
         "w": 2,
         "h": 2,
         "type": "medical",
@@ -109,6 +122,56 @@ ITEMS: Dict[str, Dict[str, Any]] = {
         "handSlot": 2,
         "canHeal": False,
         "canRevive": True,
+    },
+    "facility_crate": {
+        "maxStack": 20,
+        "w": 1,
+        "h": 1,
+        "type": "facility",
+        "placeable": True,
+        "canHold": False,
+    },
+    "facility_workbench": {
+        "maxStack": 10,
+        "w": 2,
+        "h": 1,
+        "type": "facility",
+        "placeable": True,
+        "canHold": False,
+    },
+    "facility_shelf": {
+        "maxStack": 10,
+        "w": 1,
+        "h": 2,
+        "type": "facility",
+        "placeable": True,
+        "canHold": False,
+    },
+    "facility_locker": {
+        "maxStack": 10,
+        "w": 1,
+        "h": 2,
+        "type": "facility",
+        "placeable": True,
+        "canHold": False,
+    },
+    "fire_extinguisher": {
+        "maxStack": 1,
+        "w": 1,
+        "h": 2,
+        "type": "tool",
+        "canHold": True,
+        "canHoldAnyHandSlot": True,
+        "maxAmmo": 100,
+        "sprayDurationSec": 15,
+    },
+    "facility_fire_extinguisher_station": {
+        "maxStack": 8,
+        "w": 2,
+        "h": 3,
+        "type": "facility",
+        "placeable": True,
+        "canHold": False,
     },
 }
 
@@ -122,13 +185,19 @@ FIRST_AID_KIT_ID = "first_aid_kit"
 
 
 def max_stack_in(bag_id: Optional[str], item: Optional[Dict[str, Any]]) -> int:
-    """按库存返回叠加上限：仓储对可叠加物用 STORAGE_MAX_STACK，其它用图鉴 maxStack。"""
+    """按库存返回叠加上限：物资/设施仓储对可叠加物用 STORAGE_MAX_STACK，其它用图鉴 maxStack。"""
     base = max(1, int((item or {}).get("maxStack") or 1))
     if base <= 1:
         return base
-    if bag_id == STORAGE_BAG_ID:
+    if bag_id in STORAGE_BAG_IDS:
         return STORAGE_MAX_STACK
     return base
+
+
+def _is_placeable_facility(item_id: str) -> bool:
+    """是否为舱内可摆放设施（type=facility 或 placeable）。"""
+    item = ITEMS.get(str(item_id)) or {}
+    return bool(item.get("type") == "facility" or item.get("placeable"))
 
 
 def _is_weapon(item_id: str) -> bool:
@@ -191,6 +260,14 @@ def _norm_stack(
         except (TypeError, ValueError):
             dur = int(max_dur)
         out["dur"] = max(0, min(int(max_dur), dur))
+    max_ammo = item.get("maxAmmo")
+    if max_ammo:
+        ammo_raw = stack.get("ammo", max_ammo)
+        try:
+            ammo = float(ammo_raw)
+        except (TypeError, ValueError):
+            ammo = float(max_ammo)
+        out["ammo"] = max(0.0, min(float(max_ammo), ammo))
     if _stack_rot(stack) == 90:
         out["rot"] = 90
     return out
@@ -224,13 +301,15 @@ class Inventory:
         return _oriented_size(item_id, rot)
 
     def accepts(self, item_id: str, index: Optional[int] = None) -> bool:
-        """手部 0/1 仅武器；快捷槽禁止武器；装备栏按 slot_keys。"""
+        """手部 0/1 仅武器（或 canHoldAnyHandSlot）；快捷槽禁止武器；装备栏按 slot_keys；双仓储分流设施。"""
         item = ITEMS.get(item_id)
         if not item:
             return False
         if self.id == "hands" or self.id.startswith("hands"):
             if not item.get("canHold", True):
                 return False
+            if item.get("canHoldAnyHandSlot"):
+                return True
             is_weapon = _is_weapon(item_id)
             if index is None:
                 # 未指定槽：武器可进 0/1，其它可进快捷槽；具体格由 can_place_at 判定。
@@ -247,6 +326,10 @@ class Inventory:
             if index < 0 or index >= len(self.slot_keys):
                 return False
             return item.get("equip") == self.slot_keys[index]
+        if self.id == STORAGE_BAG_ID:
+            return not _is_placeable_facility(item_id)
+        if self.id == FACILITY_STORAGE_BAG_ID:
+            return _is_placeable_facility(item_id)
         return True
 
     def index_at(self, col: int, row: int) -> int:
@@ -451,6 +534,8 @@ class Inventory:
                     out["mag"] = slot["mag"]
                 if slot.get("dur") is not None:
                     out["dur"] = slot["dur"]
+                if slot.get("ammo") is not None:
+                    out["ammo"] = slot["ammo"]
                 if _stack_rot(slot) == 90:
                     out["rot"] = 90
                 slots.append(out)
@@ -510,6 +595,8 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
         incoming["mag"] = stack["mag"]
     if stack.get("dur") is not None and "dur" not in incoming:
         incoming["dur"] = stack["dur"]
+    if stack.get("ammo") is not None and "ammo" not in incoming:
+        incoming["ammo"] = stack["ammo"]
     if _stack_rot(stack) == 90:
         incoming["rot"] = 90
 
@@ -530,6 +617,10 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
         left: Dict[str, Any] = {"itemId": incoming["itemId"], "qty": leftover_qty}
         if incoming.get("mag") is not None:
             left["mag"] = incoming["mag"]
+        if incoming.get("dur") is not None:
+            left["dur"] = incoming["dur"]
+        if incoming.get("ammo") is not None:
+            left["ammo"] = incoming["ammo"]
         if _stack_rot(incoming) == 90:
             left["rot"] = 90
         return left
@@ -545,6 +636,10 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
         left = {"itemId": incoming["itemId"], "qty": leftover}
         if incoming.get("mag") is not None:
             left["mag"] = incoming["mag"]
+        if incoming.get("dur") is not None:
+            left["dur"] = incoming["dur"]
+        if incoming.get("ammo") is not None:
+            left["ammo"] = incoming["ammo"]
         if _stack_rot(incoming) == 90:
             left["rot"] = 90
         return left
@@ -645,12 +740,14 @@ def quick_transfer(source: Inventory, source_index: int, target: Inventory) -> b
 
 
 def _clone_stack_fields(stack: Dict[str, Any]) -> Dict[str, Any]:
-    """拷贝堆叠字段（qty / mag / dur / rot），供整理合并使用。"""
+    """拷贝堆叠字段（qty / mag / dur / ammo / rot），供整理合并使用。"""
     out: Dict[str, Any] = {"itemId": stack["itemId"], "qty": int(stack["qty"])}
     if stack.get("mag") is not None:
         out["mag"] = stack["mag"]
     if stack.get("dur") is not None:
         out["dur"] = stack["dur"]
+    if stack.get("ammo") is not None:
+        out["ammo"] = stack["ammo"]
     if _stack_rot(stack) == 90:
         out["rot"] = 90
     return out
@@ -678,7 +775,7 @@ def _merge_stacks_for_sort(stacks: List[Dict[str, Any]], bag_id: str) -> List[Di
         if not item:
             continue
         cap = max_stack_in(bag_id, item)
-        if cap <= 1 or stack.get("mag") is not None or stack.get("dur") is not None:
+        if cap <= 1 or stack.get("mag") is not None or stack.get("dur") is not None or stack.get("ammo") is not None:
             merged.append(stack)
             continue
         remaining = int(stack["qty"])
@@ -740,13 +837,13 @@ def _pick_sort_placement(
 
 
 def sort_inventory(inventory: Inventory) -> bool:
-    """自动整理：合并可叠加堆，再按足迹左上紧凑重排（可旋转 0↔90；仅 player/storage）。
+    """自动整理：合并可叠加堆，再按足迹左上紧凑重排（可旋转 0↔90；仅 player/双仓储）。
 
     放不下时回滚并返回 False。
     """
     if inventory is None or inventory.ignore_item_size or inventory.slot_keys:
         return False
-    if inventory.id not in ("player", "storage"):
+    if inventory.id not in ("player", STORAGE_BAG_ID, FACILITY_STORAGE_BAG_ID):
         return False
     collected = _collect_stacks(inventory)
     if not collected:
@@ -794,12 +891,59 @@ def create_default_player() -> Inventory:
 
 
 def create_default_storage() -> Inventory:
-    """开局仓库：与客户端 STORAGE_SEED 大致对齐（数量取服务端权威默认）。"""
-    inv = Inventory("storage", 8, 8)
+    """开局物资仓库：与客户端 STORAGE_SEED 大致对齐（不含可摆放设施）。"""
+    inv = Inventory(STORAGE_BAG_ID, 8, 8)
     for index, stack in STORAGE_SEED:
         if not inv.place_stack(index, dict(stack)):
             inv.add_item(stack["itemId"], int(stack["qty"]))
     return inv
+
+
+def create_default_facility_storage() -> Inventory:
+    """开局设施仓库：仅可摆放 facility_* 种子。"""
+    inv = Inventory(FACILITY_STORAGE_BAG_ID, 8, 8)
+    for index, stack in FACILITY_STORAGE_SEED:
+        if not inv.place_stack(index, dict(stack)):
+            inv.add_item(stack["itemId"], int(stack["qty"]))
+    return inv
+
+
+def migrate_facilities_to_facility_storage(
+    storage: Inventory, facility_storage: Inventory
+) -> int:
+    """将物资仓中的可摆放设施整堆迁入设施仓；返回迁入件数（堆数）。"""
+    if not storage or not facility_storage:
+        return 0
+    moved = 0
+    for i in range(storage.size()):
+        if storage.is_covered(i):
+            continue
+        stack = storage.get_slot(i)
+        if not stack or not _is_placeable_facility(str(stack["itemId"])):
+            continue
+        taken = storage.take_slot(i)
+        if not taken:
+            continue
+        leftover = facility_storage.add_item(str(taken["itemId"]), int(taken["qty"]))
+        if leftover > 0:
+            # 设施仓满则退回物资仓，避免丢物。
+            storage.add_item(str(taken["itemId"]), leftover)
+        if leftover < int(taken["qty"]):
+            moved += 1
+    return moved
+
+
+def ensure_placeable_facility_seeds(facility_storage: Inventory) -> None:
+    """旧档补种：设施仓某 id 数量为 0 时按种子 qty 放入（不刷到 maxStack）。"""
+    if not facility_storage:
+        return
+    for _index, seed in FACILITY_STORAGE_SEED:
+        item_id = str(seed["itemId"])
+        if not _is_placeable_facility(item_id):
+            continue
+        if facility_storage.count_item(item_id) > 0:
+            continue
+        facility_storage.add_item(item_id, int(seed.get("qty") or 1))
 
 
 def _dump_stack_to_player(player: Inventory, stack: Dict[str, Any]) -> None:
@@ -819,18 +963,23 @@ def _dump_stack_to_player(player: Inventory, stack: Dict[str, Any]) -> None:
 
 
 def sanitize_hands(hands: Inventory, player: Inventory) -> None:
-    """手部武器槽清出非武器，快捷槽清出枪械；非法物品退回背包。"""
+    """手部武器槽清出非武器（可任意手槽物品除外），快捷槽清出枪械；非法物品退回背包。"""
     for index in HANDS_WEAPON_SLOTS:
         stack = hands.get_slot(index)
-        if stack and not _is_weapon(stack["itemId"]):
+        if not stack:
+            continue
+        item = ITEMS.get(str(stack["itemId"])) or {}
+        if not _is_weapon(stack["itemId"]) and not item.get("canHoldAnyHandSlot"):
             taken = hands.take_slot(index)
             if taken:
                 _dump_stack_to_player(player, taken)
     util = hands.get_slot(HANDS_UTILITY)
-    if util and _is_weapon(util["itemId"]):
-        taken = hands.take_slot(HANDS_UTILITY)
-        if taken:
-            _dump_stack_to_player(player, taken)
+    if util:
+        item = ITEMS.get(str(util["itemId"])) or {}
+        if _is_weapon(util["itemId"]) and not item.get("canHoldAnyHandSlot"):
+            taken = hands.take_slot(HANDS_UTILITY)
+            if taken:
+                _dump_stack_to_player(player, taken)
 
 
 def create_default_hands() -> Inventory:
@@ -922,10 +1071,14 @@ class PlayerInventories:
 
 
 class RoomInventories:
-    """房间共享：仓库、地面、炮塔箱。"""
+    """房间共享：物资仓、设施仓、地面、炮塔箱。"""
 
     def __init__(self) -> None:
         self.storage = create_default_storage()
+        self.storage_facility = create_default_facility_storage()
+        # 兼容旧默认/热重载：若物资仓仍含设施则迁入设施仓。
+        migrate_facilities_to_facility_storage(self.storage, self.storage_facility)
+        ensure_placeable_facility_seeds(self.storage_facility)
         self.crates = create_default_crates()
         self.ground: List[Dict[str, Any]] = []
         self._pile_seq = 1
@@ -933,6 +1086,7 @@ class RoomInventories:
     def room_snapshot(self) -> Dict[str, Any]:
         return {
             "storage": self.storage.to_json(),
+            "storage_facility": self.storage_facility.to_json(),
             "crates": {
                 "ammo": self.crates["ammo"].to_json(),
                 "recycle": self.crates["recycle"].to_json(),
@@ -958,6 +1112,8 @@ class RoomInventories:
             return personal.equip
         if name == "storage":
             return self.storage
+        if name == FACILITY_STORAGE_BAG_ID or name == "storage_facility":
+            return self.storage_facility
         if name == "crate_ammo":
             return self.crates["ammo"]
         if name == "crate_recycle":
@@ -1038,10 +1194,13 @@ def refill_consumable_stacks(inv: Inventory) -> None:
 
 
 def refill_storage_infinite(storage: Inventory) -> None:
-    """TEST_ONLY — remove after playtest：仓储种子物资补到 maxStack（或种子 qty），取用不尽。"""
+    """TEST_ONLY — remove after playtest：物资仓种子补到 maxStack（或种子 qty），取用不尽。"""
     for _index, seed in STORAGE_SEED:
         item_id = str(seed["itemId"])
         item = ITEMS.get(item_id) or {}
+        # 可摆放设施不参与无限补货（设施在独立仓且编辑会扣库）。
+        if _is_placeable_facility(item_id):
+            continue
         want = int(item.get("maxStack") or seed.get("qty") or 1)
         have = storage.count_item(item_id)
         if have >= want:
@@ -1051,6 +1210,7 @@ def refill_storage_infinite(storage: Inventory) -> None:
         # 武器等带弹匣：若刚补进，把缺 mag 的堆设为满匣
         mag_size = item.get("magazineSize")
         max_dur = item.get("maxDurability")
+        max_ammo = item.get("maxAmmo")
         if leftover >= need:
             continue
         for i in range(storage.size()):
@@ -1063,6 +1223,8 @@ def refill_storage_infinite(storage: Inventory) -> None:
                 storage.slots[i]["mag"] = int(mag_size)
             if max_dur is not None and st.get("dur") is None:
                 storage.slots[i]["dur"] = int(max_dur)
+            if max_ammo is not None and st.get("ammo") is None:
+                storage.slots[i]["ammo"] = float(max_ammo)
 
 
 def refill_player_consumables(personal: PlayerInventories) -> None:
@@ -1073,7 +1235,7 @@ def refill_player_consumables(personal: PlayerInventories) -> None:
 
 
 def refill_room_consumables(room_inv: RoomInventories) -> None:
-    """TEST_ONLY：无限仓储 + 炮塔箱/地面消耗品堆补满。"""
+    """TEST_ONLY：无限物资仓 + 炮塔箱/地面消耗品堆补满（不刷设施仓）。"""
     refill_storage_infinite(room_inv.storage)
     for crate in room_inv.crates.values():
         refill_consumable_stacks(crate)

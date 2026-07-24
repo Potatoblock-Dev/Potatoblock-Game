@@ -13,6 +13,11 @@
   const THROTTLE_NOTCHES = [-5, -3, -1, 0, 1, 3, 5];
   const NOTCH_MAX = 5;
   const MAX_SPEED = 5;
+  /** 0 档 → 任意非零档时的点火一次性音效（环境层，各端对本会话边沿播一次）。 */
+  const IGNITION_SFX =
+    '/static/games/liminal-platform/audio/train-ignition.wav?v=1';
+  /** 对齐雷达声呐等环境一次音量级；略低于武器开火。 */
+  const IGNITION_SFX_VOLUME = 0.48;
 
   /** 满档、低速时的起步加速度（单位/秒²）。 */
   const TRACTIVE_START = 1.75;
@@ -103,39 +108,76 @@
     window.LiminalSession?.notifyTrain?.(getState());
   }
 
-  /** 设置节流档（自动吸附）。急刹过程中锁定为停止。 */
+  /**
+   * 仅在档位边沿 0 → 非零时播点火 SFX（1↔2、非零→0 不播）。
+   * 本地 setThrottle 与远端 applyAuthority 各端对本会话边沿各播一次，避免同端双播。
+   * @param {number} prevThrottle
+   * @param {number} nextThrottle
+   */
+  function maybePlayIgnition(prevThrottle, nextThrottle) {
+    const prev = nearestNotch(prevThrottle);
+    const next = nearestNotch(nextThrottle);
+    if (prev !== 0 || next === 0) return;
+    window.LpSfx?.play?.(IGNITION_SFX, {
+      volume: IGNITION_SFX_VOLUME,
+      ambient: true,
+    });
+  }
+
+  /** 设置节流档（自动吸附）。急刹过程中锁定为停止；月台有人未回车时禁止离开空档。 */
   function setThrottle(value) {
+    const prev = state.throttle;
     if (isEmergencyBrake() || state.emergencyActive) {
       state.throttle = 0;
       emit();
       notifyNetwork();
       return;
     }
-    state.throttle = nearestNotch(Number(value) || 0);
+    const next = nearestNotch(Number(value) || 0);
+    if (Math.abs(next) > 0 && window.LpPlatform && !window.LpPlatform.canDepart?.()) {
+      state.throttle = 0;
+      const reason = window.LpPlatform.getDepartBlockReason?.();
+      if (reason) window.LiminalInteract?.showToast?.(reason);
+      emit();
+      notifyNetwork();
+      return;
+    }
+    state.throttle = next;
+    maybePlayIgnition(prev, state.throttle);
     emit();
     notifyNetwork();
   }
 
-  /** 拖拽中临时设置（可不吸附）。急刹过程中锁定为停止。 */
+  /** 拖拽中临时设置（可不吸附）。急刹过程中锁定为停止；月台发车锁同 setThrottle。 */
   function setThrottleRaw(value) {
+    const prev = state.throttle;
     if (isEmergencyBrake() || state.emergencyActive) {
       state.throttle = 0;
       emit();
       notifyNetwork();
       return;
     }
-    state.throttle = Math.max(-5, Math.min(5, Number(value) || 0));
+    let next = Math.max(-5, Math.min(5, Number(value) || 0));
+    if (Math.abs(next) > 0.01 && window.LpPlatform && !window.LpPlatform.canDepart?.()) {
+      next = 0;
+      const reason = window.LpPlatform.getDepartBlockReason?.();
+      if (reason) window.LiminalInteract?.showToast?.(reason, 900);
+    }
+    state.throttle = next;
+    maybePlayIgnition(prev, state.throttle);
     emit();
     notifyNetwork();
   }
 
   /** 吸附当前节流到最近档。 */
   function snapThrottle() {
+    const prev = state.throttle;
     if (isEmergencyBrake() || state.emergencyActive) {
       state.throttle = 0;
     } else {
       state.throttle = nearestNotch(state.throttle);
     }
+    maybePlayIgnition(prev, state.throttle);
     emit();
     notifyNetwork();
   }
@@ -291,6 +333,7 @@
 
   /** 应用服务端权威列车状态（联机快照）。不回传网络。 */
   function applyAuthority(partial = {}) {
+    const prevThrottle = state.throttle;
     if (partial.throttle != null) {
       state.throttle = nearestNotch(Number(partial.throttle) || 0);
     }
@@ -309,6 +352,7 @@
     if (state.emergencyActive || isEmergencyBrake()) {
       state.throttle = 0;
     }
+    maybePlayIgnition(prevThrottle, state.throttle);
     emit();
   }
 
@@ -318,6 +362,7 @@
     EMERGENCY_DECEL,
     BRAKE_SNAP_THRESHOLD,
     MAX_SPEED,
+    IGNITION_SFX,
     setThrottle,
     setThrottleRaw,
     snapThrottle,

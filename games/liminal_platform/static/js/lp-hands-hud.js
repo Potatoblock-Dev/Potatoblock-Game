@@ -121,6 +121,8 @@
       icon.style.backgroundImage = '';
       icon.textContent = '';
       qty.textContent = '';
+      const emptyBar = el.querySelector('.lp-hands-hud-ammo');
+      if (emptyBar) emptyBar.hidden = true;
       return;
     }
     const item = Catalog.getItem(stack.itemId);
@@ -145,9 +147,27 @@
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
     } else if (item.maxDurability != null) {
-      qty.textContent = `${stack.dur ?? item.maxDurability}/${item.maxDurability}`;
+      qty.textContent = `${Math.round(stack.dur ?? item.maxDurability)}/${item.maxDurability}`;
+    } else if (item.maxAmmo != null) {
+      qty.textContent = '';
     } else {
       qty.textContent = stack.qty > 1 ? String(stack.qty) : '';
+    }
+    let bar = el.querySelector('.lp-hands-hud-ammo');
+    if (item.maxAmmo != null) {
+      if (!bar) {
+        bar = document.createElement('span');
+        bar.className = 'lp-hands-hud-ammo';
+        bar.innerHTML = '<span class="lp-hands-hud-ammo-fill"></span>';
+        el.append(bar);
+      }
+      const maxA = Number(item.maxAmmo) || 100;
+      const cur = Math.max(0, Math.min(maxA, Number(stack.ammo != null ? stack.ammo : maxA)));
+      const fill = bar.querySelector('.lp-hands-hud-ammo-fill');
+      if (fill) fill.style.width = `${(cur / maxA) * 100}%`;
+      bar.hidden = false;
+    } else if (bar) {
+      bar.hidden = true;
     }
   }
 

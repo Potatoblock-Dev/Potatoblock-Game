@@ -1,5 +1,5 @@
 /**
- * 阈限月台物品栏 UI：主背包弹窗 + 左侧地面/仓库独立弹窗、拖拽与 Shift 快速转移。
+ * 阈限月台物品栏 UI：主背包弹窗 + 左侧地面/仓库独立弹窗、拖拽与 Shift/F 快速转移。
  */
 (() => {
   const Spec = window.LiminalCarriageSpec;
@@ -64,9 +64,12 @@
     return;
   }
 
+  const storageWarehouseTabs = storageSection.querySelector('.lp-storage-warehouse-tabs');
+  const facilityEditEnterBtn = document.getElementById('lpFacilityEditEnter');
+
   const coarsePointer = window.matchMedia('(hover: none), (pointer: coarse)');
   const loaded = Core.loadInventories();
-  const { player, storage, hands, equip } = loaded;
+  const { player, storage, facilityStorage, hands, equip } = loaded;
   const state = {
     open: false,
     inStorageCar: false,
@@ -81,6 +84,8 @@
     inspectPinned: false,
     /** 移动端分区：bag | gear | nearby */
     mobileTab: 'bag',
+    /** 仓储浮窗当前页：storage | storage_facility */
+    storageTab: 'storage',
     /** 持物悬停格，供 render 后重绘占地预览 */
     hoverSlot: null,
     previewRaf: 0,
@@ -225,10 +230,29 @@
   function inventoryById(id) {
     if (id === 'player') return player;
     if (id === 'storage') return storage;
+    if (id === 'storage_facility') return facilityStorage;
     if (id === 'hands') return hands;
     if (id === 'equip') return equip;
     if (id === 'ground' || id === state.groundInv?.id) return state.groundInv;
     return null;
+  }
+
+  /**
+   * 错仓投放提示；返回 true 表示已拒绝并 toast。
+   * @param {object|null|undefined} inventory
+   * @param {string|null|undefined} itemId
+   */
+  function toastWrongWarehouse(inventory, itemId) {
+    if (!inventory || !itemId) return false;
+    if (inventory.id === 'storage' && Catalog.isPlaceableFacility?.(itemId)) {
+      window.LiminalInteract?.showToast?.('设施请放入「设施」仓库');
+      return true;
+    }
+    if (inventory.id === 'storage_facility' && !Catalog.isPlaceableFacility?.(itemId)) {
+      window.LiminalInteract?.showToast?.('物资请放入「物资」仓库');
+      return true;
+    }
+    return false;
   }
 
   /** 生成发给服务端的 bag 引用。 */
@@ -239,6 +263,9 @@
     }
     if (inventory === storage || inventory.id === 'storage') {
       return { bag: 'storage', index };
+    }
+    if (inventory === facilityStorage || inventory.id === 'storage_facility') {
+      return { bag: 'storage_facility', index };
     }
     if (inventory === hands || inventory.id === 'hands') {
       return { bag: 'hands', index };
@@ -262,7 +289,28 @@
     window.LpInventoryNet.sendOp(payload);
   }
 
-  /** Shift 快速转移的目标库存。 */
+  /** 当前仓储浮窗展示的仓库（物资或设施）。 */
+  function activeStorageInv() {
+    return state.storageTab === 'storage_facility' ? facilityStorage : storage;
+  }
+
+  /** 库存实例对应的服务端 bag id（quick_transfer.toBag）。 */
+  function bagIdOf(inventory) {
+    if (!inventory) return null;
+    if (inventory === player || inventory.id === 'player') return 'player';
+    if (inventory === storage || inventory.id === 'storage') return 'storage';
+    if (inventory === facilityStorage || inventory.id === 'storage_facility') {
+      return 'storage_facility';
+    }
+    if (inventory === hands || inventory.id === 'hands') return 'hands';
+    if (inventory === equip || inventory.id === 'equip') return 'equip';
+    if (inventory === state.groundInv || inventory?.id?.startsWith?.('ground')) {
+      return 'ground';
+    }
+    return inventory.id || null;
+  }
+
+  /** Shift / F 快速转移的目标库存。 */
   function shiftTarget(inventory, index) {
     if (inventory?.id?.startsWith?.('ground') || inventory === state.groundInv) {
       return player;
@@ -271,7 +319,14 @@
       return state.groundInv;
     }
     if (state.inStorageCar) {
-      return inventory.id === 'storage' ? player : storage;
+      if (inventory.id === 'storage' || inventory.id === 'storage_facility') {
+        return player;
+      }
+      if (inventory.id === 'player') {
+        const stack = inventory.getSlot(index);
+        if (Catalog.isPlaceableFacility?.(stack?.itemId)) return facilityStorage;
+        return storage;
+      }
     }
     if (inventory.id === 'hands' || inventory.id === 'equip') return player;
     if (inventory.id === 'player') {
@@ -281,6 +336,34 @@
       return hands;
     }
     return null;
+  }
+
+  /**
+   * 整堆快速转移到 shiftTarget（Shift+点击 / 仓储开时 F）。
+   * 联机发送 quick_transfer；成功返回 true。
+   */
+  function performQuickTransfer(inventory, index, detailOpts = null) {
+    const other = shiftTarget(inventory, index);
+    if (!other) return false;
+    const stackBefore = inventory.getSlot(index);
+    if (!stackBefore) return false;
+    if (toastWrongWarehouse(other, stackBefore.itemId)) return false;
+    const from = bagRef(inventory, index);
+    const toBag = bagIdOf(other);
+    Core.quickTransfer(inventory, index, other);
+    persistAndRender();
+    if (from && toBag) {
+      netSend({
+        action: 'quick_transfer',
+        from,
+        toBag,
+        pileId: state.groundPile?.id || from.pileId || null,
+      });
+    }
+    if (detailOpts !== false && stackBefore) {
+      showDetail(stackBefore, detailOpts || {});
+    }
+    return true;
   }
 
   /** 是否显示左侧附近弹窗（地面或仓库）。 */
@@ -340,7 +423,7 @@
     if (!window.LpInventoryNet?.isActive?.()) {
       // TEST_ONLY：单机取仓后补满种子物资
       Core.restoreTestInfiniteStorage?.(storage);
-      Core.saveInventories(player, storage, hands, equip);
+      Core.saveInventories(player, storage, hands, equip, facilityStorage);
       window.LpGroundLoot?.pruneAndSave?.();
     }
     renderGrids();
@@ -362,11 +445,16 @@
   }
 
   /**
-   * 自动整理背包或仓库网格；联机发 sort 意图并由权威快照对齐。
-   * @param {'player'|'storage'} bagName
+   * 自动整理背包或当前仓库网格；联机发 sort 意图并由权威快照对齐。
+   * @param {'player'|'storage'|'storage_facility'} bagName
    */
   function sortBagGrid(bagName) {
-    const inventory = bagName === 'storage' ? storage : player;
+    const inventory =
+      bagName === 'storage_facility'
+        ? facilityStorage
+        : bagName === 'storage'
+          ? storage
+          : player;
     if (!inventory) return;
     if (state.cursor || state.dragSource) {
       window.LiminalInteract?.showToast?.('请先放下手中物品再整理');
@@ -383,6 +471,19 @@
       return;
     }
     persistAndRender();
+  }
+
+  /** 切换仓储浮窗「物资 / 设施」标签并重绘网格。 */
+  function setStorageTab(tab) {
+    const next = tab === 'storage_facility' ? 'storage_facility' : 'storage';
+    if (state.storageTab === next) return;
+    state.storageTab = next;
+    storageWarehouseTabs?.querySelectorAll('[data-lp-storage-tab]').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.lpStorageTab === next);
+    });
+    storageGrid.replaceChildren();
+    storageGrid.dataset.boundInvId = '';
+    renderGrids();
   }
 
   /** 权威快照到达后仅刷新 UI（不写盘、不改容量）。 */
@@ -482,7 +583,9 @@
           ? `弹匣 ${stack.mag ?? 0}/${item.magazineSize}`
           : item.maxDurability != null
             ? `耐久 ${stack.dur ?? item.maxDurability}/${item.maxDurability}`
-            : `×${stack.qty}`;
+            : item.maxAmmo != null
+              ? `装量 ${Math.round(stack.ammo ?? item.maxAmmo)}/${item.maxAmmo}`
+              : `×${stack.qty}`;
     }
     if (detailType) detailType.textContent = Catalog.typeLabel(item.type);
     if (detailSize) {
@@ -642,6 +745,8 @@
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
     } else if (item.maxDurability != null) {
       qty.textContent = `${stack.dur ?? item.maxDurability}/${item.maxDurability}`;
+    } else if (item.maxAmmo != null) {
+      qty.textContent = `${Math.round(stack.ammo ?? item.maxAmmo)}%`;
     } else {
       qty.textContent = stack.qty > 1 ? String(stack.qty) : '';
     }
@@ -652,7 +757,9 @@
   /** 取某网格的槽位按钮列表。 */
   function slotButtonsFor(inventory) {
     if (inventory === player) return Array.from(playerGrid.querySelectorAll('.lp-inventory-slot'));
-    if (inventory === storage) return Array.from(storageGrid.querySelectorAll('.lp-inventory-slot'));
+    if (inventory === storage || inventory === facilityStorage) {
+      return Array.from(storageGrid.querySelectorAll('.lp-inventory-slot'));
+    }
     if (inventory === hands) {
       return handsHosts.map((host) => host.querySelector('.lp-inventory-slot')).filter(Boolean);
     }
@@ -911,7 +1018,12 @@
     renderEquipSlots();
     renderHandsSlots();
     renderGrid(playerGrid, player);
-    renderGrid(storageGrid, storage);
+    const warehouse = activeStorageInv();
+    if (storageGrid.dataset.boundInvId !== warehouse.id) {
+      storageGrid.replaceChildren();
+      storageGrid.dataset.boundInvId = warehouse.id;
+    }
+    renderGrid(storageGrid, warehouse);
     if (state.groundInv) {
       renderGrid(groundGrid, state.groundInv);
     } else {
@@ -926,8 +1038,12 @@
   function updateInventoryHint() {
     if (!hintEl) return;
     if (!isCoarse()) {
-      hintEl.textContent =
-        '拖拽移动 · R 旋转 · Q 丢地上 · Shift+点击快速转移 · 整理 · Tab 关闭';
+      const transferKey = Bindings?.formatAction?.('interact') || 'F';
+      const transferHint = state.inStorageCar
+        ? `Shift+点击 / ${transferKey} 快速转移`
+        : 'Shift+点击快速转移';
+      const closeKey = Bindings?.formatAction?.('inventory') || 'Tab';
+      hintEl.textContent = `拖拽移动 · R 旋转 · Q 丢地上 · ${transferHint} · 整理 · ${closeKey} 关闭`;
       return;
     }
     if (state.cursor) {
@@ -1011,7 +1127,7 @@
   function gridElFor(inventory) {
     if (!inventory) return null;
     if (inventory === player) return playerGrid;
-    if (inventory === storage) return storageGrid;
+    if (inventory === storage || inventory === facilityStorage) return storageGrid;
     if (inventory === state.groundInv && groundGrid) return groundGrid;
     return null;
   }
@@ -1155,6 +1271,8 @@
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
     } else if (item.maxDurability != null) {
       qty.textContent = `${stack.dur ?? item.maxDurability}/${item.maxDurability}`;
+    } else if (item.maxAmmo != null) {
+      qty.textContent = `${Math.round(stack.ammo ?? item.maxAmmo)}%`;
     } else {
       qty.textContent = stack.qty > 1 ? String(stack.qty) : '';
     }
@@ -1210,39 +1328,11 @@
     }
 
     if (event.shiftKey) {
-      const other = shiftTarget(inventory, index);
-      if (other) {
-        const from = bagRef(inventory, index);
-        const toBag =
-          other === player
-            ? 'player'
-            : other === storage
-              ? 'storage'
-              : other === hands
-                ? 'hands'
-                : other === equip
-                  ? 'equip'
-                  : other === state.groundInv
-                    ? 'ground'
-                    : null;
-        Core.quickTransfer(inventory, index, other);
-        persistAndRender();
-        if (from && toBag) {
-          netSend({
-            action: 'quick_transfer',
-            from,
-            toBag,
-            pileId: state.groundPile?.id || from.pileId || null,
-          });
-        }
-        if (stackBefore) {
-          showDetail(stackBefore, {
-            pinned: isCoarse(),
-            clientX: event.clientX,
-            clientY: event.clientY,
-          });
-        }
-      }
+      performQuickTransfer(inventory, index, {
+        pinned: isCoarse(),
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
       return;
     }
 
@@ -1298,6 +1388,10 @@
 
     // 联机：光标持物尚未从权威 take；须带 qty（右键分堆后不能整格搬走）与 rot
     // （源格足迹冲突时 rotate 可能失败，与 drag pendingRot 同理）。
+    if (toastWrongWarehouse(inventory, state.cursor?.itemId)) {
+      persistAndRender();
+      return;
+    }
     const holdRot = Core.stackRot(state.cursor);
     const movingQty = Math.max(1, Number(state.cursor.qty) || 1);
     const returned = Core.placeOnSlot(inventory, placeIndex, state.cursor);
@@ -1345,6 +1439,8 @@
       persistAndRender();
       return;
     }
+
+    if (toastWrongWarehouse(inventory, state.cursor?.itemId)) return;
 
     const current = inventory.getSlot(origin);
     if (current && current.itemId !== state.cursor.itemId) return;
@@ -1521,6 +1617,11 @@
 
     const moving = source.inventory.takeSlot(source.index);
     if (!moving) return;
+    if (toastWrongWarehouse(targetInventory, moving.itemId)) {
+      source.inventory.placeStack(source.index, moving);
+      persistAndRender();
+      return;
+    }
     if (source.pendingRot != null) writeStackRot(moving, source.pendingRot);
     const from = bagRef(source.inventory, source.index);
     const to = bagRef(targetInventory, dropOrigin);
@@ -1784,7 +1885,7 @@
   }
 
   /**
-   * 桌面：物品栏打开时 R 旋转、Q 丢地上（盖过世界键）。
+   * 桌面：物品栏打开时 R 旋转、Q 丢地上、仓储开时 F 快速转移（盖过世界键）。
    * 持物/拖拽中不依赖槽位 focus（格子 tabindex=-1）。
    */
   function onInventoryKeyDown(event) {
@@ -1804,6 +1905,28 @@
       }
       if (!inspectingDropTarget()) return;
       if (dropHeldOrSelected()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
+    /* 仓储界面打开时：交互键（默认 F）= 悬停格快速转移，不抢世界交互。 */
+    const isTransferKey =
+      Bindings?.matchesKeyEvent?.('interact', event) ||
+      event.code === 'KeyF' ||
+      event.key === 'f' ||
+      event.key === 'F';
+    if (isTransferKey) {
+      if (!state.inStorageCar) return;
+      if (state.cursor || state.dragSource) return;
+      const target = inspectingDropTarget();
+      if (!target) return;
+      if (
+        performQuickTransfer(target.inventory, target.origin, {
+          pinned: false,
+        })
+      ) {
         event.preventDefault();
         event.stopPropagation();
       }
@@ -1872,7 +1995,7 @@
     applyBagCapacity(state.openWorldX);
     if (!window.LpInventoryNet?.isActive?.()) {
       Core.restoreTestInfiniteStorage?.(storage);
-      Core.saveInventories(player, storage, hands, equip);
+      Core.saveInventories(player, storage, hands, equip, facilityStorage);
       window.LpGroundLoot?.pruneAndSave?.();
     }
     state.open = false;
@@ -1979,7 +2102,27 @@
 
   closeButton?.addEventListener('click', close);
   sortPlayerBagButton?.addEventListener('click', () => sortBagGrid('player'));
-  sortStorageBagButton?.addEventListener('click', () => sortBagGrid('storage'));
+  sortStorageBagButton?.addEventListener('click', () => {
+    sortBagGrid(state.storageTab === 'storage_facility' ? 'storage_facility' : 'storage');
+  });
+  storageWarehouseTabs?.addEventListener('click', (event) => {
+    const btn = event.target.closest?.('[data-lp-storage-tab]');
+    if (!btn) return;
+    setStorageTab(btn.dataset.lpStorageTab);
+  });
+  /**
+   * 从仓储浮窗进入设施摆放（触屏无 P 键时的入口；桌面亦可点）。
+   * 关闭物品栏后 tryEnter；不可编辑车厢则 toast。
+   */
+  facilityEditEnterBtn?.addEventListener('click', (event) => {
+    event.preventDefault();
+    const worldX = state.openWorldX || window.LpGame?.getLocalX?.();
+    close();
+    const entered = window.LpFacilityEdit?.tryEnter?.(worldX);
+    if (!entered) {
+      window.LiminalInteract?.showToast?.('当前车厢不可摆放设施');
+    }
+  });
   root.querySelector('.lp-inventory-backdrop')?.addEventListener('click', close);
   settingsToggle?.addEventListener('click', () => {
     const nextHidden = !settingsPanel.hidden;
@@ -2016,8 +2159,11 @@
     close,
     toggle,
     isOpen,
+    /** 刷新底栏提示（键位变更后由 bindings 调用）。 */
+    updateHint: updateInventoryHint,
     getPlayerInventory: () => player,
     getStorageInventory: () => storage,
+    getFacilityStorageInventory: () => facilityStorage,
     getHandsInventory: () => hands,
     getEquipInventory: () => equip,
     consumeItem,

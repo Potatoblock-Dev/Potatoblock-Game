@@ -35,6 +35,41 @@
   const SPREAD_DEG_TO_GAP_PX = 4;
   /** 后坐满时额外张开（像素）。 */
   const RECOIL_GAP_PX = 22;
+  /**
+   * 手持枪械换弹 SFX（与开火同路径经 LpSfx）。
+   * 在 LpReloadAction 入匣关键帧播放，不在抬枪第 0 帧（见 tryReload）。
+   */
+  const RELOAD_SFX =
+    '/static/games/liminal-platform/audio/weapons/reload-1911.wav?v=2';
+  /**
+   * 单发手枪开火 SFX（已裁切就绪；尚未挂到 catalog.fireSound）。
+   * 未来手枪/占位武器可直接引用，勿覆盖 GUR / 换弹等现有枪口音。
+   */
+  const PISTOL_FIRE_SFX =
+    '/static/games/liminal-platform/audio/weapons/pistol-fire.wav?v=1';
+  /**
+   * 速射炮近距/同车厢单发（Bilibili BV1ws411Z7s5 A10 试射；目录 staged）。
+   * 卫士塔是机炮武装，不走此轨；见 AUTOCANNON_*。
+   */
+  const RAPID_CANNON_FIRE_SFX =
+    '/static/games/liminal-platform/audio/weapons/rapid-cannon-fire.wav?v=2';
+  /**
+   * 速射炮跨车厢远距单发（Bilibili BV1Vc411B76j；目录 staged，卫士塔不用）。
+   */
+  const RAPID_CANNON_FIRE_FAR_SFX =
+    '/static/games/liminal-platform/audio/weapons/rapid-cannon-fire-far.wav?v=2';
+  /**
+   * 机炮同车厢近距单发（B站 BV1HQW9e3Eoo 01:34–01:41 裁切 ?v=5）。
+   * 卫士塔 SHOT_SFX 与此同 URL；跨车厢仅靠 LpSfx 距离衰减，无独立 far 文件。
+   */
+  const AUTOCANNON_FIRE_SFX =
+    '/static/games/liminal-platform/audio/weapons/autocannon-fire.wav?v=5';
+  /**
+   * 火炮单发开火 SFX（B站 BV1HQW9e3Eoo 裁切；已就绪，尚未挂 gameplay）。
+   * 火炮车厢未编入列车前勿接线；见 artillery-fire.PROCESSING.txt。
+   */
+  const ARTILLERY_FIRE_SFX =
+    '/static/games/liminal-platform/audio/weapons/artillery-fire.wav?v=1';
 
   /**
    * 弹种外观与默认射程（世界像素）。
@@ -154,6 +189,24 @@
   /** 当前持有的武器物品定义。 */
   function getHeldWeaponItem() {
     return getHeldWeaponSlot()?.item || null;
+  }
+
+  /**
+   * 当前选中手槽上应画在角色手上的物品（武器或 drawHeld 工具）；仅看 HUD 选中槽。
+   * @returns {object|null}
+   */
+  function getHeldVisibleItem() {
+    const hands = window.LpInventory?.getHandsInventory?.();
+    if (!hands || !Catalog?.showsHeldSprite) return getHeldWeaponItem();
+    const preferred = window.LpHandsHud?.getActiveIndex?.();
+    if (preferred !== 0 && preferred !== 1 && preferred !== 2) {
+      return getHeldWeaponItem();
+    }
+    if (preferred >= hands.size()) return null;
+    if (hands.isCovered?.(preferred)) return null;
+    const stack = hands.getSlot(preferred);
+    if (!stack || !Catalog.showsHeldSprite(stack.itemId)) return null;
+    return Catalog.getItem(stack.itemId) || null;
   }
 
   /** 归一化方向；零向量时按朝向回退。 */
@@ -283,29 +336,65 @@
   }
 
   /**
-   * 抛出地上弹壳（从抛壳口飞出，速度相对枪口朝向）。
+   * 抛出地上弹壳（从抛壳口飞出）。
+   * 速度 = 沿枪管 forward + 世界向上 up（−Y）+ 法向 side 散布；卫士沿枪口外抛。
    * 卫士回收箱满时也走此路径播抛壳 FX（由 LpGuardTurret 调用）。
    */
   function spawnShellCasing(originX, originY, dirX, dirY, item) {
-    const speed = item?.shellEjectSpeed || { forward: -40, up: 140 };
+    const speed = item?.shellEjectSpeed || { forward: 220, up: 100, side: 35 };
     const len = Math.hypot(dirX, dirY) || 1;
     const fx = dirX / len;
     const fy = dirY / len;
     const nx = -fy;
     const ny = fx;
-    const jitter = 0.8 + Math.random() * 0.4;
-    const upSign = fy > 0.35 ? -1 : 1;
+    const forward = Number(speed.forward) || 0;
+    const lift = Number(speed.up) || 0;
+    /* side 缺省：旧数据把大 up 当侧抛；新数据默认小散布。 */
+    const side =
+      speed.side != null
+        ? Number(speed.side) || 0
+        : forward < 0
+          ? lift
+          : 28;
+    const worldUp = speed.side != null || forward >= 0 ? lift : Math.min(60, Math.abs(lift) * 0.35);
+    const jitter = 0.85 + Math.random() * 0.3;
+    const sideSign = Math.random() < 0.5 ? -1 : 1;
+    const alongJ = jitter * (0.82 + Math.random() * 0.28);
+    const sideJ = jitter * (0.7 + Math.random() * 0.45);
     state.casings.push({
       x: originX,
       y: originY,
-      vx: (fx * speed.forward + nx * speed.up * upSign) * jitter * (0.75 + Math.random() * 0.4),
-      vy: (fy * speed.forward + ny * speed.up * upSign) * jitter * (0.8 + Math.random() * 0.35),
+      vx: (fx * forward + nx * side * sideSign) * alongJ,
+      vy: (fy * forward + ny * side * sideSign) * alongJ - worldUp * sideJ,
       rot: Math.random() * Math.PI * 2,
-      omega: (Math.random() * 10 + 4) * (nx >= 0 ? -1 : 1),
+      omega: (Math.random() * 10 + 4) * -sideSign,
       resting: false,
       restLife: CASING_REST_LIFE,
       scale: item?.shellCasingScale ?? 1,
+      /** 轨面坐标系：车外/落地后随 LpTrack 卷动平移。 */
+      trackFrame: false,
     });
+  }
+
+  /**
+   * 弹壳落地高度：走道上用车厢地板；否则用轨下地面（或 TRACK_Y）。
+   * @param {number} x
+   * @param {{ floorY?: number, floorAt?: (x: number) => number|null }} options
+   * @returns {{ y: number, onTrack: boolean }|null}
+   */
+  function casingLandSurface(x, options) {
+    const floorAt = options.floorAt;
+    const deckY =
+      typeof floorAt === 'function' ? floorAt(x) : options.floorY ?? null;
+    if (deckY != null) {
+      return { y: deckY, onTrack: false };
+    }
+    const groundY =
+      window.LpTrack?.getGroundTopY?.() ??
+      window.LiminalCarriageSpec?.TRACK_Y ??
+      null;
+    if (groundY == null) return null;
+    return { y: groundY, onTrack: true };
   }
 
   /**
@@ -346,6 +435,20 @@
       playbackRate: extra.playbackRate,
       x,
       y,
+    });
+  }
+
+  /**
+   * 在本地玩家位置播放手持枪换弹 SFX（音量对齐 GUR 开火约 0.62）。
+   * 仅由 tryReload 在入匣成功时调用，避免 spam R 叠播。
+   */
+  function playReloadSfx() {
+    const avatar = window.LpGame?.getLocalAvatar?.();
+    window.LpSfx?.play?.(RELOAD_SFX, {
+      volume: 0.62,
+      rateJitter: 0.02,
+      x: avatar?.x,
+      y: avatar?.y,
     });
   }
 
@@ -426,7 +529,11 @@
     return payload;
   }
 
-  /** 用背包/手中的对应弹药装填当前武器（带动画；弹药在插入关键帧入匣）。 */
+  /**
+   * 用背包/手中的对应弹药装填当前武器（带动画；弹药在插入关键帧入匣）。
+   * 换弹 SFX 对齐入匣关键帧（top_mag ≈478ms / default ≈408ms），不在抬枪起手；
+   * 无动画回退时与 commit 同步；无人机 R 不走本函数。
+   */
   function tryReload() {
     if (window.LpReloadAction?.isBusy?.()) return false;
     const held = getHeldWeaponSlot();
@@ -455,10 +562,16 @@
 
     const started = window.LpReloadAction?.begin?.({
       item,
-      onCommit: () => commitReloadAmmo(),
+      onCommit: () => {
+        const ok = commitReloadAmmo();
+        if (ok) playReloadSfx();
+        return ok;
+      },
     });
     if (!started) {
-      return commitReloadAmmo();
+      const ok = commitReloadAmmo();
+      if (ok) playReloadSfx();
+      return ok;
     }
     window.LiminalInteract?.showToast?.('装填中…');
     return true;
@@ -774,9 +887,12 @@
       if (ribbon.life <= 0) state.lingeringTrails.splice(i, 1);
     }
 
-    const floorY = options.floorY;
     for (let i = state.casings.length - 1; i >= 0; i -= 1) {
       const c = state.casings[i];
+      /* 车外/轨面弹壳：与轨枕同相平移（车厢固定、轨卷动）。 */
+      if (c.trackFrame) {
+        window.LpTrack?.applyTrackScroll?.(c);
+      }
       if (c.resting) {
         c.restLife -= dt;
         if (c.restLife <= 0) state.casings.splice(i, 1);
@@ -787,8 +903,13 @@
       c.y += c.vy * dt;
       c.rot += c.omega * dt;
       c.vx *= Math.exp(-1.2 * dt);
-      if (floorY != null && c.y >= floorY - 2) {
-        c.y = floorY - 2;
+      const land = casingLandSurface(c.x, options);
+      if (land) {
+        c.trackFrame = land.onTrack;
+      }
+      if (land && c.y >= land.y - 2) {
+        c.y = land.y - 2;
+        c.trackFrame = land.onTrack;
         if (Math.abs(c.vy) < 60 && Math.abs(c.vx) < 40) {
           c.vx = 0;
           c.vy = 0;
@@ -1180,7 +1301,7 @@
   function isPointInsideCabin(x, y) {
     const Spec = window.LiminalCarriageSpec;
     if (!Spec?.CARRIAGES?.length) return false;
-    const ceilY = Spec.FLOOR_Y - Spec.scaleArt(280);
+    const ceilY = Spec.FLOOR_Y - Spec.CABIN_CEIL_INSET;
     const floorSlack = Spec.scaleArt(36);
     for (const car of Spec.CARRIAGES) {
       const left = car.worldX + Spec.WALK_LEFT;
@@ -1565,12 +1686,20 @@
     spawnTracer,
     spawnShellCasing,
     playFireSfxAt,
+    playReloadSfx,
+    RELOAD_SFX,
+    PISTOL_FIRE_SFX,
+    RAPID_CANNON_FIRE_SFX,
+    RAPID_CANNON_FIRE_FAR_SFX,
+    AUTOCANNON_FIRE_SFX,
+    ARTILLERY_FIRE_SFX,
     tick,
     draw,
     setWeapon,
     canFire,
     isHeldWeaponFullAuto,
     getHeldWeaponItem,
+    getHeldVisibleItem,
     getHeldWeaponSlot,
     getMagReadout,
     getRecoil: () => state.recoil,

@@ -17,8 +17,13 @@
     commitAt: 0.48,
   };
 
-  const SOFT_ERR = 14;
-  const SNAP_ERR = 96;
+  /** 与枪械换弹同文案的进行中提示（LiminalInteract toast）。 */
+  const RELOAD_HINT = '装填中…';
+
+  /** 联机：本机权威，软矫正门槛；硬对齐仅灾难级误差（车厢跨度量级）。 */
+  const SOFT_ERR = 48;
+  const SOFT_BLEND = 0.12;
+  const SNAP_ERR = 720;
   const MAX_SPEED = 420;
   const ACCEL = 980;
   const DAMP = 7.5;
@@ -28,8 +33,27 @@
   const PATROL_DAMP = 6.5;
   const PATROL_FLIP_DIST = 28;
   const PATROL_INSET_ART = 56;
+  /** 脱绳过远时加强追赶加速（仍连续，不瞬移）。 */
+  const CATCHUP_DIST = 160;
+  const CATCHUP_ACCEL_MUL = 1.55;
+  /**
+   * 距主人移速曲线：ownerDist ∈ [NEAR, FAR] → scale ∈ [MIN, MAX]（smoothstep）。
+   * 巡逻仍按主人距缩放（非巡逻目标距），远离时能尽快回跟。
+   */
+  const OWNER_SPEED_NEAR = 72;
+  const OWNER_SPEED_FAR = 420;
+  const OWNER_SPEED_MIN = 0.55;
+  const OWNER_SPEED_MAX = 1.85;
+  /** 视觉俯仰：水平速度相对朝向；满倾角对应参考速。 */
+  const LEAN_MAX = 0.28;
+  const LEAN_SPEED_REF = 220;
+  /** 默认上下漂浮频率（Hz）；图鉴可覆盖。 */
+  const BOB_HZ_DEFAULT = 1.1;
+  /** 软绳：略超 leash 时轻拉；过远交给 desire 加速追，避免瞬拉。 */
+  const SOFT_LEASH_RATE = 2.8;
+  const SOFT_LEASH_MAX_OVER = 2.4;
 
-  /** 左右各半节车厢 → 相对玩家的水平交战半径。 */
+  /** 左右各半节车厢 → 相对无人机的水平交战半径。 */
   function engageRangeX() {
     const Spec = window.LiminalCarriageSpec;
     const moduleW = Number(Spec?.MODULE_W) || 1980;
@@ -187,6 +211,7 @@
 
   /** 销毁伴飞运行时（卸下手部栏）。 */
   function despawn() {
+    if (drone?.reloadPhase) clearReloadHint();
     drone = null;
   }
 
@@ -227,21 +252,68 @@
   }
 
   /**
-   * 在交战半径内按锚点选最近敌人。
-   * @param {number} anchorX
-   * @param {number} anchorY
+   * 交战参照车厢：优先无人机所在走道舱，否则玩家；连廊/舱外无节时不可交战。
    * @param {number} playerX
+   * @returns {string|null}
+   */
+  function engageRefCarId(playerX) {
+    const Spec = window.LiminalCarriageSpec;
+    if (!Spec?.carriageAt) return null;
+    if (drone?.x != null && Number.isFinite(Number(drone.x))) {
+      const atDrone = Spec.carriageAt(Number(drone.x));
+      if (atDrone?.id) return atDrone.id;
+    }
+    if (playerX != null && Number.isFinite(Number(playerX))) {
+      const atPlayer = Spec.carriageAt(Number(playerX));
+      if (atPlayer?.id) return atPlayer.id;
+    }
+    return null;
+  }
+
+  /**
+   * 敌方是否可被蜂鸟交战：须舱内战斗态，且目标在参照节同车厢或左右相邻节。
+   * 对齐 mob inCabin / phase inside（含舱内空漂）；rail、dive、jump/enter 入舱途中不打。
+   * @param {{ x?: number, inCabin?: boolean, phase?: string }} h
+   * @param {string} refCarId
+   */
+  function isDroneCabinEngageTarget(h, refCarId) {
+    if (!h || !refCarId) return false;
+    if (h.x == null || !Number.isFinite(Number(h.x))) return false;
+    const p = String(h.phase || '');
+    /* 稳态舱内才打；inCabin 含 jump/enter，入舱途中仍排除。 */
+    const cabinPresent =
+      p === 'inside' ||
+      (typeof h.inCabin === 'boolean' && h.inCabin && !p);
+    if (!cabinPresent) return false;
+    const Spec = window.LiminalCarriageSpec;
+    const car = Spec?.carriageAt?.(Number(h.x));
+    if (!car?.id) return false;
+    return Boolean(Spec.areCarriagesSameOrAdjacent?.(car.id, refCarId));
+  }
+
+  /**
+   * 在交战半径内按锚点选最近敌人（射程原点为无人机；同节或相邻节舱内；选中用准星锚、未选中用玩家锚）。
+   * @param {number} anchorX 选敌距离优先锚点 X
+   * @param {number} anchorY 选敌距离优先锚点 Y
+   * @param {number} playerX 无人机无车厢时交战参照回退用
    * @returns {object|null}
    */
   function pickTarget(anchorX, anchorY, playerX) {
     const hostiles = window.LpCombat?.listHostiles?.() || [];
     const rangeX = engageRangeX();
+    const originX =
+      drone?.x != null && Number.isFinite(Number(drone.x))
+        ? Number(drone.x)
+        : Number(playerX);
+    const refCarId = engageRefCarId(playerX);
+    if (!refCarId) return null;
     let best = null;
     let bestD2 = Infinity;
     for (const h of hostiles) {
       if (!h || h.x == null || !Number.isFinite(Number(h.x))) continue;
       const hx = Number(h.x);
-      if (Math.abs(hx - playerX) > rangeX) continue;
+      if (Math.abs(hx - originX) > rangeX) continue;
+      if (!isDroneCabinEngageTarget(h, refCarId)) continue;
       const hy =
         h.y != null && Number.isFinite(Number(h.y)) ? Number(h.y) : anchorY;
       const d2 = (hx - anchorX) ** 2 + (hy - anchorY) ** 2;
@@ -293,8 +365,24 @@
   }
 
   /**
-   * 角色式跟飞：朝目标点加速并阻尼，软绳牵引；脱绳过远才硬拉回。
-   * 巡逻时 tune.skipLeash 关闭相对玩家的软/硬绳，以免拖回设备席。
+   * 按与主人的距离得到移速/加速倍率：近处悬停更稳，远处加快追赶。
+   * 巡逻同样用主人距（不用巡逻端点距），以便远离时能尽快回跟。
+   * @param {{ playerX: number, playerY: number }} ctx
+   * @returns {number}
+   */
+  function ownerDistSpeedScale(ctx) {
+    if (!drone) return 1;
+    const od = Math.hypot(drone.x - ctx.playerX, drone.y - ctx.playerY);
+    const span = Math.max(1, OWNER_SPEED_FAR - OWNER_SPEED_NEAR);
+    const t = Math.max(0, Math.min(1, (od - OWNER_SPEED_NEAR) / span));
+    const s = t * t * (3 - 2 * t);
+    return OWNER_SPEED_MIN + s * (OWNER_SPEED_MAX - OWNER_SPEED_MIN);
+  }
+
+  /**
+   * 角色式跟飞：朝目标点加速并阻尼；永不硬写 x/y。
+   * 巡逻时 tune.skipLeash 关闭相对玩家的软绳，以免拖回设备席。
+   * 基础 maxSpeed/accel 再乘 ownerDistSpeedScale（距主人）。
    * @param {number} dt
    * @param {{ x: number, y: number }} desire
    * @param {{ playerX: number, playerY: number }} ctx
@@ -303,21 +391,18 @@
    */
   function integrateToward(dt, desire, ctx, maxLeash, tune = {}) {
     if (!drone) return;
-    const maxSpeed = tune.maxSpeed ?? MAX_SPEED;
-    const accel = tune.accel ?? ACCEL;
+    const ownerScale = ownerDistSpeedScale(ctx);
+    let maxSpeed = (tune.maxSpeed ?? MAX_SPEED) * ownerScale;
+    let accel = (tune.accel ?? ACCEL) * ownerScale;
     const damp = tune.damp ?? DAMP;
     const skipLeash = Boolean(tune.skipLeash);
     const dx = desire.x - drone.x;
     const dy = desire.y - drone.y;
     const dist = Math.hypot(dx, dy) || 1;
-    const leash = Math.hypot(drone.x - ctx.playerX, drone.y - ctx.playerY);
 
-    if (!skipLeash && leash > maxLeash * 1.55 && !drone.reloadPhase) {
-      drone.x = desire.x;
-      drone.y = desire.y;
-      drone.vx = 0;
-      drone.vy = 0;
-      return;
+    /* 模式切换 / 脱绳过远：加强加速追上，仍连续积分。 */
+    if (dist > CATCHUP_DIST) {
+      accel *= CATCHUP_ACCEL_MUL;
     }
 
     /* 接近目标时减速，避免弹簧过冲；远处满加速。 */
@@ -329,23 +414,38 @@
     const dampF = Math.max(0, 1 - damp * dt);
     drone.vx *= dampF;
     drone.vy *= dampF;
+    const spdCap = dist > CATCHUP_DIST ? maxSpeed * 1.25 : maxSpeed;
     const spd = Math.hypot(drone.vx, drone.vy);
-    if (spd > maxSpeed) {
-      drone.vx = (drone.vx / spd) * maxSpeed;
-      drone.vy = (drone.vy / spd) * maxSpeed;
+    if (spd > spdCap) {
+      drone.vx = (drone.vx / spd) * spdCap;
+      drone.vy = (drone.vy / spd) * spdCap;
     }
     drone.x += drone.vx * dt;
     drone.y += drone.vy * dt;
 
-    /* 软绳：略超 leash 时向玩家拉回，不瞬移。 */
+    /* 软绳：仅略超 leash 时轻拉；过远交给 desire 加速，避免瞬拉感。 */
     if (skipLeash || drone.reloadPhase) return;
     const soft = maxLeash * 1.12;
+    const hardBand = maxLeash * SOFT_LEASH_MAX_OVER;
     const after = Math.hypot(drone.x - ctx.playerX, drone.y - ctx.playerY);
-    if (after > soft) {
-      const pull = (after - soft) / after;
-      drone.x -= (drone.x - ctx.playerX) * pull * Math.min(1, dt * 6);
-      drone.y -= (drone.y - ctx.playerY) * pull * Math.min(1, dt * 6);
+    if (after > soft && after < hardBand) {
+      const over = after - soft;
+      const pull = Math.min(0.28, over / after) * Math.min(1, dt * SOFT_LEASH_RATE);
+      drone.x -= (drone.x - ctx.playerX) * pull;
+      drone.y -= (drone.y - ctx.playerY) * pull;
     }
+  }
+
+  /**
+   * 沿水平速度方向的视觉俯仰（仅绘制；右移低头向右、左移向左；与瞄准朝向无关）。
+   * lean = clamp(vx / LEAN_SPEED_REF, -1, 1) * LEAN_MAX
+   * @param {{ vx?: number }} entity
+   * @returns {number} 弧度；在朝向镜像之前施加（世界空间）
+   */
+  function flightLeanRad(entity) {
+    const vx = Number(entity.vx) || 0;
+    const u = Math.max(-1, Math.min(1, vx / LEAN_SPEED_REF));
+    return u * LEAN_MAX;
   }
 
   /**
@@ -421,8 +521,27 @@
         drone.reloadT = 0;
         drone.reloadCommit = false;
         drone.shotCd = 0.2;
+        clearReloadHint();
       }
     }
+  }
+
+  /** 枪械换弹动画占用时不抢 toast。 */
+  function isGunReloadBusy() {
+    return Boolean(window.LpReloadAction?.isBusy?.());
+  }
+
+  /** 显示与枪械相同的「装填中…」；枪械忙则跳过。 */
+  function showReloadHint() {
+    if (isGunReloadBusy()) return;
+    const ms = Math.ceil((RELOAD.grab + RELOAD.fiddle + RELOAD.release + 0.4) * 1000);
+    window.LiminalInteract?.showToast?.(RELOAD_HINT, ms);
+  }
+
+  /** 装填结束时清掉本模块的进行中提示（不碰枪械或其它 toast）。 */
+  function clearReloadHint() {
+    if (isGunReloadBusy()) return;
+    window.LiminalInteract?.clearToastIf?.(RELOAD_HINT);
   }
 
   /**
@@ -459,7 +578,7 @@
 
     const item = Catalog.getItem(ITEM_ID) || {};
     const bobAmp = Number(item.bobAmp) || 5.5;
-    const bobHz = Number(item.bobHz) || 2.2;
+    const bobHz = Number(item.bobHz) || BOB_HZ_DEFAULT;
     drone.bobT += dt * bobHz * Math.PI * 2;
     drone.bobY = Math.sin(drone.bobT) * bobAmp;
     if (Math.abs(drone.vx) > 8) {
@@ -664,7 +783,6 @@
       });
     }
     if (drone.reloadPhase) {
-      window.LiminalInteract?.showToast?.('正在装填无人机…');
       return true;
     }
     const { item, stack } = held;
@@ -688,7 +806,7 @@
     drone.reloadCommit = false;
     drone.burstLeft = 0;
     drone.bobY = 0;
-    window.LiminalInteract?.showToast?.('抓住无人机装填…');
+    showReloadHint();
     return true;
   }
 
@@ -726,7 +844,7 @@
   }
 
   /**
-   * 服务端回显本机无人机位姿时做软矫正 / 大误差硬对齐。
+   * 服务端回显本机无人机位姿：本地权威优先软 lerp；仅灾难级误差才硬对齐。
    * @param {{ droneX?: number, droneY?: number, droneVx?: number, droneVy?: number, droneAim?: number }} pose
    */
   function applyServerPose(pose) {
@@ -736,7 +854,9 @@
     const sy = Number(pose.droneY);
     if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
     const err = Math.hypot(drone.x - sx, drone.y - sy);
+    if (err <= SOFT_ERR) return;
     if (err > SNAP_ERR) {
+      /* 仅房间级/传送级偏差：硬对齐一次，非每帧路径。 */
       drone.x = sx;
       drone.y = sy;
       drone.vx = Number(pose.droneVx) || 0;
@@ -744,16 +864,14 @@
       if (Number.isFinite(Number(pose.droneAim))) drone.aimAngle = Number(pose.droneAim);
       return;
     }
-    if (err > SOFT_ERR) {
-      const k = 0.22;
-      drone.x += (sx - drone.x) * k;
-      drone.y += (sy - drone.y) * k;
-      if (Number.isFinite(Number(pose.droneVx))) {
-        drone.vx += (Number(pose.droneVx) - drone.vx) * k;
-      }
-      if (Number.isFinite(Number(pose.droneVy))) {
-        drone.vy += (Number(pose.droneVy) - drone.vy) * k;
-      }
+    const k = SOFT_BLEND;
+    drone.x += (sx - drone.x) * k;
+    drone.y += (sy - drone.y) * k;
+    if (Number.isFinite(Number(pose.droneVx))) {
+      drone.vx += (Number(pose.droneVx) - drone.vx) * k;
+    }
+    if (Number.isFinite(Number(pose.droneVy))) {
+      drone.vy += (Number(pose.droneVy) - drone.vy) * k;
     }
   }
 
@@ -814,13 +932,13 @@
   }
 
   /**
-   * 平滑推进远端无人机朝快照目标。
+   * 平滑推进远端无人机朝快照目标（默认软追；仅灾难级误差硬对齐）。
    * @param {number} dt
    */
   function tickRemotes(dt) {
     const item = Catalog.getItem(ITEM_ID) || {};
     const bobAmp = Number(item.bobAmp) || 5.5;
-    const bobHz = Number(item.bobHz) || 2.2;
+    const bobHz = Number(item.bobHz) || BOB_HZ_DEFAULT;
     for (const remote of remotes.values()) {
       const err = Math.hypot(remote.tx - remote.x, remote.ty - remote.y);
       if (err > SNAP_ERR) {
@@ -828,8 +946,11 @@
         remote.y = remote.ty;
         remote.vx = remote.tvx;
         remote.vy = remote.tvy;
+        remote.aimAngle = remote.tAim;
       } else {
-        const k = Math.min(1, dt * 10);
+        /* 误差越大追得稍快，但仍是连续 lerp，避免 96px 级每帧硬切。 */
+        const chase = err > CATCHUP_DIST ? 8 : 6;
+        const k = Math.min(1, dt * chase);
         remote.x += (remote.tx - remote.x) * k;
         remote.y += (remote.ty - remote.y) * k;
         remote.vx += (remote.tvx - remote.vx) * k;
@@ -846,8 +967,9 @@
 
   /**
    * 绘制单个无人机实体（本地或远端共用）。
+   * 机身+炮管共用沿 vx 的移动俯仰（flightLeanRad）；炮管另加瞄准仰角。
    * @param {CanvasRenderingContext2D} ctx
-   * @param {{ x: number, y: number, aimAngle: number, bobY?: number }} entity
+   * @param {{ x: number, y: number, aimAngle: number, bobY?: number, vx?: number }} entity
    */
   function drawEntity(ctx, entity) {
     const item = Catalog.getItem(ITEM_ID);
@@ -863,19 +985,23 @@
     const pivotY = Number(item.barrelPivotY) || 0.45;
 
     const drawY = entity.y + (entity.bobY || 0);
-    const mountWorldX = entity.x + mount.x;
-    const mountWorldY = drawY + mount.y;
     let ang = entity.aimAngle;
     while (ang > Math.PI) ang -= Math.PI * 2;
     while (ang <= -Math.PI) ang += Math.PI * 2;
     const faceLeft = Math.cos(ang) < 0;
     const elev = Math.atan2(Math.sin(ang), Math.abs(Math.cos(ang)));
+    const lean = flightLeanRad(entity);
 
     const barrelImg = imgs.barrel;
     const bodyImg = imgs.body;
 
+    /* 父变换：速度俯仰；子级再镜像 / 炮管仰角。 */
     ctx.save();
-    ctx.translate(mountWorldX, mountWorldY);
+    ctx.translate(entity.x, drawY);
+    ctx.rotate(lean);
+
+    ctx.save();
+    ctx.translate(mount.x, mount.y);
     if (faceLeft) ctx.scale(-1, 1);
     ctx.rotate(elev);
     if (barrelImg?.complete && barrelImg.naturalWidth) {
@@ -888,10 +1014,7 @@
     }
     ctx.restore();
 
-    const lean = Math.max(-0.18, Math.min(0.18, Math.sin(ang) * 0.1));
     ctx.save();
-    ctx.translate(entity.x, drawY);
-    ctx.rotate(lean);
     if (faceLeft) ctx.scale(-1, 1);
     if (bodyImg?.complete && bodyImg.naturalWidth) {
       ctx.drawImage(bodyImg, -bodyW / 2, -bodyH / 2, bodyW, bodyH);
@@ -899,6 +1022,8 @@
       ctx.fillStyle = '#4a7a5c';
       ctx.fillRect(-bodyW / 2, -bodyH / 2, bodyW, bodyH);
     }
+    ctx.restore();
+
     ctx.restore();
   }
 
@@ -997,9 +1122,18 @@
  * 设备占用巡逻：
  *   isManned / 锅炉 / 加燃料 / 雷达 / 枢机 / 卫士箱 UI → 当前车厢 WALK 内往返。
  *   退出后恢复跟飞（选中准星 / 未选中身旁）。
+ *   移速倍率仍按距主人（非巡逻端点），远离时可更快回跟。
+ *
+ * 距主人移速：
+ *   scale = MIN + smoothstep((od-NEAR)/(FAR-NEAR)) * (MAX-MIN)
+ *   NEAR=72 FAR=420 MIN=0.55 MAX=1.85；再乘 desire 追赶 / arrive。
+ *
+ * 视觉俯仰：
+ *   lean = clamp(vx/LEAN_SPEED_REF, -1, 1) * LEAN_MAX（仅绘制；沿移动方向，非瞄准）。
  *
  * 联机：
  *   客户端模拟位姿；pose 带 droneX/Y/Vx/Vy/Aim/Phase；服务端回显广播。
- *   本机软矫正（>14px lerp，>96px snap）；远端平滑追目标。
+ *   本机软矫正（>48px lerp k=0.12，>720px 才 snap）；远端软追，同阈值。
+ *   跟飞积分永不硬写 x/y；脱绳靠加速追赶，不瞬移。
  *   弹道仍仅本地（与枪械本地先行一致）；远端可见伴飞体。
  */

@@ -33,8 +33,12 @@
   const DEFAULT_HEIGHT_SCALE = 1.0;
   /** 步行目标水平速度（px/s）。 */
   const MOVE_SPEED = 340;
-  /** 奔跑目标水平速度（px/s）。 */
-  const RUN_SPEED = 545;
+  /**
+   * 奔跑目标水平速度（px/s）。
+   * 对齐 liminal carriage-spec 走道跨度：(ART_WALK_RIGHT−ART_WALK_LEFT)×WORLD_SCALE
+   * = (1882−368)×0.88 = 1332.32 → ≈2s 穿过一节车厢。
+   */
+  const RUN_SPEED = 666;
 
   function createJoints() {
     return {

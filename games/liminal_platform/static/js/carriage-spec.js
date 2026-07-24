@@ -4,8 +4,8 @@
  *
  * 世界约定：屏幕右侧为列车前进方向（世界 +X）；
  * 编组（左→右 = 车尾→车头前进方向）：
- * 卫兵防御 → 仓储 → 动力 → 绘轨 → 枢机
- * （绘轨接在车头/动力前，枢机接在绘轨前；译名取自 成品/车厢 文件名。）
+ * 卫兵防御 → 仓储 → 空车厢 → 动力 → 绘轨 → 枢机
+ * （空车厢夹在仓储与动力之间，便于物资/设施往返；绘轨接在动力前，枢机接在绘轨前。）
  */
 (() => {
   const ART_MODULE_W = 2250;
@@ -29,6 +29,15 @@
    */
   const ART_WALK_LEFT = 368;
   const ART_WALK_RIGHT = 1882;
+  /**
+   * 设施摆放格边长（源图像素）。走道宽 ≈1514 → 满宽约 18 列，左右各内收 1 列后 16 列；
+   * 舱高 ≈320 → 约 4 行（相对旧 3 行向上多 1 行）。
+   */
+  const ART_FACILITY_CELL = 80;
+  /** 设施网格相对走道满宽列数，左右各去掉的列数（居中后仍落在舱内）。 */
+  const FACILITY_GRID_SIDE_INSET_COLS = 1;
+  /** 舱内顶相对地板的净空（源图像素；与 lp-combat 舱内判定一致）。 */
+  const ART_CABIN_CEIL_INSET = 320;
   /**
    * 相邻车厢 worldX 间距：前车右钩尖与后车左钩尖对接。
    * 成品贴图测得：动力/卫兵防御右 tip≈1898，仓储左 tip≈372 → 1526。
@@ -57,6 +66,8 @@
   const TRACK_Y = scaleArt(ART_TRACK_Y);
   const WALK_LEFT = scaleArt(ART_WALK_LEFT);
   const WALK_RIGHT = scaleArt(ART_WALK_RIGHT);
+  const FACILITY_CELL = scaleArt(ART_FACILITY_CELL);
+  const CABIN_CEIL_INSET = scaleArt(ART_CABIN_CEIL_INSET);
   const COUPLER_JOIN_OFFSET = scaleArt(ART_COUPLER_JOIN);
 
   const CARRIAGES = [
@@ -64,7 +75,7 @@
       id: 'guard',
       label: '卫兵防御车厢',
       image: '/static/games/liminal-platform/img/cars/guard-car.png?v=3',
-      icon: '/static/games/liminal-platform/img/cars/guard-car-icon.png?v=1',
+      icon: '/static/games/liminal-platform/img/cars/guard-car-preview.png?v=1',
       worldX: 0,
       map: {
         shortLabel: '卫兵',
@@ -75,9 +86,11 @@
     {
       id: 'storage',
       label: '仓储车厢',
-      image: '/static/games/liminal-platform/img/cars/storage-car.png?v=4',
+      image: '/static/games/liminal-platform/img/cars/storage-car.png?v=5',
       icon: '/static/games/liminal-platform/img/cars/storage-car-icon.png?v=1',
       worldX: COUPLER_JOIN_OFFSET,
+      /** 可按 P 进入设施摆放编辑。 */
+      facilityEditable: true,
       map: {
         shortLabel: '仓储',
         kind: 'cargo',
@@ -85,11 +98,24 @@
       },
     },
     {
+      id: 'empty',
+      label: '空车厢',
+      image: '/static/games/liminal-platform/img/cars/empty-car.png?v=1',
+      icon: '/static/games/liminal-platform/img/cars/empty-car-icon.png?v=1',
+      worldX: COUPLER_JOIN_OFFSET * 2,
+      facilityEditable: true,
+      map: {
+        shortLabel: '空车',
+        kind: 'cargo',
+        tone: '#475569',
+      },
+    },
+    {
       id: 'power',
       label: '动力车厢',
       image: '/static/games/liminal-platform/img/cars/power-car.png?v=4',
       icon: '/static/games/liminal-platform/img/cars/power-car-icon.png?v=1',
-      worldX: COUPLER_JOIN_OFFSET * 2,
+      worldX: COUPLER_JOIN_OFFSET * 3,
       map: {
         shortLabel: '动力',
         kind: 'engine',
@@ -99,9 +125,9 @@
     {
       id: 'huigui',
       label: '绘轨车厢',
-      image: '/static/games/liminal-platform/img/cars/huigui-car.png?v=1',
+      image: '/static/games/liminal-platform/img/cars/huigui-car.png?v=2',
       icon: '/static/games/liminal-platform/img/cars/huigui-car-icon.png?v=1',
-      worldX: COUPLER_JOIN_OFFSET * 3,
+      worldX: COUPLER_JOIN_OFFSET * 4,
       map: {
         shortLabel: '绘轨',
         kind: 'sensor',
@@ -113,7 +139,7 @@
       label: '枢机车厢',
       image: '/static/games/liminal-platform/img/cars/shuji-car.png?v=1',
       icon: '/static/games/liminal-platform/img/cars/shuji-car-icon.png?v=1',
-      worldX: COUPLER_JOIN_OFFSET * 4,
+      worldX: COUPLER_JOIN_OFFSET * 5,
       map: {
         shortLabel: '枢机',
         kind: 'compute',
@@ -221,6 +247,63 @@
     return null;
   }
 
+  /** 该车厢是否允许设施摆放编辑（当前：仓储、空车厢）。 */
+  function isFacilityEditable(carOrId) {
+    const car =
+      typeof carOrId === 'string' ? carriageById(carOrId) : carOrId;
+    return Boolean(car?.facilityEditable);
+  }
+
+  /**
+   * 车厢舱内设施网格（世界坐标）。
+   * 原点为网格左上角；行向下增大；底边贴地板（floor-anchored）。
+   * 存档 (col,row) 相对顶原点；向上扩行时 originY 上移，旧布局需 row+=Δ 以贴地不变。
+   * 列数 = 走道满宽可容纳列 − 左右各 FACILITY_GRID_SIDE_INSET_COLS，再水平居中。
+   * @param {object|string} carOrId
+   * @returns {{ carId: string, originX: number, originY: number, cell: number, cols: number, rows: number, floorY: number }|null}
+   */
+  function facilityGridFor(carOrId) {
+    const car =
+      typeof carOrId === 'string' ? carriageById(carOrId) : carOrId;
+    if (!car || !isFacilityEditable(car)) return null;
+    const cell = FACILITY_CELL;
+    const left = car.worldX + WALK_LEFT;
+    const right = car.worldX + WALK_RIGHT;
+    const floorY = FLOOR_Y;
+    const ceilY = FLOOR_Y - CABIN_CEIL_INSET;
+    const fullCols = Math.max(1, Math.floor((right - left) / cell));
+    const cols = Math.max(
+      1,
+      fullCols - FACILITY_GRID_SIDE_INSET_COLS * 2
+    );
+    const rows = Math.max(1, Math.floor((floorY - ceilY) / cell));
+    const gridW = cols * cell;
+    const gridH = rows * cell;
+    return {
+      carId: car.id,
+      originX: left + (right - left - gridW) / 2,
+      originY: floorY - gridH,
+      cell,
+      cols,
+      rows,
+      floorY,
+    };
+  }
+
+  /**
+   * 编组顺序下两节是否同节或左右相邻（|index 差| ≤ 1）；未知 id 为 false。
+   * @param {string} carIdA
+   * @param {string} carIdB
+   * @returns {boolean}
+   */
+  function areCarriagesSameOrAdjacent(carIdA, carIdB) {
+    if (!carIdA || !carIdB) return false;
+    const ia = CARRIAGES.findIndex((car) => car.id === carIdA);
+    const ib = CARRIAGES.findIndex((car) => car.id === carIdB);
+    if (ia < 0 || ib < 0) return false;
+    return Math.abs(ia - ib) <= 1;
+  }
+
   /**
    * 线段与水平面相交：若本帧跨越 planeY 且命中 x 落在 [xMin,xMax]，写入候选（取更近的 t）。
    */
@@ -286,6 +369,10 @@
     TRACK_Y,
     WALK_LEFT,
     WALK_RIGHT,
+    FACILITY_CELL,
+    FACILITY_GRID_SIDE_INSET_COLS,
+    CABIN_CEIL_INSET,
+    ART_FACILITY_CELL,
     COUPLER_JOIN_OFFSET,
     CARRIAGES,
     mapEntryFor,
@@ -295,6 +382,9 @@
     nearestStorageSpawnX,
     buildWalkPlatforms,
     carriageAt,
+    isFacilityEditable,
+    facilityGridFor,
+    areCarriagesSameOrAdjacent,
     hitProjectileSurfaces,
   };
 })();

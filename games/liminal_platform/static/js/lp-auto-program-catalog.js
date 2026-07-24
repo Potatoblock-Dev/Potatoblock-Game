@@ -307,7 +307,7 @@
       id: 'platform_ahead',
       label: '前方有月台',
       hint:
-        '列车前方接近月台（LpAutoSensors.platformAhead；月台未实现前恒假，可用 setPlatformStub 调试）',
+        '列车前方接近月台（LpAutoSensors.platformAhead；由 LpPlatform 写入距离）',
       cars: ['power'],
       preferWhile: true,
       params: [],
@@ -316,7 +316,7 @@
       id: 'at_platform',
       label: '位于月台',
       hint:
-        '列车已停靠/对准月台（LpAutoSensors.atPlatform；月台未实现前恒假，可用 setPlatformStub 调试）',
+        '列车已停靠月台（LpAutoSensors.atPlatform；由 LpPlatform 在停稳进站后置真）',
       cars: ['power'],
       preferWhile: true,
       params: [],
@@ -958,6 +958,7 @@
       {
         guard: '卫兵',
         storage: '仓储',
+        empty: '空车',
         power: '动力',
         huigui: '绘轨',
         shuji: '枢机',

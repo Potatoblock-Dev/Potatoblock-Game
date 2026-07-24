@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=135">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=145">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -230,6 +230,11 @@
               <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="0"></button>
               <button type="button" data-lp-binding-action="sprint" data-lp-binding-slot="1"></button>
             </div>
+            <div class="lp-binding-row lp-desktop-only">
+              <span>下蹲</span>
+              <button type="button" data-lp-binding-action="kneel" data-lp-binding-slot="0"></button>
+              <button type="button" data-lp-binding-action="kneel" data-lp-binding-slot="1"></button>
+            </div>
             <label class="lp-setting-toggle">
               <input type="checkbox" id="lpAutoRunToggle" />
               <span class="lp-desktop-only">自动奔跑（进房默认奔跑，按奔跑键切换走/跑）</span>
@@ -265,11 +270,29 @@
         >
           <header class="lp-inventory-float-header">
             <h3 class="lp-inventory-panel-title">仓储车厢 · 仓库</h3>
+            <nav class="lp-storage-warehouse-tabs" aria-label="仓库分区">
+              <button
+                type="button"
+                class="lp-storage-warehouse-tab is-active"
+                data-lp-storage-tab="storage"
+              >物资</button>
+              <button
+                type="button"
+                class="lp-storage-warehouse-tab"
+                data-lp-storage-tab="storage_facility"
+              >设施</button>
+            </nav>
+            <button
+              type="button"
+              id="lpFacilityEditEnter"
+              class="lp-facility-edit-enter"
+              title="进入设施摆放（桌面亦可按 P）"
+            >摆放</button>
             <button
               type="button"
               id="lpSortStorageBag"
               class="lp-inventory-sort-button"
-              title="自动整理"
+              title="自动整理当前仓库"
             >整理</button>
           </header>
           <div class="lp-inventory-float-body">
@@ -352,7 +375,7 @@
           </section>
         </div>
         <footer class="lp-inventory-footer">
-          <p id="lpInventoryHint">拖拽移动 · R 旋转 · Shift+点击快速转移 · 整理 · Tab 关闭</p>
+          <p id="lpInventoryHint">拖拽移动 · R 旋转 · Q 丢地上 · Shift+点击 / F 快速转移 · 整理 · Tab 关闭</p>
         </footer>
       </div>
       <!-- 详情浮层：桌面由 JS 挂到 body（高 z-index）；移动端挂回 shell -->
@@ -636,6 +659,34 @@
     </div>
   </div>
 
+  <div id="lpFacilityEditRoot" class="lp-facility-edit-root" hidden aria-hidden="true">
+    <div class="lp-facility-edit-chrome">
+      <p id="lpFacilityEditHint" class="lp-facility-edit-hint">设施编辑</p>
+      <button type="button" id="lpFacilityEditDone" class="lp-facility-edit-done">完成</button>
+    </div>
+    <div id="lpFacilityTray" class="lp-facility-tray" aria-label="设施仓库可摆放设施"></div>
+  </div>
+  <div id="lpFacilityGhost" class="lp-facility-ghost" hidden aria-hidden="true"></div>
+
+  <div id="lpPlatformEditRoot" class="lp-platform-edit-root" hidden aria-hidden="true">
+    <div class="lp-platform-edit-shell" role="dialog" aria-modal="true" aria-label="月台编组编辑">
+      <header class="lp-platform-edit-header">
+        <div>
+          <p class="lp-platform-edit-eyebrow">月台 · 编组</p>
+          <h2 class="lp-platform-edit-title">编组编辑台</h2>
+        </div>
+        <button type="button" id="lpPlatformEditClose" class="lp-platform-edit-close">关闭</button>
+      </header>
+      <p id="lpPlatformEditStatus" class="lp-platform-edit-status">拖拽车厢调整顺序；仓储 / 空车可移除或加回（本会话）。</p>
+      <div class="lp-platform-edit-stage" aria-label="编组预览">
+        <ol id="lpPlatformEditList" class="lp-platform-edit-cars"></ol>
+        <p class="lp-platform-edit-forward" aria-hidden="true">→ 前进</p>
+      </div>
+      <div id="lpPlatformEditAdd" class="lp-platform-edit-add" hidden></div>
+      <p class="lp-platform-edit-hint">拖拽换位 · Esc / 关闭 · 回车点按 F 返回列车</p>
+    </div>
+  </div>
+
   <div id="lpRadarScopeRoot" class="lp-radar-scope-root" hidden aria-hidden="true">
     <div class="lp-radar-backdrop"></div>
     <div class="lp-radar-shell" role="dialog" aria-modal="true" aria-label="绘轨雷达示波器">
@@ -786,59 +837,68 @@
   <script src="/static/games/avatar-lobby/js/uv-layout.js?v=9"></script>
   <script src="/static/games/avatar-lobby/js/procedural-motion.js?v=15"></script>
   <script src="/static/games/avatar-lobby/js/avatar-skin-cache.js?v=1"></script>
-  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=29"></script>
-  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=17"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=56"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=23"></script>
+  <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=30"></script>
+  <script src="/static/games/liminal-platform/js/carriage-spec.js?v=23"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=68"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=27"></script>
   <script src="/static/games/liminal-platform/js/lp-key-prompts.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=17"></script>
+  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=19"></script>
   <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=12"></script>
-  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=23"></script>
-  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-net.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=42"></script>
-  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/liminal-interact.js?v=27"></script>
+  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-net.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=46"></script>
+  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=12"></script>
   <script src="/static/games/liminal-platform/js/lp-armed-ammo.js?v=17"></script>
   <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=11"></script>
   <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=15"></script>
-  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=19"></script>
-  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=14"></script>
+  <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=20"></script>
+  <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=15"></script>
   {% if lp_local_debug %}
-  <script src="/static/games/liminal-platform/js/lp-hold-pose-debug.js?v=7"></script>
-  <script src="/static/games/liminal-platform/js/lp-debug-spawn-item.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-hold-pose-debug.js?v=8"></script>
+  <script src="/static/games/liminal-platform/js/lp-debug-spawn-item.js?v=6"></script>
   {% endif %}
   <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=6"></script>
   <script src="/static/games/liminal-platform/js/lp-impact-fx.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-combat.js?v=44"></script>
-  <script src="/static/games/liminal-platform/js/lp-medkit.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-hummingbird-drone.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=71"></script>
-  <script src="/static/games/liminal-platform/js/lp-sfx.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-mob-death-fx.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-combat.js?v=52"></script>
+  <script src="/static/games/liminal-platform/js/lp-medkit.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/lp-carriage-fire.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-fire-extinguisher.js?v=4"></script>
+  <script src="/static/games/liminal-platform/js/lp-hummingbird-drone.js?v=9"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=78"></script>
+  <script src="/static/games/liminal-platform/js/lp-sfx.js?v=9"></script>
+  <script src="/static/games/liminal-platform/js/lp-fun-egg.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=5"></script>
+  <script src="/static/games/liminal-platform/js/lp-platform-ambience.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-platform.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-whistle-audio.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=13"></script>
   <script src="/static/games/liminal-platform/js/lp-carriage-bob.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-track.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-track.js?v=5"></script>
   <script src="/static/games/liminal-platform/js/lp-mob-bubble-fill.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-mobs.js?v=14"></script>
+  <script src="/static/games/liminal-platform/js/lp-world-background.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-view-filters.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-mobs.js?v=18"></script>
   <script src="/static/games/liminal-platform/js/lp-pressure.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-player-death.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-hud-vitals.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-train-minimap.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-train-map.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-facility-edit.js?v=16"></script>
   <script src="/static/games/liminal-platform/js/lp-boiler-panel.js?v=17"></script>
-  <script src="/static/games/liminal-platform/js/lp-radar-scope.js?v=23"></script>
-  <script src="/static/games/liminal-platform/js/lp-auto-program-catalog.js?v=18"></script>
+  <script src="/static/games/liminal-platform/js/lp-radar-scope.js?v=27"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-program-catalog.js?v=20"></script>
   <script src="/static/games/liminal-platform/js/lp-auto-program.js?v=10"></script>
   <script src="/static/games/liminal-platform/js/lp-auto-program-belts.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-auto-sensors.js?v=6"></script>
-  <script src="/static/games/liminal-platform/js/lp-auto-autopilot.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-sensors.js?v=7"></script>
+  <script src="/static/games/liminal-platform/js/lp-auto-autopilot.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-auto-executors.js?v=11"></script>
   <script src="/static/games/liminal-platform/js/lp-auto-console.js?v=23"></script>
-  <script src="/static/games/liminal-platform/js/lp-network.js?v=12"></script>
+  <script src="/static/games/liminal-platform/js/lp-network.js?v=13"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-session.js?v=19"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=21"></script>
   <script src="/static/games/liminal-platform/js/lp-fullscreen.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=71"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=85"></script>
 </body>
 </html>

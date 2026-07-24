@@ -101,13 +101,18 @@ body.lp-train-map-open .lp-crosshair,
 body.lp-train-map-open .lp-mobile-controls,
 body.lp-train-map-open .lp-hotbar-cluster,
 body.lp-train-map-open .lp-hud-top,
+body.lp-facility-edit-open .lp-crosshair,
+body.lp-facility-edit-open .lp-mobile-controls,
+body.lp-facility-edit-open .lp-hotbar-cluster,
+body.lp-facility-edit-open .lp-hud-top,
 /* 炮塔操控：只收顶栏（含编组条），保留准星与底部炮塔横幅 */
 body.lp-turret-mode .lp-hud-top {
   display: none !important;
 }
 
 body.lp-fuel-feed-open,
-body.lp-crate-feed-open {
+body.lp-crate-feed-open,
+body.lp-facility-edit-open {
   cursor: auto;
 }
 
@@ -1884,12 +1889,13 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   text-shadow: none;
 }
 
-/* 最终死亡重生提示 */
+/* 最终死亡重生提示（右下角；与 canvas 状态条同锚） */
 .lp-respawn-hint {
   position: absolute;
-  left: 50%;
-  bottom: max(18%, 96px);
-  transform: translateX(-50%);
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(52px + env(safe-area-inset-bottom));
+  left: auto;
+  transform: none;
   z-index: 6;
   margin: 0;
   padding: 8px 14px;
@@ -1900,16 +1906,18 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.04em;
+  text-align: right;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   pointer-events: none;
 }
 
-/* 濒死重新部署长按进度 */
+/* 濒死重新部署长按进度（右下角） */
 .lp-redeploy-hint {
   position: absolute;
-  left: 50%;
-  bottom: max(24%, 132px);
-  transform: translateX(-50%);
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(52px + env(safe-area-inset-bottom));
+  left: auto;
+  transform: none;
   z-index: 6;
   min-width: 180px;
   padding: 8px 12px;
@@ -1921,7 +1929,7 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
 
 .lp-redeploy-label {
   margin: 0 0 6px;
-  text-align: center;
+  text-align: right;
   font-size: 12px;
   font-weight: 700;
   color: #e2e8f0;
@@ -2429,6 +2437,26 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   color: #f8fafc;
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.85);
   pointer-events: none;
+}
+
+.lp-hands-hud-ammo {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 14px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgb(0 0 0 / 0.55);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.lp-hands-hud-ammo-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #dc2626, #f87171);
+  box-shadow: 0 0 4px rgb(248 113 113 / 0.45);
 }
 
 .lp-hands-hud-label {
@@ -3319,8 +3347,46 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-float-header .lp-inventory-panel-title {
   margin: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+}
+
+.lp-storage-warehouse-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lp-storage-warehouse-tab {
+  margin: 0;
+  padding: 4px 12px;
+  min-height: 28px;
+  border: 1px solid rgb(163 163 163 / 0.35);
+  border-radius: 2px;
+  background: transparent;
+  color: #a3a3a3;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.lp-storage-warehouse-tab:hover {
+  color: #e5e5e5;
+  border-color: rgb(212 212 212 / 0.55);
+}
+
+.lp-storage-warehouse-tab.is-active {
+  color: #f5f5f5;
+  border-color: rgb(212 212 212 / 0.9);
+  background: rgb(38 38 38 / 0.85);
+}
+
+.lp-inventory-float-header .lp-inventory-sort-button {
+  flex: 0 0 auto;
 }
 
 .lp-inventory-float-ground .lp-inventory-panel-title {
@@ -3850,14 +3916,12 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-inventory-item-icon.has-image {
-  background-color: transparent;
-  background-image: var(--lp-item-icon, none);
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
+  /* 整段 background 覆盖父级 gradient，避免透明 PNG 下仍透出色块底；底对齐贴格 */
+  background: transparent var(--lp-item-icon, none) center bottom / contain no-repeat;
   color: transparent;
   text-shadow: none;
   box-shadow: none;
+  border-color: transparent;
 }
 
 .lp-inventory-item-icon.is-rotated {
@@ -4052,15 +4116,22 @@ body.lp-inventory-open .lp-hud-top {
     transition: opacity 0.15s ease;
   }
 
-  /* 右上：跑走在手部物品栏左侧 */
+  /* 右上：跑走在手部物品栏左侧；下移避开顶栏皮套/返回 */
   .lp-hotbar-cluster {
     left: auto;
     right: calc(12px + env(safe-area-inset-right));
-    top: calc(58px + env(safe-area-inset-top));
+    top: calc(96px + env(safe-area-inset-top));
     bottom: auto;
     align-items: center;
     gap: 10px;
     z-index: 5;
+  }
+
+  /* 死亡/重新部署提示抬高，避开右下开火与交互键 */
+  .lp-respawn-hint,
+  .lp-redeploy-hint {
+    bottom: calc(168px + env(safe-area-inset-bottom));
+    right: calc(16px + env(safe-area-inset-right));
   }
 
   /* 左上 vitals：缩短条、限制高度，避免压住左下背包摇杆 */
@@ -4112,6 +4183,11 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-hands-hud-slot.is-utility {
     --lp-hud-hand: 44px;
+  }
+
+  .lp-hands-hud-ammo {
+    height: 5px;
+    bottom: 12px;
   }
 
   .lp-mobile-controls.is-disabled {
@@ -4418,7 +4494,7 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-hotbar-cluster {
-    top: calc(64px + env(safe-area-inset-top));
+    top: calc(88px + env(safe-area-inset-top));
   }
 
   .lp-mobile-controls.is-turret-mode .lp-move-joystick {
@@ -4765,8 +4841,43 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-close-button,
   .lp-inventory-root.is-mobile-inv .lp-inventory-ghost-button {
-    min-height: 40px;
+    min-height: 44px;
     padding: 8px 14px;
+  }
+
+  /* 物资/设施双页签与「摆放」：触控目标 ≥44px；窄屏顶栏可换行 */
+  .lp-inventory-root.is-mobile-inv .lp-inventory-float-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    align-items: center;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-storage-warehouse-tabs {
+    flex: 1 1 100%;
+    order: 2;
+    justify-content: stretch;
+    gap: 6px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-storage-warehouse-tab,
+  .lp-inventory-root.is-mobile-inv .lp-facility-edit-enter,
+  .lp-inventory-root.is-mobile-inv .lp-inventory-float-header .lp-inventory-sort-button {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-storage-warehouse-tab {
+    flex: 1 1 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-facility-edit-enter,
+  .lp-inventory-root.is-mobile-inv .lp-inventory-float-header .lp-inventory-sort-button {
+    order: 1;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-facility-edit-enter {
+    margin-left: auto;
   }
 
   /* 加燃料：窄屏保持炉口与燃料架并排贴近 */
@@ -4901,7 +5012,7 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-hotbar-cluster {
-    top: calc(48px + env(safe-area-inset-top));
+    top: calc(72px + env(safe-area-inset-top));
     right: calc(10px + env(safe-area-inset-right));
   }
 
@@ -4916,6 +5027,15 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-hands-hud-slot.is-utility {
     --lp-hud-hand: 44px;
+  }
+
+  .lp-facility-tray {
+    max-height: min(42dvh, 220px);
+  }
+
+  .lp-facility-edit-hint {
+    font-size: 12px;
+    max-width: min(58vw, 360px);
   }
 }
 
@@ -5232,6 +5352,55 @@ body.lp-inventory-open .lp-hud-top {
   border-color: rgb(251 191 36 / 0.55);
 }
 
+.lp-dbg-spawn-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(163 163 163 / 0.25);
+}
+
+.lp-dbg-spawn-section-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--lp-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lp-dbg-spawn-fun-meta {
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+
+/* 触屏：调试浮层收窄，避免挡住摇杆（仅 ?debugHold=1）；须写在基类之后 */
+@media (hover: none), (pointer: coarse) {
+  .lp-hold-pose-debug,
+  .lp-debug-spawn {
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    right: calc(12px + env(safe-area-inset-right));
+    left: calc(12px + env(safe-area-inset-left));
+    width: auto;
+    max-width: none;
+    max-height: min(42dvh, 320px);
+    z-index: 26;
+  }
+
+  .lp-armed-ammo-slot {
+    min-height: 44px;
+  }
+
+  .lp-facility-edit-chrome {
+    width: 100%;
+    max-width: min(920px, 100%);
+    padding: 0 4px;
+  }
+
+  .lp-facility-edit-done {
+    min-width: 80px;
+  }
+}
+
 /* ---- 绘轨车厢 · 雷达示波器（战斗机 PPI） ---- */
 
 .lp-radar-scope-root {
@@ -5259,17 +5428,17 @@ body.lp-inventory-open .lp-hud-top {
   position: relative;
   z-index: 1;
   pointer-events: auto;
-  width: min(760px, calc(100vw - 28px));
+  width: min(720px, calc(100vw - 24px));
   max-width: 96vw;
-  padding: 18px 22px 16px;
+  padding: 12px 14px 10px;
   background:
     linear-gradient(160deg, #1a1f1a 0%, #0c0e0c 55%, #080908 100%);
-  border: 4px solid #2e4032;
+  border: 3px solid #2e4032;
   box-shadow:
     0 0 0 1px rgb(140 180 130 / 0.28),
-    0 0 0 6px #121812,
-    0 0 0 8px #3a5040,
-    0 22px 52px rgb(0 0 0 / 0.62),
+    0 0 0 5px #121812,
+    0 0 0 7px #3a5040,
+    0 18px 44px rgb(0 0 0 / 0.62),
     inset 0 1px 0 rgb(200 230 190 / 0.1),
     inset 0 0 0 2px rgb(0 0 0 / 0.55);
   color: #c8f0d0;
@@ -5279,23 +5448,23 @@ body.lp-inventory-open .lp-hud-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .lp-radar-eyebrow {
   margin: 0;
-  font-size: 12px;
+  font-size: 10px;
   letter-spacing: 0.08em;
   color: #7aab86;
   text-transform: uppercase;
 }
 
 .lp-radar-title {
-  margin: 2px 0 0;
-  font-size: 20px;
+  margin: 1px 0 0;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: #e2ffe8;
 }
 
@@ -5305,9 +5474,9 @@ body.lp-inventory-open .lp-hud-top {
   background: rgb(140 36 28 / 0.92);
   color: #fff;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 0.4rem 0.85rem;
+  padding: 0.35rem 0.75rem;
   cursor: pointer;
 }
 
@@ -5319,8 +5488,8 @@ body.lp-inventory-open .lp-hud-top {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
-  padding: 16px 18px;
+  gap: 8px;
+  padding: 10px 12px;
   background: #050805;
   border: 3px solid #3a5540;
   box-shadow:
@@ -5329,13 +5498,13 @@ body.lp-inventory-open .lp-hud-top {
     0 0 0 1px #0a100a;
 }
 
-/* PPI 左中 + 量程档拉杆右侧（紧凑原视图） */
+/* PPI 左中 + 量程档拉杆右侧（圆占主导，档位条收窄） */
 .lp-radar-scope-row {
   display: flex;
   flex-direction: row;
   align-items: stretch;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   min-width: 0;
 }
@@ -5343,14 +5512,14 @@ body.lp-inventory-open .lp-hud-top {
 #lpRadarScopeCanvas {
   display: block;
   flex: 0 1 auto;
-  width: min(560px, calc(100% - 88px));
+  width: min(600px, calc(100% - 78px));
   height: auto;
   aspect-ratio: 1;
   border-radius: 50%;
   box-shadow:
-    0 0 0 4px #1a281c,
+    0 0 0 3px #1a281c,
     0 0 0 1px rgb(100 160 110 / 0.35),
-    0 0 32px rgb(40 180 80 / 0.28);
+    0 0 28px rgb(40 180 80 / 0.28);
   background: #020602;
 }
 
@@ -5359,9 +5528,9 @@ body.lp-inventory-open .lp-hud-top {
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  gap: 8px;
+  gap: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 11px;
   color: #8fd99c;
 }
 
@@ -5396,16 +5565,16 @@ body.lp-inventory-open .lp-hud-top {
   background: rgb(40 90 50 / 0.95);
 }
 
-/* 量程档位拉杆：右侧竖条，仅关键数字刻度 */
+/* 量程档位拉杆：右侧竖条，收窄以让 PPI 圆占主导 */
 .lp-radar-gear {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  width: 80px;
-  min-width: 74px;
-  max-width: 88px;
+  width: 68px;
+  min-width: 62px;
+  max-width: 76px;
   align-self: stretch;
-  padding: 6px 5px 8px;
+  padding: 4px 3px 6px;
   border: 2px solid #2a322a;
   background:
     linear-gradient(180deg, #1c221c 0%, #101410 100%);
@@ -5418,22 +5587,22 @@ body.lp-inventory-open .lp-hud-top {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  margin-bottom: 6px;
-  padding-bottom: 5px;
+  gap: 1px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
   border-bottom: 1px dashed rgb(120 160 130 / 0.35);
 }
 
 .lp-radar-gear-title {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #b8d8c0;
 }
 
 .lp-radar-gear-cap {
-  font-size: 9px;
+  font-size: 8px;
   color: #7a9a82;
   letter-spacing: 0.02em;
   line-height: 1.2;
@@ -5441,8 +5610,8 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-radar-gear-stage {
   display: grid;
-  grid-template-columns: minmax(34px, 1fr) 36px;
-  gap: 4px;
+  grid-template-columns: minmax(28px, 1fr) 32px;
+  gap: 3px;
   align-items: stretch;
   flex: 1 1 auto;
   min-height: 0;
@@ -5582,8 +5751,8 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-radar-hint {
-  margin: 12px 0 0;
-  font-size: 12px;
+  margin: 8px 0 0;
+  font-size: 11px;
   color: #6a8f72;
   text-align: center;
 }
@@ -5593,13 +5762,13 @@ body.lp-inventory-open .lp-hud-top {
   display: none;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  margin-top: 4px;
+  gap: 3px;
+  margin-top: 2px;
 }
 
 .lp-radar-aim-stick {
   position: relative;
-  width: clamp(72px, 18vw, 96px);
+  width: clamp(64px, 16vw, 84px);
   aspect-ratio: 1;
   border-radius: 50%;
   border: 2px solid rgb(90 180 110 / 0.55);
@@ -5662,12 +5831,12 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-radar-gear {
-    width: 84px;
-    min-width: 78px;
+    width: 78px;
+    min-width: 72px;
   }
 
   .lp-radar-gear-stage {
-    grid-template-columns: minmax(36px, 1fr) 40px;
+    grid-template-columns: minmax(32px, 1fr) 36px;
   }
 
   .lp-radar-gear-notches button:not(.is-tick-only) {
@@ -5697,9 +5866,9 @@ body.lp-inventory-open .lp-hud-top {
 
 @media (max-width: 560px) {
   .lp-radar-shell {
-    width: calc(100vw - 16px);
+    width: calc(100vw - 12px);
     max-width: none;
-    padding: 14px 14px 12px;
+    padding: 10px 10px 8px;
     border-width: 3px;
     box-shadow:
       0 0 0 1px rgb(140 180 130 / 0.22),
@@ -5711,15 +5880,19 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-radar-bezel {
-    padding: 12px;
+    padding: 8px;
   }
 
   .lp-radar-title {
-    font-size: 17px;
+    font-size: 15px;
   }
 
   .lp-radar-aim-wrap {
     display: flex;
+  }
+
+  .lp-radar-aim-stick {
+    width: clamp(60px, 20vw, 76px);
   }
 }
 
@@ -6871,3 +7044,428 @@ body.lp-inventory-open .lp-hud-top {
     transform: translate(-50%, -50%) rotate(var(--lp-raid-deg)) translateY(-38%);
   }
 }
+
+/* ---- 设施编辑：底栏仓库托盘 ---- */
+
+.lp-facility-edit-root {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 28;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0));
+}
+
+.lp-facility-edit-root[hidden] {
+  display: none !important;
+}
+
+.lp-facility-edit-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: min(920px, 100%);
+  pointer-events: none;
+}
+
+.lp-facility-edit-hint {
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #e2e8f0;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  max-width: min(72vw, 520px);
+  text-align: center;
+  line-height: 1.35;
+}
+
+.lp-facility-edit-done {
+  pointer-events: auto;
+  flex-shrink: 0;
+  min-width: 72px;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.95);
+  color: #f1f5f9;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lp-facility-edit-done:active {
+  transform: scale(0.97);
+}
+
+.lp-facility-tray {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  max-width: min(920px, 100%);
+  max-height: min(36dvh, 280px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 14px;
+  border-radius: 10px 10px 0 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-bottom: none;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.98));
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.lp-facility-tray-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 118px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(51, 65, 85, 0.55);
+  color: #f1f5f9;
+  cursor: grab;
+  touch-action: none;
+}
+
+.lp-facility-tray-item:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  /* 保持可命中，避免拖回收时 elementFromPoint 穿透到画布 */
+  pointer-events: auto;
+}
+
+.lp-facility-tray-item:not(:disabled):active {
+  cursor: grabbing;
+}
+
+.lp-facility-tray-swatch {
+  width: 28px;
+  height: 42px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--lp-fac-accent, #e2e8f0);
+  background: var(--lp-fac-color, #475569);
+  border: 1px solid var(--lp-fac-accent, #94a3b8);
+  flex-shrink: 0;
+}
+
+.lp-facility-tray-swatch.has-image {
+  background: transparent var(--lp-fac-icon, none) center bottom / contain no-repeat;
+  border-color: transparent;
+  color: transparent;
+}
+
+.lp-facility-tray-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lp-facility-tray-name {
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.lp-facility-tray-qty {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.lp-facility-tray-empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.lp-facility-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--lp-fac-accent, #e2e8f0);
+  background: var(--lp-fac-color, #475569);
+  border: 1px solid var(--lp-fac-accent, #94a3b8);
+  pointer-events: none;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.lp-facility-ghost[hidden] {
+  display: none !important;
+}
+
+/* 仓储浮窗：进入设施摆放 */
+.lp-facility-edit-enter {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 4px 10px;
+  min-height: 28px;
+  border: 1px solid rgb(96 165 250 / 0.55);
+  border-radius: 2px;
+  background: rgb(30 58 138 / 0.45);
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.lp-facility-edit-enter:hover {
+  border-color: rgb(147 197 253 / 0.85);
+  color: #eff6ff;
+}
+
+/* 月台编组编辑台（列车地图式拖拽） */
+body.lp-platform-edit-open .lp-crosshair,
+body.lp-platform-edit-open .lp-mobile-controls,
+body.lp-platform-edit-open .lp-hotbar-cluster,
+body.lp-platform-edit-open .lp-hud-top {
+  visibility: hidden;
+}
+
+.lp-platform-edit-root {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgb(12 18 28 / 0.55), rgb(0 0 0 / 0.78));
+}
+
+.lp-platform-edit-root[hidden] {
+  display: none;
+}
+
+.lp-platform-edit-shell {
+  pointer-events: auto;
+  width: min(920px, calc(100vw - 28px));
+  max-width: 96vw;
+  max-height: min(86dvh, 640px);
+  overflow: auto;
+  padding: 18px 22px 14px;
+  background:
+    linear-gradient(165deg, #1a2230 0%, #0c1018 55%, #080a0e 100%);
+  border: 3px solid #3a4a62;
+  box-shadow:
+    0 0 0 1px rgb(140 170 210 / 0.22),
+    0 22px 52px rgb(0 0 0 / 0.62),
+    inset 0 1px 0 rgb(200 220 255 / 0.08);
+  color: #dbe7f5;
+}
+
+.lp-platform-edit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.lp-platform-edit-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7f93b0;
+}
+
+.lp-platform-edit-title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #eef5ff;
+}
+
+.lp-platform-edit-close {
+  appearance: none;
+  border: 2px solid rgb(180 60 50 / 0.9);
+  background: rgb(140 36 28 / 0.92);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+}
+
+.lp-platform-edit-close:hover {
+  background: rgb(170 45 35);
+}
+
+.lp-platform-edit-status,
+.lp-platform-edit-hint {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #9db0c9;
+}
+
+.lp-platform-edit-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #7f93b0;
+}
+
+.lp-platform-edit-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 16px 14px;
+  background: #070a10;
+  border: 2px solid #2a3648;
+  box-shadow: inset 0 0 40px rgb(0 10 30 / 0.65);
+  overflow-x: auto;
+}
+
+.lp-platform-edit-cars {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0;
+  padding: 8px 4px;
+  list-style: none;
+  max-width: 100%;
+  touch-action: none;
+}
+
+.lp-platform-edit-coupler {
+  flex: 0 0 14px;
+  align-self: center;
+  height: 3px;
+  margin: 0 2px;
+  background: rgb(148 163 184 / 0.55);
+}
+
+.lp-platform-edit-car {
+  position: relative;
+  user-select: none;
+}
+
+.lp-platform-edit-car-handle {
+  width: 100%;
+  cursor: grab;
+  appearance: none;
+  font: inherit;
+  color: inherit;
+}
+
+.lp-platform-edit-car-handle:active,
+.lp-platform-edit-car.is-dragging .lp-platform-edit-car-handle {
+  cursor: grabbing;
+}
+
+.lp-platform-edit-car.is-dragging {
+  opacity: 0.55;
+}
+
+.lp-platform-edit-car.is-drop-before::before,
+.lp-platform-edit-car.is-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 28px;
+  width: 3px;
+  background: #fbbf24;
+  box-shadow: 0 0 8px rgb(251 191 36 / 0.7);
+  z-index: 2;
+}
+
+.lp-platform-edit-car.is-drop-before::before {
+  left: -4px;
+}
+
+.lp-platform-edit-car.is-drop-after::after {
+  right: -4px;
+}
+
+.lp-platform-edit-remove {
+  display: block;
+  width: calc(100% - 4px);
+  margin: 6px auto 0;
+  appearance: none;
+  border: 1px solid rgb(248 113 113 / 0.65);
+  background: rgb(127 29 29 / 0.55);
+  color: #fecaca;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.lp-platform-edit-remove:hover {
+  background: rgb(153 27 27 / 0.85);
+}
+
+.lp-platform-edit-forward {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #7f93b0;
+}
+
+.lp-platform-edit-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.lp-platform-edit-add[hidden] {
+  display: none;
+}
+
+.lp-platform-edit-add-btn {
+  appearance: none;
+  border: 1px solid rgb(148 163 184 / 0.45);
+  background: rgb(30 41 59 / 0.9);
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.lp-platform-edit-add-btn:hover {
+  border-color: rgb(147 197 253 / 0.7);
+  color: #eff6ff;
+}
+

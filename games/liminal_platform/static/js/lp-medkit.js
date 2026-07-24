@@ -8,10 +8,62 @@
   const Catalog = window.LpItemCatalog;
   const HAND_SLOT_INDEX = 2;
   const NET_INTERVAL = 0.1;
+  /** 急救箱成功复活 / 整箱消耗生效时的治疗音效（与医疗箱持续治疗无关）。 */
+  const FIRST_AID_SUCCESS_SFX =
+    '/static/games/liminal-platform/audio/items/first-aid-heal.wav?v=1';
+  /** 对齐换弹 / UI 道具音量量级。 */
+  const FIRST_AID_SUCCESS_VOLUME = 0.62;
+  /**
+   * 医疗箱持续治疗循环（湖水滴下无缝 loop）；与急救箱 one-shot 路径分离。
+   * @see static/audio/items/medkit-heal-loop.PROCESSING.txt
+   */
+  const MEDKIT_HEAL_LOOP_SFX =
+    '/static/games/liminal-platform/audio/items/medkit-heal-loop.wav?v=1';
+  /** 软环境层；低于急救箱确认音，贴近道具 ambient。 */
+  const MEDKIT_HEAL_LOOP_VOLUME = 0.38;
 
   let netAccum = 0;
   let lastMode = null;
   let reviveSent = false;
+  let healLoopWanted = false;
+  /** 递增以作废 in-flight startLoop（松手早于 decode 完成时）。 */
+  let healLoopEpoch = 0;
+
+  /** 播放急救箱生效 SFX（本地确认音，不走距离衰减）。 */
+  function playFirstAidSuccessSfx() {
+    window.LpSfx?.play?.(FIRST_AID_SUCCESS_SFX, {
+      volume: FIRST_AID_SUCCESS_VOLUME,
+      ambient: true,
+    });
+  }
+
+  /** 开始医疗箱治疗循环（同 URL 已在播则忽略）。 */
+  function startMedkitHealLoop() {
+    if (healLoopWanted) return;
+    healLoopWanted = true;
+    const epoch = healLoopEpoch;
+    void window.LpSfx
+      ?.startLoop?.(MEDKIT_HEAL_LOOP_SFX, {
+        volume: MEDKIT_HEAL_LOOP_VOLUME,
+        fadeIn: 0.1,
+        ambient: true,
+      })
+      ?.then?.(() => {
+        if (epoch !== healLoopEpoch || !healLoopWanted) {
+          window.LpSfx?.stopLoop?.(MEDKIT_HEAL_LOOP_SFX, { fadeOut: 0.05 });
+        }
+      });
+  }
+
+  /** 淡出并停止医疗箱治疗循环（松手 / 取消 / 改走复活）。 */
+  function stopMedkitHealLoop() {
+    if (!healLoopWanted && !window.LpSfx?.isLooping?.(MEDKIT_HEAL_LOOP_SFX)) {
+      return;
+    }
+    healLoopWanted = false;
+    healLoopEpoch += 1;
+    window.LpSfx?.stopLoop?.(MEDKIT_HEAL_LOOP_SFX, { fadeOut: 0.14 });
+  }
 
   /**
    * 取手部医疗类工具槽。
@@ -138,14 +190,17 @@
 
   /**
    * 每帧：持医疗类工具且按住开火 → 回血或复活。
+   * 医疗箱有效治疗时循环滴水 SFX；松手/无目标/改复活路径时停止。
    */
   function tick(dt, ctx = {}) {
     if (!ctx.fireHeld || !isHoldingMedkit()) {
+      stopMedkitHealLoop();
       lastMode = null;
       reviveSent = false;
       return null;
     }
     if (window.LpPlayerDeath?.isIncapacitated?.()) {
+      stopMedkitHealLoop();
       lastMode = null;
       return null;
     }
@@ -153,7 +208,10 @@
     const firstAid = getHeldFirstAidSlot();
     const medkit = getHeldMedkitSlot();
     const probeItem = firstAid?.item || medkit?.item;
-    if (!probeItem) return null;
+    if (!probeItem) {
+      stopMedkitHealLoop();
+      return null;
+    }
 
     const target = resolveHealTarget(
       ctx.aimX,
@@ -164,6 +222,7 @@
       probeItem
     );
     if (target.mode === 'none') {
+      stopMedkitHealLoop();
       lastMode = null;
       reviveSent = false;
       return null;
@@ -173,6 +232,7 @@
       target.mode === 'ally' && target.ally && target.ally._lpLifeState === 'downed';
 
     if (allyDowned) {
+      stopMedkitHealLoop();
       if (!firstAid) {
         lastMode = null;
         reviveSent = false;
@@ -194,15 +254,18 @@
         return { mode: 'revive', online: true };
       }
       consumeWholeKitOffline(firstAid);
+      playFirstAidSuccessSfx();
       return { mode: 'revive', offline: true };
     }
 
     reviveSent = false;
     if (!medkit) {
+      stopMedkitHealLoop();
       lastMode = null;
       return { mode: 'need_medkit' };
     }
 
+    startMedkitHealLoop();
     lastMode = target.mode;
     const online = Boolean(window.LpInventoryNet?.isActive?.());
     if (online) {
@@ -248,6 +311,27 @@
     }
   }
 
+  /**
+   * 联机：服务端确认急救箱消耗并复活成功时，复活者本地播放生效音效。
+   * @param {CustomEvent} event
+   */
+  function onPlayerRevived(event) {
+    const d = event?.detail || {};
+    const localId = String(
+      window.LpGame?.getLocalAvatar?.()?.id || document.body.dataset.userId || ''
+    );
+    const byId = String(d.by || '');
+    if (!localId || !byId || byId !== localId) return;
+    playFirstAidSuccessSfx();
+  }
+
+  window.addEventListener('lp:player-revived', onPlayerRevived);
+
+  // lp-sfx.js 在模板中排在本文件之后；延后一拍再预热。
+  setTimeout(() => {
+    window.LpSfx?.preload?.([MEDKIT_HEAL_LOOP_SFX, FIRST_AID_SUCCESS_SFX]);
+  }, 0);
+
   window.LpMedkit = {
     HAND_SLOT_INDEX,
     getHeldMedkitSlot,
@@ -256,6 +340,9 @@
     resolveHealTarget,
     tick,
     applyHealed,
+    playFirstAidSuccessSfx,
+    startMedkitHealLoop,
+    stopMedkitHealLoop,
     getLastMode: () => lastMode,
   };
 })();

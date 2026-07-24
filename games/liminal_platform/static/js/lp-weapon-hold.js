@@ -76,12 +76,37 @@
   }
 
   /**
+   * 工具类手持姿态：握把贴前手，贴图沿 facing 水平翻转（不跟准星 IK）。
+   * @param {{ x: number, y: number, facing: number, bodyBob?: number }} avatar
+   * @param {object} [item]
+   */
+  function getToolHoldPose(avatar, item) {
+    const facing = avatar.facing >= 0 ? 1 : -1;
+    const hand =
+      Entity?.getFrontHandWorld?.(avatar) ||
+      Entity?.getBackHandWorld?.(avatar) ||
+      fallbackGrip(avatar, item);
+    return {
+      gripX: hand.x,
+      gripY: hand.y,
+      angle: 0,
+      facing,
+      flipY: false,
+      flipX: facing < 0,
+      mirrorY: 1,
+    };
+  }
+
+  /**
    * 握把世界坐标 + 枪管朝向角 + 是否纵向镜像。
    * @param {{ x: number, y: number, facing: number, bodyBob?: number, joints?: object }} avatar
    * @param {{ x: number, y: number }} aim
    * @param {object} [item]
    */
   function getHoldPose(avatar, aim, item) {
+    if (item && !Catalog?.isWeapon?.(item.id) && item.drawHeld) {
+      return getToolHoldPose(avatar, item);
+    }
     const facing = avatar.facing >= 0 ? 1 : -1;
     const hold = Entity?.getFirearmHoldWorld?.(avatar, aim, resolveHoldPose(item));
     const gripX = hold?.gripX;
@@ -131,11 +156,11 @@
   }
 
   /**
-   * 绘制手持枪械（叠在身/双臂之上，保证侧视枪形可读）。
+   * 绘制手持物（枪械或 drawHeld 工具）；叠在身/双臂之上，保证侧视可读。
    * @returns {object|null} hold pose
    */
   function drawHeldWeapon(ctx, avatar, aim, item) {
-    if (!item || !Catalog?.isWeapon?.(item.id)) return null;
+    if (!item || !Catalog?.showsHeldSprite?.(item)) return null;
     const pose = getHoldPose(avatar, aim, item);
     const img = getSprite(item);
     const draw = resolveDraw(item) || item;
@@ -147,6 +172,7 @@
     ctx.save();
     ctx.translate(pose.gripX, pose.gripY);
     ctx.rotate(pose.angle);
+    if (pose.flipX) ctx.scale(-1, 1);
     if (pose.flipY) ctx.scale(1, -1);
     if (img) {
       ctx.imageSmoothingEnabled = false;
@@ -161,13 +187,15 @@
     return pose;
   }
 
-  /** 持枪：双臂 IK 到物品 holdPose 附着点（可复用默认规格）。 */
+  /** 持枪：双臂 IK 到物品 holdPose 附着点（可复用默认规格）；工具不改臂姿。 */
   function applyAimArmPose(avatar, aim, item) {
+    if (!item || !Catalog?.isWeapon?.(item.id)) return;
     Entity?.applyAimArmPose?.(avatar, aim, resolveHoldPose(item));
   }
 
   window.LpWeaponHold = {
     getHoldPose,
+    getToolHoldPose,
     getMuzzleWorld,
     getEjectWorld,
     drawHeldWeapon,

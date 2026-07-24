@@ -4,7 +4,7 @@
 (() => {
   const InteractSpec = window.LiminalInteractSpec;
 
-  const INTERACTABLES = InteractSpec.buildInteractables();
+  let INTERACTABLES = InteractSpec.buildInteractables();
   const Catalog = window.LpItemCatalog;
   const fuel = { level: 35, max: 100 };
   let toastText = '';
@@ -16,17 +16,40 @@
     toastUntil = performance.now() + ms;
   }
 
+  /** 仅当当前文案仍是指定内容时清除 toast（避免冲掉其它提示）。 */
+  function clearToastIf(text) {
+    if (toastText === text) {
+      toastText = '';
+      toastUntil = 0;
+    }
+  }
+
   /** 玩家是否满足交互条件（站地且靠近）。 */
   function canInteract(spot, local) {
     if (!local.onGround || local.y > 0.5) return false;
     return Math.abs(local.x - spot.worldX) <= spot.interactRadiusX;
   }
 
+  /** 尝试对最近可交互节点执行交互。 */
+  function tryInteract(local) {
+    if (window.LpGuardTurret?.isManned?.()) {
+      window.LpGuardTurret.exitTurret();
+      return true;
+    }
+    if (window.LpPlatform?.tryInteract?.(local)) return true;
+    const spot = findActive(local);
+    if (!spot) return false;
+    return runAction(spot);
+  }
+
   /**
-   * 返回当前最近的可交互节点。
-   * 同车厢多节点时按水平距离选最近。
+   * 返回当前最近的可交互节点（含月台连接处 / 月台回车点）。
+   * 同车厢多节点时按水平距离选最近。月台场景不查车厢节点（坐标空间不同）。
    */
   function findActive(local) {
+    const plat = window.LpPlatform?.findActive?.(local);
+    if (plat) return plat;
+    if (window.LpPlatform?.getScene?.() === 'platform') return null;
     let best = null;
     let bestDist = Infinity;
     for (const spot of INTERACTABLES) {
@@ -175,97 +198,136 @@
       window.LpGuardTurret.exitTurret();
       return true;
     }
+    if (window.LpPlatform?.tryInteract?.(local)) return true;
     const spot = findActive(local);
     if (!spot) return false;
     return runAction(spot);
   }
 
-  /** 绘制靠近提示（屏幕空间）。 */
-  function drawPrompt(ctx, spot, view, dpr, keyLabel) {
-    const line = `按 ${keyLabel} ${spot.actionLabel}`;
-    drawFloatingLabel(
-      ctx,
-      dpr,
-      spot.worldX * view.zoom + view.offsetX,
-      spot.promptAnchorY * view.zoom + view.offsetY,
-      line
+  /** 读取 CSS env(safe-area-inset-*)；getPropertyValue 常为空时回退 0。 */
+  function readSafeInset(side) {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue(
+      `env(safe-area-inset-${side})`
     );
-  }
-
-  /** 在屏幕坐标绘制浮动提示条（世界物体旁「按 F …」等）。 */
-  function drawFloatingLabel(ctx, dpr, screenX, screenY, line) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.font = '600 14px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    const labelW = ctx.measureText(line).width + 22;
-    const labelH = 34;
-
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
-    ctx.beginPath();
-    ctx.roundRect(screenX - labelW / 2, screenY - labelH / 2, labelW, labelH, 8);
-    ctx.fill();
-
-    ctx.fillStyle = '#fef3c7';
-    ctx.fillText(line, screenX, screenY);
+    const n = Number.parseFloat(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
   }
 
   /**
-   * 模式状态描述条：屏幕下方居中（炮塔操控等；非世界锚点交互提示）。
-   * Canvas 绘制，无可选中 DOM 文本。移动端抬高，避开摇杆/开火键拇指区；
-   * 武装弹种栏可见时再抬高，避免与底栏重叠。
+   * 右下角状态提示锚点（右缘 / 垂直中心）。
+   * 移动端抬高避开开火/交互键；弹种栏或动作簇可见时再抬高。
+   * @param {{ mobile?: boolean, stackIndex?: number, labelH?: number }} [options]
+   * @returns {{ x: number, y: number }}
    */
-  function drawStatusBanner(ctx, dpr, line, options = {}) {
-    const { mobile = false } = options;
+  function cornerStatusAnchor(options = {}) {
+    const { mobile = false, stackIndex = 0, labelH = 34 } = options;
+    const w = window.innerWidth || 800;
     const h = window.innerHeight || 600;
-    let bottom = mobile ? 168 : 52;
+    const safeRight = readSafeInset('right');
+    const safeBottom = readSafeInset('bottom');
+    let bottom = (mobile ? 168 : 52) + safeBottom;
+    let right = 16 + safeRight;
+
     if (window.LpArmedAmmo?.isActive?.()) {
       const ammoEl = document.getElementById('lpArmedAmmoHud');
       const rect = ammoEl && !ammoEl.hidden ? ammoEl.getBoundingClientRect() : null;
-      /* labelH=34 → 半高 17；再留 12px 缝 */
       const clearAboveAmmo = rect
-        ? h - rect.top + 17 + 12
+        ? h - rect.top + labelH / 2 + 12
         : mobile
           ? 240
           : 118;
       bottom = Math.max(bottom, clearAboveAmmo);
     }
-    drawFloatingLabel(ctx, dpr, viewWCenter(), h - bottom, line);
+
+    if (mobile) {
+      const actions = document.querySelector('.lp-mobile-action-cluster');
+      const rect = actions ? actions.getBoundingClientRect() : null;
+      if (rect && rect.height > 0) {
+        bottom = Math.max(bottom, h - rect.top + labelH / 2 + 12);
+      }
+    }
+
+    const gap = 8;
+    return {
+      x: w - right,
+      y: h - bottom - stackIndex * (labelH + gap),
+    };
+  }
+
+  /** 绘制靠近提示（统一右下角）。 */
+  function drawPrompt(ctx, spot, view, dpr, keyLabel) {
+    void view;
+    drawCornerStatus(ctx, dpr, `按 ${keyLabel} ${spot.actionLabel}`, {});
   }
 
   /**
-   * 整节车厢通用操作：提示钉在该车厢水平中心、车顶上方。
+   * 在屏幕坐标绘制浮动提示条。
+   * @param {'left'|'center'|'right'} [options.align]
    */
-  function drawCarriageWidePrompt(ctx, car, view, dpr, line) {
-    const Spec = window.LiminalCarriageSpec;
-    if (!Spec || !car) return;
-    const midX = car.worldX + (Spec.WALK_LEFT + Spec.WALK_RIGHT) / 2;
-    /** 贴图顶部附近，落在车厢屋顶上方。 */
-    const promptY = Spec.scaleArt ? Spec.scaleArt(168) : 168;
-    drawFloatingLabel(
-      ctx,
-      dpr,
-      midX * view.zoom + view.offsetX,
-      promptY * view.zoom + view.offsetY,
-      line
-    );
+  function drawFloatingLabel(ctx, dpr, screenX, screenY, line, options = {}) {
+    const align = options.align || 'center';
+    const font = options.font || '600 14px system-ui, sans-serif';
+    const textColor = options.textColor || '#fef3c7';
+    const labelH = options.labelH || 34;
+    const padX = options.padX || 22;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = font;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+
+    const labelW = ctx.measureText(line).width + padX;
+    let boxX = screenX - labelW / 2;
+    if (align === 'right') boxX = screenX - labelW;
+    else if (align === 'left') boxX = screenX;
+
+    ctx.fillStyle = options.bg || 'rgba(15, 23, 42, 0.86)';
+    ctx.beginPath();
+    ctx.roundRect(boxX, screenY - labelH / 2, labelW, labelH, 8);
+    ctx.fill();
+
+    ctx.fillStyle = textColor;
+    ctx.fillText(line, screenX, screenY);
   }
 
-  /** 仓储车厢：整节可用，提示钉在车厢上方。 */
+  /**
+   * 模式 / 键位状态条：屏幕右下角（交互、炮塔、仓储、toast 共用）。
+   * Canvas 绘制；stackIndex 向上叠层，避免与另一条状态重叠。
+   */
+  function drawCornerStatus(ctx, dpr, line, options = {}) {
+    const labelH = options.labelH || 34;
+    const { x, y } = cornerStatusAnchor({ ...options, labelH });
+    drawFloatingLabel(ctx, dpr, x, y, line, {
+      align: 'right',
+      font: options.font,
+      textColor: options.textColor,
+      bg: options.bg,
+      labelH,
+      padX: options.padX,
+    });
+  }
+
+  /** @deprecated 兼容旧调用名；等同 drawCornerStatus。 */
+  function drawStatusBanner(ctx, dpr, line, options = {}) {
+    drawCornerStatus(ctx, dpr, line, options);
+  }
+
+  /** 仓储车厢：整节可用时在右下角提示打开物品栏。 */
   function drawStoragePrompt(ctx, local, view, dpr, inventoryKeyLabel, options = {}) {
+    void view;
     const { mobile = false } = options;
     const Spec = window.LiminalCarriageSpec;
     const car = Spec?.carriageAt?.(local.x);
-    if (car?.id !== 'storage') return;
-    if (!local.onGround || local.y > 0.5) return;
-    if (window.LpInventory?.isOpen?.()) return;
-    if (window.LpBoilerPanel?.isOpen?.() || window.LpFuelFeed?.isOpen?.()) return;
+    if (car?.id !== 'storage') return false;
+    if (!local.onGround || local.y > 0.5) return false;
+    if (window.LpInventory?.isOpen?.()) return false;
+    if (window.LpBoilerPanel?.isOpen?.() || window.LpFuelFeed?.isOpen?.()) return false;
 
     const line = mobile
       ? '点「物品」打开物品栏以管理仓库'
       : `按 ${inventoryKeyLabel} 打开物品栏以管理仓库`;
-    drawCarriageWidePrompt(ctx, car, view, dpr, line);
+    drawCornerStatus(ctx, dpr, line, { mobile });
+    return true;
   }
 
   /** 画布 HUD 锚点：避开 DOM 顶栏与刘海安全区。 */
@@ -288,9 +350,12 @@
 
   /**
    * 绘制动力车车厢详细信息（锅炉燃料 + 列车车速）与 toast。
-   * 燃料/车速仅在玩家处于动力车厢时显示；toast 全局；炮塔模式跳过顶栏 chrome。
+   * 燃料/车速仅在玩家处于动力车厢时显示；toast 全局钉右下角；炮塔模式跳过顶栏 chrome。
+   * @param {{ mobile?: boolean, statusOccupied?: boolean }} [options]
    */
-  function drawHud(ctx, view, dpr, worldX) {
+  function drawHud(ctx, view, dpr, worldX, options = {}) {
+    void view;
+    const { mobile = false, statusOccupied = false } = options;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const { barX, barY } = hudAnchor();
     const hideTopChrome = document.body.classList.contains('lp-turret-mode');
@@ -331,26 +396,22 @@
     }
 
     if (performance.now() < toastUntil && toastText) {
-      ctx.font = '600 13px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
-      const tw = ctx.measureText(toastText).width + 24;
-      const cx = (window.innerWidth || 800) / 2;
-      const cy = Math.min(
-        (window.innerHeight || 600) * 0.38,
-        Math.max(barY + 56, (window.innerHeight || 600) * 0.28)
-      );
-      ctx.beginPath();
-      ctx.roundRect(cx - tw / 2, cy - 16, tw, 32, 8);
-      ctx.fill();
-      ctx.fillStyle = '#fde68a';
-      ctx.fillText(toastText, cx, cy);
+      drawCornerStatus(ctx, dpr, toastText, {
+        mobile,
+        stackIndex: statusOccupied ? 1 : 0,
+        labelH: 32,
+        font: '600 13px system-ui, sans-serif',
+        textColor: '#fde68a',
+        bg: 'rgba(15, 23, 42, 0.82)',
+        padX: 24,
+      });
     }
   }
 
-  /** 绘制最近激活节点的提示。 */
+  /** 绘制最近激活节点的提示（右下角）与 HUD。 */
   function drawActivePrompt(ctx, local, view, dpr, keyLabel, options = {}) {
     const { showPrompt = true, inventoryKeyLabel = 'Tab', mobile = false } = options;
+    let statusOccupied = false;
     if (window.LpGuardTurret?.isManned?.()) {
       /* 移动端仍须显示弹药/离开提示（桌面交互浮标在触控上会关掉 showPrompt） */
       if (showPrompt || mobile) {
@@ -358,26 +419,23 @@
         const line = mobile
           ? `炮塔中 · 弹药 ${ammo} · 点交互离开 · 开火键射击`
           : `炮塔中 · 弹药 ${ammo} · 按 ${keyLabel} 离开 · 左键开火`;
-        drawStatusBanner(ctx, dpr, line, { mobile });
+        drawCornerStatus(ctx, dpr, line, { mobile });
+        statusOccupied = true;
       }
-      drawHud(ctx, view, dpr, local.x);
+      drawHud(ctx, view, dpr, local.x, { mobile, statusOccupied });
       return;
     }
     const active = findActive(local);
     const panelOpen = window.LpBoilerPanel?.isOpen?.();
     if (active && showPrompt && !panelOpen) {
-      let label = spotActionLabel(active, keyLabel);
-      drawFloatingLabel(
-        ctx,
-        dpr,
-        active.worldX * view.zoom + view.offsetX,
-        active.promptAnchorY * view.zoom + view.offsetY,
-        label
-      );
+      drawCornerStatus(ctx, dpr, spotActionLabel(active, keyLabel), { mobile });
+      statusOccupied = true;
     } else if (!active && !panelOpen) {
-      drawStoragePrompt(ctx, local, view, dpr, inventoryKeyLabel, { mobile });
+      statusOccupied = Boolean(
+        drawStoragePrompt(ctx, local, view, dpr, inventoryKeyLabel, { mobile })
+      );
     }
-    drawHud(ctx, view, dpr, local.x);
+    drawHud(ctx, view, dpr, local.x, { mobile, statusOccupied });
   }
 
   /** 交互提示文案（弹药箱附带库存）。 */
@@ -393,9 +451,10 @@
     return `按 ${keyLabel} ${spot.actionLabel}`;
   }
 
-  /** 屏幕水平中心。 */
-  function viewWCenter() {
-    return (window.innerWidth || 800) / 2;
+  /** 编组变更后按当前 CARRIAGES 重建世界坐标交互点。 */
+  function rebuildInteractables() {
+    INTERACTABLES = InteractSpec.buildInteractables();
+    window.LiminalInteract.INTERACTABLES = INTERACTABLES;
   }
 
   window.LiminalInteract = {
@@ -408,6 +467,8 @@
     addFuel,
     addFuelFromPanel: addFuel,
     showToast,
+    clearToastIf,
+    rebuildInteractables,
     INTERACTABLES,
   };
 })();

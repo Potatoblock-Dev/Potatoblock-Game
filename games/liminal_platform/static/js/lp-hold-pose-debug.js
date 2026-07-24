@@ -517,17 +517,44 @@
     togglePanel,
   };
 
+  /** 焦点是否在可编辑控件（输入时不呼出）。 */
+  function isTypingTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return true;
+    }
+    if (target.isContentEditable) return true;
+    return Boolean(
+      target.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
+    );
+  }
+
+  /** 是否为 ` 热键：优先 code=Backquote，回退 key=`/~。 */
+  function isDebugHotkey(event) {
+    if (event.repeat || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+    if (event.code === 'Backquote') return true;
+    return event.key === '`' || event.key === '~';
+  }
+
+  /** 绑定 ` 切换面板（capture，避免被其它 keydown / IME 抢先吞掉）。 */
   function bindHotkey() {
     if (keyBound || !isEnabled()) return;
-    window.addEventListener('keydown', (event) => {
-      if (event.code !== 'Backquote' || event.repeat) return;
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      if (event.target instanceof HTMLSelectElement) return;
-      togglePanel();
-      event.preventDefault();
-    });
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        if (!isDebugHotkey(event) || !isEnabled()) return;
+        if (isTypingTarget(event.target)) return;
+        togglePanel();
+        event.preventDefault();
+      },
+      true
+    );
     keyBound = true;
   }
 

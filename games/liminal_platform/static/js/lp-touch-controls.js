@@ -1,5 +1,5 @@
 /**
- * 阈限月台移动端触控：左下背包+移摇杆；右上跑走+手部栏；右下瞄准/地图/开火/跳跃。
+ * 阈限月台移动端触控：左下背包+移摇杆（下拉下蹲）；右上跑走+手部栏；右下瞄准/地图/开火/跳跃。
  * 瞄准采用双摇杆（类合金弹头）：方向 + 把手离中心距离（mag）驱动准星；松手保持最后方向与距离。
  * 入座机炮：左摇杆改瞄准，右侧只留开火；「离开」情境键留在左侧簇。
  */
@@ -23,6 +23,7 @@
     direction: 0,
     jump: false,
     jumpQueued: false,
+    kneel: false,
     interact: false,
     interactQueued: false,
     fire: false,
@@ -56,6 +57,7 @@
   function resetMoveJoystick() {
     joystickPointer = null;
     state.direction = 0;
+    state.kneel = false;
     knob.style.transform = 'translate(0, 0)';
     joystick.setAttribute('aria-valuenow', '0');
   }
@@ -85,7 +87,7 @@
     resetMoveJoystick();
   }
 
-  /** 根据触点更新移动摇杆（水平方向）。 */
+  /** 根据触点更新移动摇杆（水平方向；下拉为下蹲，与大厅一致）。 */
   function updateMoveJoystick(clientX, clientY) {
     const rect = joystick.getBoundingClientRect();
     const radius = rect.width * 0.3;
@@ -97,7 +99,9 @@
       dy = (dy / distance) * radius;
     }
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.direction = dx < -radius * 0.28 ? -1 : dx > radius * 0.28 ? 1 : 0;
+    const deadzone = radius * 0.28;
+    state.direction = dx < -deadzone ? -1 : dx > deadzone ? 1 : 0;
+    state.kneel = dy > deadzone;
     joystick.setAttribute('aria-valuenow', String(state.direction));
   }
 
@@ -418,6 +422,7 @@
         return {
           direction: 0,
           jump: false,
+          kneel: false,
           interact: false,
           fire: false,
           sprintToggle: state.sprintToggle,
@@ -427,6 +432,7 @@
       const input = {
         direction: state.turretMode ? 0 : state.direction,
         jump: state.turretMode ? false : state.jump || state.jumpQueued,
+        kneel: state.turretMode ? false : state.kneel,
         interact: state.interact || state.interactQueued,
         fire: state.fire || state.fireQueued,
         sprintToggle: state.sprintToggle,

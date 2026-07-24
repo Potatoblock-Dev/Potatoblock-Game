@@ -1,12 +1,16 @@
 /**
- * 本地调试：在角色脚下投放任意图鉴物品。
+ * 本地调试：脚下投放物品 + fun 彩蛋编辑/触发。
  * LOCAL ONLY — 仅 localhost；生产页不注入本脚本。` 呼出/收起。
  */
 (() => {
   let rootEl = null;
   let statusEl = null;
+  let funValueEl = null;
+  let funAccumEl = null;
   let panelOpen = false;
   let keyBound = false;
+  let funUnsub = null;
+  let funPollTimer = 0;
 
   /** 是否本地开发主机。 */
   function isLocalDevHost() {
@@ -38,13 +42,14 @@
     return { x, y: floor };
   }
 
-  /** 按物品补全默认 mag / dur。 */
+  /** 按物品补全默认 mag / dur / ammo。 */
   function buildStack(itemId, qty) {
     const item = window.LpItemCatalog?.getItem?.(itemId);
     if (!item) return null;
     const stack = { itemId, qty: Math.max(1, Math.floor(Number(qty) || 1)) };
     if (item.magazineSize != null) stack.mag = item.magazineSize;
     if (item.maxDurability != null) stack.dur = item.maxDurability;
+    if (item.maxAmmo != null) stack.ammo = item.maxAmmo;
     return stack;
   }
 
@@ -107,10 +112,114 @@
     if (hint) hint.textContent = `上限 ${cap}`;
   }
 
+  /** 刷新 fun 显示（当前值与距下次掷骰剩余）。 */
+  function syncFunDisplay() {
+    const st = window.LpFunEgg?.getState?.();
+    if (!st) {
+      if (funValueEl) funValueEl.textContent = '—';
+      if (funAccumEl) funAccumEl.textContent = 'LpFunEgg 未加载';
+      return;
+    }
+    if (funValueEl) {
+      funValueEl.textContent = st.fun == null ? '（尚未掷过）' : String(st.fun);
+    }
+    if (funAccumEl) {
+      const left = Math.ceil(st.nextInSec);
+      const m = Math.floor(left / 60);
+      const s = left % 60;
+      funAccumEl.textContent = `距下次掷骰约 ${m}:${String(s).padStart(2, '0')}`;
+    }
+    const input = rootEl?.querySelector('#lpDbgFunInput');
+    if (input && document.activeElement !== input && st.fun != null) {
+      input.value = String(st.fun);
+    }
+  }
+
+  /** 调试：写入 fun（不自动播）。 */
+  function applyFunInput() {
+    const input = rootEl?.querySelector('#lpDbgFunInput');
+    const raw = Number(input?.value);
+    if (!Number.isFinite(raw)) {
+      setStatus('fun 需为数字', false);
+      return;
+    }
+    if (!window.LpFunEgg?.setFun) {
+      setStatus('LpFunEgg 未加载', false);
+      return;
+    }
+    const v = window.LpFunEgg.setFun(raw);
+    syncFunDisplay();
+    setStatus(`已设 fun = ${v}`);
+  }
+
+  /** 调试：按输入框（或已存）fun 触发已注册彩蛋。 */
+  function triggerFunEgg() {
+    if (!window.LpFunEgg?.triggerEgg) {
+      setStatus('LpFunEgg 未加载', false);
+      return;
+    }
+    const input = rootEl?.querySelector('#lpDbgFunInput');
+    if (input?.value !== '' && input?.value != null) {
+      window.LpFunEgg.setFun(input.value);
+    }
+    const value = window.LpFunEgg.getFun?.();
+    if (value == null) {
+      setStatus('尚无 fun，先设置或等掷骰', false);
+      return;
+    }
+    const ok = window.LpFunEgg.triggerEgg(value);
+    syncFunDisplay();
+    if (ok) setStatus(`已触发彩蛋 fun=${value}`);
+    else setStatus(`fun=${value} 无注册彩蛋`, false);
+  }
+
+  /** 调试：点燃玩家所在车厢。 */
+  function ignitePlayerCar() {
+    const carId = window.LpCarriageFire?.ignitePlayerCar?.();
+    if (!carId) {
+      setStatus('无法点燃：不在车厢内', false);
+      return;
+    }
+    setStatus(`已点燃车厢 ${carId}`);
+  }
+
+  /** 调试：扑灭玩家所在车厢。 */
+  function extinguishPlayerCar() {
+    const x = Number(window.LpGame?.getLocalX?.());
+    const car = window.LiminalCarriageSpec?.carriageAt?.(x);
+    if (!car) {
+      setStatus('无法扑灭：不在车厢内', false);
+      return;
+    }
+    window.LpCarriageFire?.extinguishCar?.(car.id);
+    setStatus(`已扑灭车厢 ${car.id}`);
+  }
+
+  /** 调试：脚下生成临时灭火器站。 */
+  function spawnDebugStation() {
+    const st = window.LpFireExtinguisher?.debugSpawnStation?.();
+    if (!st) {
+      setStatus('生成灭火器站失败', false);
+      return;
+    }
+    setStatus('已在脚下生成调试灭火器站（R 可装填）');
+  }
+
   /** 显隐面板。 */
   function setPanelOpen(open) {
     panelOpen = open;
     if (rootEl) rootEl.hidden = !open;
+    if (open) {
+      syncFunDisplay();
+      if (!funPollTimer) {
+        funPollTimer = window.setInterval(() => {
+          if (panelOpen) syncFunDisplay();
+        }, 1000);
+      }
+    } else if (funPollTimer) {
+      window.clearInterval(funPollTimer);
+      funPollTimer = 0;
+    }
   }
 
   /** 打开。 */
@@ -156,12 +265,38 @@
         <button type="button" id="lpDbgSpawnBtn">丢到脚下</button>
         <button type="button" id="lpDbgSpawnRefresh">刷新图鉴</button>
       </div>
+      <div class="lp-dbg-spawn-section" aria-label="fun 彩蛋">
+        <h3 class="lp-dbg-spawn-section-title">fun 彩蛋（本地）</h3>
+        <p class="lp-dbg-spawn-fun-meta">当前 <strong id="lpDbgFunValue">—</strong>
+          <span id="lpDbgFunAccum" class="lp-dbg-spawn-hint"></span></p>
+        <label class="lp-dbg-spawn-row">
+          <span>fun [0,10000)</span>
+          <input id="lpDbgFunInput" type="number" min="0" max="9999" step="1" value="630" />
+        </label>
+        <div class="lp-dbg-spawn-actions">
+          <button type="button" id="lpDbgFunSet">写入 fun</button>
+          <button type="button" id="lpDbgFunTrigger">触发彩蛋</button>
+        </div>
+      </div>
+      <div class="lp-dbg-spawn-section" aria-label="车厢火灾">
+        <h3 class="lp-dbg-spawn-section-title">车厢火灾 / 灭火器站</h3>
+        <div class="lp-dbg-spawn-actions">
+          <button type="button" id="lpDbgIgniteCar">点燃当前车厢</button>
+          <button type="button" id="lpDbgExtinguishCar">扑灭当前车厢</button>
+        </div>
+        <div class="lp-dbg-spawn-actions">
+          <button type="button" id="lpDbgSpawnStation">脚下生成灭火器站</button>
+        </div>
+      </div>
     `;
     document.body.appendChild(rootEl);
     statusEl = rootEl.querySelector('#lpDbgSpawnStatus');
+    funValueEl = rootEl.querySelector('#lpDbgFunValue');
+    funAccumEl = rootEl.querySelector('#lpDbgFunAccum');
     const select = rootEl.querySelector('#lpDbgSpawnItem');
     fillSelect(select);
     syncQtyHint();
+    syncFunDisplay();
     select.addEventListener('change', syncQtyHint);
     rootEl.querySelector('#lpDbgSpawnBtn')?.addEventListener('click', spawnSelected);
     rootEl.querySelector('#lpDbgSpawnRefresh')?.addEventListener('click', () => {
@@ -169,18 +304,52 @@
       syncQtyHint();
       setStatus('图鉴已刷新');
     });
+    rootEl.querySelector('#lpDbgFunSet')?.addEventListener('click', applyFunInput);
+    rootEl.querySelector('#lpDbgFunTrigger')?.addEventListener('click', triggerFunEgg);
+    rootEl.querySelector('#lpDbgIgniteCar')?.addEventListener('click', ignitePlayerCar);
+    rootEl.querySelector('#lpDbgExtinguishCar')?.addEventListener('click', extinguishPlayerCar);
+    rootEl.querySelector('#lpDbgSpawnStation')?.addEventListener('click', spawnDebugStation);
     rootEl.querySelector('.lp-dbg-spawn-close')?.addEventListener('click', () => setPanelOpen(false));
+    funUnsub?.();
+    funUnsub = window.LpFunEgg?.subscribe?.(syncFunDisplay) || null;
   }
 
+  /** 焦点是否在可编辑控件（输入时不呼出）。 */
+  function isTypingTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return true;
+    }
+    if (target.isContentEditable) return true;
+    return Boolean(
+      target.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
+    );
+  }
+
+  /** 是否为 ` 热键：优先 code=Backquote，回退 key=`/~。 */
+  function isDebugHotkey(ev) {
+    if (ev.repeat || ev.isComposing || ev.ctrlKey || ev.metaKey || ev.altKey) return false;
+    if (ev.code === 'Backquote') return true;
+    return ev.key === '`' || ev.key === '~';
+  }
+
+  /** 绑定 ` 切换面板（capture，避免被其它 keydown / IME 抢先吞掉）。 */
   function bindHotkey() {
     if (keyBound || !isEnabled()) return;
-    window.addEventListener('keydown', (ev) => {
-      if (ev.code !== 'Backquote' || ev.repeat) return;
-      if (!isEnabled()) return;
-      if (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) return;
-      togglePanel();
-      ev.preventDefault();
-    });
+    window.addEventListener(
+      'keydown',
+      (ev) => {
+        if (!isDebugHotkey(ev) || !isEnabled()) return;
+        if (isTypingTarget(ev.target)) return;
+        togglePanel();
+        ev.preventDefault();
+      },
+      true
+    );
     keyBound = true;
   }
 

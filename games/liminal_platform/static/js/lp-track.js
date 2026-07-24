@@ -1,5 +1,5 @@
 /**
- * 列车下方铁路轨道（纯视觉）：道砟 + 轨枕 + 双轨头，随车速卷动。
+ * 列车下方铁路轨道（纯视觉）：轨下地面 + 道砟 + 轨枕 + 双轨头，随车速卷动。
  * 仅绘制相机 FOV 内（含边距）的轨带，保证视口左右不断轨；不改碰撞 / 协议 / 走道。
  * 绘轨车厢玩法仍是雷达探测，与此视觉轨无关。
  */
@@ -24,8 +24,17 @@
   const ART_GAUGE = 18;
   /** 轨头厚度（源图像素）。 */
   const ART_RAIL_H = 3.5;
+  /**
+   * 轨下地面顶边相对下轨的偏移（源图像素）。
+   * 明确低于 TRACK_Y / 双轨，给弹壳、碎屑提供可见落点参照。
+   */
+  const ART_GROUND_BELOW_LOWER_RAIL = 14;
+  /** 轨下地面带高度（源图像素）。 */
+  const ART_GROUND_H = 128;
 
   let scrollX = 0;
+  /** 上一帧轨枕卷动增量（世界像素；正速度时为正，轨面向 −X 退）。 */
+  let lastScrollDelta = 0;
 
   /** 读取规格；缺省时不绘制。 */
   function spec() {
@@ -61,16 +70,89 @@
 
   /**
    * 按车速推进轨枕相位；正速度（前进 / +X）时轨面向左退，模拟列车前行。
+   * 同步写入 lastScrollDelta，供轨面/地面碎屑与轨同相平移。
    * @param {number} dt
    */
   function tick(dt) {
     const speed = Number(window.LpTrainDrive?.getState?.()?.speed) || 0;
     const rate = scrollPxPerSpeedUnit(spec());
-    scrollX += speed * rate * Math.max(0, dt);
+    lastScrollDelta = speed * rate * Math.max(0, dt);
+    scrollX += lastScrollDelta;
+  }
+
+  /**
+   * 将轨面坐标系物体随本帧卷动平移（车厢固定、轨卷动模型下与轨枕同相）。
+   * 正速度时世界 X 减小，使碎屑相对轨枕不滑动。
+   * @param {{ x: number }} entity
+   */
+  function applyTrackScroll(entity) {
+    if (!entity) return;
+    entity.x -= lastScrollDelta;
+  }
+
+  /**
+   * 绘制轨下地面带（深色工业砂土/混凝土）：在道砟与轨之前，FOV 同宽。
+   * 顶边低于下轨，供弹壳 / 碎屑有可见参照面；不参与碰撞与协议。
+   */
+  function drawGround(ctx, S, left, right, yRail, gauge) {
+    const width = right - left;
+    const groundTop = yRail + gauge + S.scaleArt(ART_GROUND_BELOW_LOWER_RAIL);
+    const groundH = S.scaleArt(ART_GROUND_H);
+    const groundBot = groundTop + groundH;
+
+    /* 主体：近黑褐 → 更深，贴合阈限工业夜景，避免高对比噪点 */
+    const fill = ctx.createLinearGradient(0, groundTop, 0, groundBot);
+    fill.addColorStop(0, 'rgba(32, 28, 26, 0.96)');
+    fill.addColorStop(0.35, 'rgba(24, 21, 20, 0.98)');
+    fill.addColorStop(0.75, 'rgba(16, 14, 14, 0.94)');
+    fill.addColorStop(1, 'rgba(10, 9, 12, 0.35)');
+    ctx.fillStyle = fill;
+    ctx.fillRect(left, groundTop, width, groundH);
+
+    /* 地面顶缘：略亮的边缘线，标出「落点平面」 */
+    ctx.fillStyle = 'rgba(48, 42, 38, 0.7)';
+    ctx.fillRect(left, groundTop, width, Math.max(1, S.scaleArt(2.5)));
+    ctx.fillStyle = 'rgba(18, 14, 12, 0.45)';
+    ctx.fillRect(left, groundTop + S.scaleArt(2.5), width, Math.max(1, S.scaleArt(1.5)));
+
+    /* 稀疏砾石 / 混凝土斑：弱对比、静态相位，避免闪烁 */
+    const gritStep = S.scaleArt(28);
+    const gritStart = Math.floor(left / gritStep) * gritStep;
+    for (let gx = gritStart; gx < right; gx += gritStep) {
+      const cell = Math.floor(gx / gritStep);
+      const gy =
+        groundTop +
+        S.scaleArt(10) +
+        ((cell * 13) % 7) * S.scaleArt(8) +
+        ((cell * 7) % 3) * S.scaleArt(2);
+      if (gy > groundBot - S.scaleArt(18)) continue;
+      ctx.fillStyle =
+        cell % 3 === 0 ? 'rgba(58, 50, 44, 0.28)' : 'rgba(40, 36, 34, 0.22)';
+      ctx.fillRect(
+        gx + ((cell * 5) % 4) * S.scaleArt(1.5),
+        gy,
+        S.scaleArt(3 + (cell % 3)),
+        S.scaleArt(2 + (cell % 2))
+      );
+    }
+
+    /* 淡水平接缝，暗示混凝土板 / 夯土带 */
+    ctx.strokeStyle = 'rgba(12, 10, 10, 0.22)';
+    ctx.lineWidth = Math.max(1, S.scaleArt(1));
+    const seamGap = S.scaleArt(36);
+    for (let sy = groundTop + seamGap; sy < groundBot - S.scaleArt(24); sy += seamGap) {
+      ctx.beginPath();
+      ctx.moveTo(left, sy);
+      ctx.lineTo(right, sy);
+      ctx.stroke();
+    }
+
+    return { top: groundTop, bot: groundBot };
   }
 
   /**
    * 在世界变换下绘制轨道（应在车厢贴图之前调用）；仅覆盖当前 FOV。
+   * 层序：地面 → 道砟 → 轨枕 → 轨头（均在车厢之下）。
    * @param {CanvasRenderingContext2D} ctx
    */
   function draw(ctx) {
@@ -92,6 +174,8 @@
     if (!(width > 0)) return;
 
     ctx.save();
+
+    drawGround(ctx, S, left, right, yRail, gauge);
 
     /* 道砟带：深色阈限底，略压暗背景 */
     const bed = ctx.createLinearGradient(0, bedTop, 0, bedBot);
@@ -160,16 +244,35 @@
     ctx.restore();
   }
 
+  /**
+   * 轨下地面顶边世界 Y（下轨 + ART_GROUND_BELOW_LOWER_RAIL）；无 Spec 时返回 null。
+   */
+  function getGroundTopY() {
+    const S = spec();
+    if (!S) return null;
+    return (
+      S.TRACK_Y +
+      S.scaleArt(ART_GAUGE) +
+      S.scaleArt(ART_GROUND_BELOW_LOWER_RAIL)
+    );
+  }
+
   window.LpTrack = {
     tick,
     draw,
+    applyTrackScroll,
     /** 调试：当前轨枕卷动相位（世界像素）。 */
     getScrollX() {
       return scrollX;
+    },
+    /** 上一帧卷动增量（世界像素；正 = 轨面向 −X）。 */
+    getLastScrollDelta() {
+      return lastScrollDelta;
     },
     /** 调试：当前 1 speed 单位对应的卷动速率（世界 px/s）。 */
     getScrollPxPerSpeed() {
       return scrollPxPerSpeedUnit(spec());
     },
+    getGroundTopY,
   };
 })();

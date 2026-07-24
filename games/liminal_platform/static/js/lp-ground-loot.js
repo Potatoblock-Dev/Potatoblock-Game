@@ -3,16 +3,25 @@
  */
 (() => {
   const Core = window.LpInventoryCore;
+  const Catalog = window.LpItemCatalog;
   const Spec = window.LiminalCarriageSpec;
   const STORAGE_KEY = 'liminal-platform-ground-v1';
   const PILE_COLS = 5;
   const PILE_ROWS = 4;
   const NEAR_RADIUS = 110;
   const MERGE_RADIUS = 48;
+  /** 地面图标最大宽高（像素），接近原「物」标记 footprint。 */
+  const ICON_MAX_W = 20;
+  const ICON_MAX_H = 16;
+  /** 白色描边偏移（像素）。 */
+  const ICON_OUTLINE = 1.25;
 
   /** @type {{ id: string, x: number, y: number, inv: object }[]} */
   let piles = [];
   let idSeq = 1;
+
+  /** @type {Map<string, { img: HTMLImageElement, ok: boolean, failed: boolean }>} */
+  const iconCache = new Map();
 
   /** 新建空地面堆库存。 */
   function createPileInventory(seed = []) {
@@ -77,6 +86,7 @@
     }
     piles = next.filter((p) => !isEmpty(p));
     if (maxSeq >= idSeq) idSeq = maxSeq + 1;
+    warmPileIcons();
   }
 
   /** 堆是否为空。 */
@@ -148,6 +158,7 @@
     }
     piles = piles.filter((p) => !isEmpty(p));
     save();
+    warmPileIcons();
     return true;
   }
 
@@ -173,6 +184,7 @@
     }
     piles = piles.filter((p) => !isEmpty(p));
     save();
+    warmPileIcons();
   }
 
   /** 附近是否有可搜刮物。 */
@@ -191,27 +203,150 @@
     save();
   }
 
-  /** 世界层绘制地面标记。 */
+  /**
+   * 按 URL 缓存加载物品图标；未就绪或失败返回 null（不每帧新建 Image）。
+   * @param {string} url
+   * @returns {HTMLImageElement | null}
+   */
+  function getCachedIcon(url) {
+    if (!url) return null;
+    let entry = iconCache.get(url);
+    if (!entry) {
+      const img = new Image();
+      entry = { img, ok: false, failed: false };
+      iconCache.set(url, entry);
+      img.onload = () => {
+        entry.ok = img.naturalWidth > 0;
+        entry.failed = !entry.ok;
+      };
+      img.onerror = () => {
+        entry.ok = false;
+        entry.failed = true;
+      };
+      img.src = url;
+    }
+    if (entry.failed || !entry.ok) return null;
+    return entry.img;
+  }
+
+  /** 预热当前各堆首堆叠图标，避免首帧绘制才开始加载。 */
+  function warmPileIcons() {
+    for (const pile of piles) {
+      if (isEmpty(pile)) continue;
+      const url = primaryIconUrl(pile);
+      if (url) getCachedIcon(url);
+    }
+  }
+
+  /**
+   * 取堆内首个非空堆叠的图鉴 icon URL（无贴图则返回空串）。
+   * @param {{ inv: object }} pile
+   * @returns {string}
+   */
+  function primaryIconUrl(pile) {
+    const stacks = Core.collectStacks(pile.inv);
+    for (const stack of stacks) {
+      if (!stack?.itemId || !(Number(stack.qty) > 0)) continue;
+      const item = Catalog?.getItem?.(stack.itemId);
+      const url = item?.icon;
+      if (typeof url === 'string' && url) return url;
+      return '';
+    }
+    return '';
+  }
+
+  /**
+   * 将图标等比缩入地面 footprint。
+   * @param {HTMLImageElement} img
+   * @returns {{ w: number, h: number }}
+   */
+  function fitIconSize(img) {
+    const nw = img.naturalWidth || 1;
+    const nh = img.naturalHeight || 1;
+    const scale = Math.min(ICON_MAX_W / nw, ICON_MAX_H / nh);
+    return { w: nw * scale, h: nh * scale };
+  }
+
+  /**
+   * 在 (cx, cy) 绘制带白色描边的物品图标（八向白色剪影 + 原图）。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {HTMLImageElement} img
+   * @param {number} cx
+   * @param {number} cy
+   */
+  function drawIconWithOutline(ctx, img, cx, cy) {
+    const { w, h } = fitIconSize(img);
+    const x = cx - w / 2;
+    const y = cy - h / 2;
+    const o = ICON_OUTLINE;
+    const offsets = [
+      [-1, -1], [0, -1], [1, -1],
+      [-1, 0], [1, 0],
+      [-1, 1], [0, 1], [1, 1],
+    ];
+    ctx.save();
+    ctx.filter = 'brightness(0) invert(1)';
+    for (const [dx, dy] of offsets) {
+      ctx.drawImage(img, x + dx * o, y + dy * o, w, h);
+    }
+    ctx.filter = 'none';
+    ctx.drawImage(img, x, y, w, h);
+    ctx.restore();
+  }
+
+  /**
+   * 无可用图标时画原金色「物」标记。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} x
+   * @param {number} y
+   */
+  function drawFallbackMarker(ctx, x, y) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x - 10, y - 8, 20, 12, 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '700 9px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('物', x, y - 2);
+    ctx.restore();
+  }
+
+  /** 世界层绘制地面标记（优先首堆叠图鉴 icon + 白描边）。 */
   function draw(ctx) {
     const floor = Spec?.FLOOR_Y ?? 0;
     for (const pile of piles) {
       if (isEmpty(pile)) continue;
       const x = pile.x;
       const y = (pile.y || floor) - 6;
-      ctx.save();
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.75)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(x - 10, y - 8, 20, 12, 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = '700 9px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('物', x, y - 2);
-      ctx.restore();
+      const url = primaryIconUrl(pile);
+      const img = url ? getCachedIcon(url) : null;
+      if (img) {
+        drawIconWithOutline(ctx, img, x, y - 2);
+      } else {
+        drawFallbackMarker(ctx, x, y);
+      }
+    }
+  }
+
+  /**
+   * 轨下/轨面掉落堆随列车卷动平移（与 LpTrack 轨枕同相）；走道地板堆不动。
+   */
+  function tickTrackScroll() {
+    const groundY = window.LpTrack?.getGroundTopY?.();
+    if (groundY == null) return;
+    const apply = window.LpTrack?.applyTrackScroll;
+    if (!apply) return;
+    for (const pile of piles) {
+      if (isEmpty(pile)) continue;
+      const y = Number(pile.y);
+      if (!(y >= groundY - 8)) continue;
+      apply(pile);
     }
   }
 
@@ -222,6 +357,7 @@
   }
 
   load();
+  warmPileIcons();
 
   window.LpGroundLoot = {
     load,
@@ -233,6 +369,7 @@
     findNearest,
     pruneAndSave,
     draw,
+    tickTrackScroll,
     seedIfEmpty,
     applyFromSnapshot,
     NEAR_RADIUS,

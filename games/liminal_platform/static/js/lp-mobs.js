@@ -67,14 +67,49 @@
     spawnIntervalMin: 0.5,
     /** 波内间隔上限（秒）；实际取 [min, max] 随机。 */
     spawnIntervalMax: 0.95,
-    /** 场上地面怪上限。 */
-    maxGround: 4,
-    /** 场上空中怪上限。 */
-    maxAir: 3,
+    /**
+     * 场上地面怪上限。
+     * 原 4；抬到 7 以容纳近车压力 + 中/远距雷达簇（每簇常 2 只）。
+     */
+    maxGround: 7,
+    /**
+     * 场上空中怪上限。
+     * 原 3；抬到 5，同上。
+     */
+    maxAir: 5,
     /** 开局 / reset 后先进入的阶段：'wave' | 'calm'。 */
     startPhase: 'wave',
     /** 进入 wave 后首次刷怪前的短延迟（秒）。 */
     waveLeadIn: 0.35,
+  };
+
+  /**
+   * 刷怪距编组侧翼的外扩（世界 px）与雷达环带权重。
+   * 原点参考：绘轨站心（见 LpRadarScope）；默认量程 4800、锁定 6000。
+   * 原先几乎只在侧翼/屏缘（≈ near），雷达上挤在编组附近；现偏中/外环。
+   */
+  const SPAWN_RANGE = {
+    /** 近距外扩 [min,max]：贴侧翼，保近车压力（原行为 ≈ 0～数百）。 */
+    nearExtraMin: 60,
+    nearExtraMax: 320,
+    /** 中距外扩：雷达中环。 */
+    midExtraMin: 1600,
+    midExtraMax: 3000,
+    /** 远距外扩：雷达外环（仍落在默认/锁定量程内可辨）。 */
+    farExtraMin: 3400,
+    farExtraMax: 5400,
+    /** 抽带权重（近/中/远）；合计不必为 1，按相对权重归一。 */
+    nearWeight: 0.22,
+    midWeight: 0.38,
+    farWeight: 0.4,
+    /**
+     * 中/远距同簇伴侣数（主刷 + companions；≥ LpRadarScope MOB_CLUSTER_MIN=2 才成点）。
+     * 近距不强制组簇，避免近车瞬时过挤。
+     */
+    midCompanions: 1,
+    farCompanions: 1,
+    /** 同簇相对主刷点的轴向抖动上限（须 < 雷达链接距 300）。 */
+    clusterJitter: 110,
   };
 
   const HIT_COOLDOWN = 0.85;
@@ -105,6 +140,23 @@
   const ORBIT_RY = 0.52;
   /** 卫星球半径相对主体半径。 */
   const ORBIT_SAT_R = 0.32;
+
+  /**
+   * 气球惯性漂浮：朝期望速度平滑加速（非瞬时转向）。
+   * velSmooth / damp 越小越「飘」；arrive* 保证舱内换点与进舱不会卡死。
+   */
+  const AIR_MOVE = {
+    /** 速度跟期望的响应（1/s）；原 moveToward 等价于无穷大（瞬时对准）。 */
+    velSmooth: 2.4,
+    /** 额外速度阻尼（1/s）；偏低保留滑行惯性。 */
+    damp: 0.25,
+    /** 近目标减速半径（px）。 */
+    slowRadius: 52,
+    /** 到达判定距离（px）；原 moveToward 为 1.5。 */
+    arriveDist: 14,
+    /** 到达时允许的最大速率（px/s）。 */
+    arriveSpeed: 40,
+  };
 
   /** @type {Array<ReturnType<typeof createMob>>} */
   let mobs = [];
@@ -277,6 +329,9 @@
       /** 本帧世界速度（px/s）；供炮塔提前量。 */
       vx: 0,
       vy: 0,
+      /** 气球惯性积分速度（仅 air / glideToward 使用）。 */
+      gx: 0,
+      gy: 0,
       /** 护甲 stub（锁定「护甲最高/最低」用；暂无减伤）。 */
       armor: 0,
       ...extra,
@@ -422,20 +477,73 @@
   }
 
   /**
-   * 地面怪：轨面 Y，X 在编组左/右屏外；入口固定为同侧车尾/车头。
-   * @param {object} S
+   * 按 SPAWN_RANGE 权重抽近/中/远距带，并给出侧翼外扩距离与同簇伴侣数。
+   * @returns {{ band: 'near'|'mid'|'far', extra: number, companions: number }}
    */
-  function spawnGround(S) {
-    const cars = S.CARRIAGES;
-    if (!cars.length) return null;
+  function pickSpawnRangePlan() {
+    const wNear = Math.max(0, SPAWN_RANGE.nearWeight);
+    const wMid = Math.max(0, SPAWN_RANGE.midWeight);
+    const wFar = Math.max(0, SPAWN_RANGE.farWeight);
+    const total = wNear + wMid + wFar || 1;
+    const r = Math.random() * total;
+    /** @type {'near'|'mid'|'far'} */
+    let band = 'near';
+    let lo = SPAWN_RANGE.nearExtraMin;
+    let hi = SPAWN_RANGE.nearExtraMax;
+    let companions = 0;
+    if (r < wNear) {
+      band = 'near';
+      lo = SPAWN_RANGE.nearExtraMin;
+      hi = SPAWN_RANGE.nearExtraMax;
+      companions = 0;
+    } else if (r < wNear + wMid) {
+      band = 'mid';
+      lo = SPAWN_RANGE.midExtraMin;
+      hi = SPAWN_RANGE.midExtraMax;
+      companions = Math.max(0, SPAWN_RANGE.midCompanions | 0);
+    } else {
+      band = 'far';
+      lo = SPAWN_RANGE.farExtraMin;
+      hi = SPAWN_RANGE.farExtraMax;
+      companions = Math.max(0, SPAWN_RANGE.farCompanions | 0);
+    }
+    const span = Math.max(0, hi - lo);
+    const extra = lo + Math.random() * span;
+    return { band, extra, companions };
+  }
+
+  /**
+   * 编组侧翼再外扩 extra 的轨面 X；可选沿轨抖动（同簇伴侣）。
+   * @param {object} S
+   * @param {boolean} fromLeft
+   * @param {number} extra
+   * @param {number} [jitterX]
+   */
+  function flankSpawnX(S, fromLeft, extra, jitterX) {
     const spanPad = S.scaleArt(180);
     const flanks = trainFlankXs(S, spanPad);
-    const rect = lastViewWorld;
-    const margin = GROUND.radius * SPAWN_VIEW_PAD + S.scaleArt(24);
-    const fromLeft = Math.random() < 0.5;
+    const j = Number(jitterX) || 0;
+    return fromLeft ? flanks.left - extra + j : flanks.right + extra + j;
+  }
+
+  /**
+   * 地面怪：轨面 Y，X = 侧翼外扩（近/中/远）并保证在视野外；入口固定同侧车尾/车头。
+   * @param {object} S
+   * @param {{ fromLeft?: boolean, extra?: number, jitterX?: number } | null | undefined} [opts]
+   */
+  function spawnGround(S, opts) {
+    const cars = S.CARRIAGES;
+    if (!cars.length) return null;
+    const fromLeft = opts?.fromLeft != null ? !!opts.fromLeft : Math.random() < 0.5;
+    const extra =
+      opts?.extra != null && Number.isFinite(opts.extra)
+        ? Math.max(0, opts.extra)
+        : pickSpawnRangePlan().extra;
     const entry = pickGroundEntry(S, fromLeft ? 'tail' : 'head');
     if (!entry) return null;
-    let x = fromLeft ? flanks.left : flanks.right;
+    const rect = lastViewWorld;
+    const margin = GROUND.radius * SPAWN_VIEW_PAD + S.scaleArt(24);
+    let x = flankSpawnX(S, fromLeft, extra, opts?.jitterX);
     if (rect) {
       x = fromLeft
         ? Math.min(x, rect.left - margin)
@@ -451,26 +559,36 @@
       floorY: entry.floorY,
       carId: entry.carId,
       entryEnd: entry.end,
+      spawnBandExtra: extra,
     });
   }
 
   /**
-   * 空中怪：以连接缝为入舱目标，出生点在视野外（优先屏上缘，必要时左右侧）。
+   * 空中怪：侧翼外扩的屏外高空出生，再俯冲指定（或随机）连接缝入舱。
    * @param {object} S
+   * @param {{ fromLeft?: boolean, extra?: number, jitterX?: number, gap?: object } | null | undefined} [opts]
    */
-  function spawnAir(S) {
+  function spawnAir(S, opts) {
     const gaps = listCouplerGaps(S);
     if (!gaps.length) return null;
-    const gap = gaps[Math.floor(Math.random() * gaps.length)];
-    const side = Math.random() < 0.5 ? -1 : 1;
-    let x = gap.x + side * S.scaleArt(40 + Math.random() * 120);
-    let hoverY = S.FLOOR_Y - S.scaleArt(220) - Math.random() * S.scaleArt(80);
+    const gap =
+      opts?.gap || gaps[Math.floor(Math.random() * gaps.length)];
+    const fromLeft = opts?.fromLeft != null ? !!opts.fromLeft : Math.random() < 0.5;
+    const extra =
+      opts?.extra != null && Number.isFinite(opts.extra)
+        ? Math.max(0, opts.extra)
+        : pickSpawnRangePlan().extra;
+    let x = flankSpawnX(S, fromLeft, extra, opts?.jitterX);
+    let hoverY = S.FLOOR_Y - S.scaleArt(280) - Math.random() * S.scaleArt(120);
     const rect = lastViewWorld;
     const margin = AIR.radius * SPAWN_VIEW_PAD + S.scaleArt(24);
     if (rect) {
-      hoverY = Math.min(hoverY, rect.top - margin - Math.random() * S.scaleArt(60));
+      hoverY = Math.min(
+        hoverY,
+        rect.top - margin - Math.random() * S.scaleArt(60)
+      );
       if (!isFullyOutsideView(x, hoverY, AIR.radius, rect)) {
-        x = Math.random() < 0.5 ? rect.left - margin : rect.right + margin;
+        x = fromLeft ? rect.left - margin : rect.right + margin;
         hoverY = Math.min(hoverY, rect.top - margin);
       }
     }
@@ -483,10 +601,79 @@
       gapLeft: gap.left,
       gapRight: gap.right,
       floorY: gap.floorY,
-      enterX: gap.x + (Math.random() - 0.5) * Math.min(40, (gap.right - gap.left) * 0.4),
+      enterX:
+        gap.x +
+        (Math.random() - 0.5) * Math.min(40, (gap.right - gap.left) * 0.4),
       carLeftId: gap.carLeftId,
       carRightId: gap.carRightId,
+      spawnBandExtra: extra,
     });
+  }
+
+  /**
+   * 按距带刷一簇地面怪（主刷 + 中/远伴侣），受 maxGround 限制；供雷达外环成簇。
+   * @param {object} S
+   * @param {{ band?: string, extra?: number, companions?: number } | null | undefined} [forcedPlan]
+   * @returns {number} 实际推入数量
+   */
+  function spawnGroundCluster(S, forcedPlan) {
+    const plan = forcedPlan || pickSpawnRangePlan();
+    const fromLeft = Math.random() < 0.5;
+    const room = WAVE.maxGround - countKind('ground');
+    if (room <= 0) return 0;
+    const companions = Math.max(0, plan.companions | 0);
+    const want = Math.min(room, 1 + companions);
+    let n = 0;
+    for (let i = 0; i < want; i += 1) {
+      const jitter =
+        i === 0
+          ? 0
+          : (Math.random() * 2 - 1) * SPAWN_RANGE.clusterJitter;
+      const g = spawnGround(S, {
+        fromLeft,
+        extra: plan.extra,
+        jitterX: jitter,
+      });
+      if (!g) break;
+      mobs.push(g);
+      n += 1;
+    }
+    return n;
+  }
+
+  /**
+   * 按距带刷一簇空中怪（同缝入舱），受 maxAir 限制。
+   * @param {object} S
+   * @param {{ band?: string, extra?: number, companions?: number } | null | undefined} [forcedPlan]
+   * @returns {number} 实际推入数量
+   */
+  function spawnAirCluster(S, forcedPlan) {
+    const gaps = listCouplerGaps(S);
+    if (!gaps.length) return 0;
+    const plan = forcedPlan || pickSpawnRangePlan();
+    const fromLeft = Math.random() < 0.5;
+    const gap = gaps[Math.floor(Math.random() * gaps.length)];
+    const room = WAVE.maxAir - countKind('air');
+    if (room <= 0) return 0;
+    const companions = Math.max(0, plan.companions | 0);
+    const want = Math.min(room, 1 + companions);
+    let n = 0;
+    for (let i = 0; i < want; i += 1) {
+      const jitter =
+        i === 0
+          ? 0
+          : (Math.random() * 2 - 1) * SPAWN_RANGE.clusterJitter;
+      const a = spawnAir(S, {
+        fromLeft,
+        extra: plan.extra,
+        jitterX: jitter,
+        gap,
+      });
+      if (!a) break;
+      mobs.push(a);
+      n += 1;
+    }
+    return n;
   }
 
   /** 统计存活某类数量。 */
@@ -514,10 +701,20 @@
 
   /**
    * 波次导演：推进 wave/calm，仅在 wave 内按间隔尝试刷怪（受 caps 限制）。
+   * 每次尝试按 SPAWN_RANGE 权重在近/中/远刷簇，偏雷达中外环。
    * @param {object} S
    * @param {number} dt
    */
   function tickWaveDirector(S, dt) {
+    /* 停靠月台：清场并暂停刷怪，敌方不接近火车 */
+    if (window.LpPlatform?.isAtPlatform?.()) {
+      if (mobs.length) {
+        mobs = [];
+        window.LpAutoSensors?.setHostiles?.([]);
+      }
+      return;
+    }
+
     phaseTimer -= dt;
     if (phaseTimer <= 0) {
       enterWavePhase(wavePhase === 'wave' ? 'calm' : 'wave');
@@ -529,16 +726,14 @@
     spawnTimer = nextSpawnInterval();
 
     if (countKind('ground') < WAVE.maxGround) {
-      const g = spawnGround(S);
-      if (g) mobs.push(g);
+      spawnGroundCluster(S);
     }
     if (countKind('air') < WAVE.maxAir) {
-      const a = spawnAir(S);
-      if (a) mobs.push(a);
+      spawnAirCluster(S);
     }
   }
 
-  /** 向目标点匀速靠近；到达返回 true。 */
+  /** 向目标点匀速靠近（瞬时转向）；到达返回 true。保龄球等仍用此路径。 */
   function moveToward(m, tx, ty, speed, dt) {
     const dx = tx - m.x;
     const dy = ty - m.y;
@@ -552,6 +747,59 @@
     m.x += (dx / dist) * step;
     m.y += (dy / dist) * step;
     return dist - step <= 1.5;
+  }
+
+  /**
+   * 气球惯性靠近：速度平滑追上期望方向，带近距减速；够近且够慢时返回 true。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {number} tx 转向目标 X
+   * @param {number} ty 转向目标 Y（可含 bob）
+   * @param {number} speed 巡航期望速率（px/s）
+   * @param {number} dt
+   * @param {number} [arriveX] 到达判定 X（默认 tx；舱内应传无 bob 的稳定点）
+   * @param {number} [arriveY] 到达判定 Y（默认 ty）
+   * @returns {boolean}
+   */
+  function glideToward(m, tx, ty, speed, dt, arriveX, arriveY) {
+    if (m.gx == null) m.gx = 0;
+    if (m.gy == null) m.gy = 0;
+    const ax = arriveX == null ? tx : arriveX;
+    const ay = arriveY == null ? ty : arriveY;
+    const adist = Math.hypot(ax - m.x, ay - m.y);
+    const spd = Math.hypot(m.gx, m.gy);
+
+    if (adist <= AIR_MOVE.arriveDist && spd <= AIR_MOVE.arriveSpeed) {
+      m.gx = 0;
+      m.gy = 0;
+      m.x = ax;
+      m.y = ay;
+      return true;
+    }
+
+    const dx = tx - m.x;
+    const dy = ty - m.y;
+    const dist = Math.hypot(dx, dy);
+    let wantSpd = speed;
+    if (adist < AIR_MOVE.slowRadius) {
+      wantSpd = speed * Math.max(0.12, adist / AIR_MOVE.slowRadius);
+    }
+    let wantVx = 0;
+    let wantVy = 0;
+    if (dist > 0.5) {
+      wantVx = (dx / dist) * wantSpd;
+      wantVy = (dy / dist) * wantSpd;
+    }
+
+    const blend = 1 - Math.exp(-AIR_MOVE.velSmooth * dt);
+    m.gx += (wantVx - m.gx) * blend;
+    m.gy += (wantVy - m.gy) * blend;
+    const drag = Math.exp(-AIR_MOVE.damp * dt);
+    m.gx *= drag;
+    m.gy *= drag;
+
+    m.x += m.gx * dt;
+    m.y += m.gy * dt;
+    return false;
   }
 
   /**
@@ -652,13 +900,14 @@
 
   /**
    * 空中：飞向连接缝 → 钻入舱空 → 在相邻车厢空气里漂浮游荡（不贴地）。
+   * 位移经 glideToward（惯性），正弦 bob 幅度略大以增强漂浮感。
    * @param {ReturnType<typeof createMob>} m
    */
   function tickAir(m, S, dt) {
-    m.bob += dt * 4.5;
+    m.bob += dt * 3.6;
     if (m.phase === 'dive') {
-      const hover = m.targetY + Math.sin(m.bob) * 6;
-      if (moveToward(m, m.targetX, hover, m.speed, dt)) {
+      const hover = m.targetY + Math.sin(m.bob) * 9;
+      if (glideToward(m, m.targetX, hover, m.speed, dt)) {
         m.phase = 'enter';
         m.targetX = m.enterX;
         const band = cabinAirBand(S, m.radius);
@@ -668,8 +917,8 @@
     }
     if (m.phase === 'enter') {
       const band = cabinAirBand(S, m.radius);
-      const enterY = band.highY + (band.lowY - band.highY) * 0.45 + Math.sin(m.bob) * 5;
-      if (moveToward(m, m.enterX, enterY, m.climbSpeed, dt)) {
+      const enterY = band.highY + (band.lowY - band.highY) * 0.45 + Math.sin(m.bob) * 8;
+      if (glideToward(m, m.enterX, enterY, m.climbSpeed, dt)) {
         m.phase = 'inside';
         const pickId = Math.random() < 0.5 ? m.carLeftId : m.carRightId;
         const car =
@@ -680,9 +929,9 @@
       }
       return;
     }
-    /* inside：舱内水平 + 高度游荡，正弦微漂 */
-    const floatY = m.targetY + Math.sin(m.bob) * 7;
-    if (moveToward(m, m.targetX, floatY, m.speed * 0.65, dt)) {
+    /* inside：舱内水平 + 高度游荡，正弦微漂；到达判定用稳定 target，避免 bob 反复触发换点 */
+    const floatY = m.targetY + Math.sin(m.bob) * 11;
+    if (glideToward(m, m.targetX, floatY, m.speed * 0.58, dt, m.targetX, m.targetY)) {
       const car = S.carriageById?.(m.carId) || S.CARRIAGES[0];
       pickCabinAirWander(m, S, car);
     }
@@ -1183,24 +1432,55 @@
   }
 
   /**
-   * 清空小怪并重启波次（调试 / 开局）；波开始时各刷一对作开场压力。
+   * 清空小怪并重启波次（调试 / 开局）；开场刷近距一对保压力，再刷中/远簇上雷达外环。
    * @param {{ view?: object, viewW?: number, viewH?: number }} [ctx] 可选相机视野，保证开场刷怪也在屏外
    */
   function reset(ctx) {
     mobs = [];
     window.LpMobBubbleFill?.reset?.();
+    window.LpMobDeathFx?.clear?.();
     rememberView(ctx);
     enterWavePhase(WAVE.startPhase === 'calm' ? 'calm' : 'wave');
     const S = spec();
     if (!S || wavePhase !== 'wave') return;
+    /* 近距开场压力（各 2，不组强制簇）。 */
     for (let i = 0; i < 2; i += 1) {
-      const g = spawnGround(S);
+      const g = spawnGround(S, {
+        fromLeft: i === 0,
+        extra:
+          SPAWN_RANGE.nearExtraMin +
+          Math.random() *
+            (SPAWN_RANGE.nearExtraMax - SPAWN_RANGE.nearExtraMin),
+      });
       if (g) mobs.push(g);
     }
     for (let i = 0; i < 2; i += 1) {
-      const a = spawnAir(S);
+      const a = spawnAir(S, {
+        fromLeft: i === 0,
+        extra:
+          SPAWN_RANGE.nearExtraMin +
+          Math.random() *
+            (SPAWN_RANGE.nearExtraMax - SPAWN_RANGE.nearExtraMin),
+      });
       if (a) mobs.push(a);
     }
+    /* 中距 + 远距开场雷达簇（强制距带，避免再抽到 near）。 */
+    const midExtra =
+      SPAWN_RANGE.midExtraMin +
+      Math.random() * (SPAWN_RANGE.midExtraMax - SPAWN_RANGE.midExtraMin);
+    const farExtra =
+      SPAWN_RANGE.farExtraMin +
+      Math.random() * (SPAWN_RANGE.farExtraMax - SPAWN_RANGE.farExtraMin);
+    spawnGroundCluster(S, {
+      band: 'mid',
+      extra: midExtra,
+      companions: SPAWN_RANGE.midCompanions,
+    });
+    spawnAirCluster(S, {
+      band: 'far',
+      extra: farExtra,
+      companions: SPAWN_RANGE.farCompanions,
+    });
   }
 
   /** 调试只读：当前波次阶段与剩余时间。 */
@@ -1211,6 +1491,27 @@
       spawnTimer,
       config: { ...WAVE },
     };
+  }
+
+  /**
+   * 按物种取消散粒子色板（保龄球偏暖 / 气球偏冷）。
+   * @param {{ species?: string, kind?: string } | null | undefined} m
+   * @returns {number[][]}
+   */
+  function deathPaletteFor(m) {
+    if (m?.species === 'balloon' || m?.kind === 'air') return BALLOON_PALETTE;
+    return BOWLING_PALETTE;
+  }
+
+  /**
+   * 在剔除前触发死亡消散特效（粒子 + 残影）；碰撞仍立刻 purge。
+   * @param {ReturnType<typeof createMob>} m
+   */
+  function spawnDeathFx(m) {
+    window.LpMobDeathFx?.spawnDissipate?.(m.x, m.y, {
+      radius: m.radius,
+      palette: deathPaletteFor(m),
+    });
   }
 
   /**
@@ -1227,6 +1528,7 @@
       m.hp = 0;
       m.alive = false;
       m.hitCd = 0;
+      spawnDeathFx(m);
       purgeDeadMobs();
     }
     return {
@@ -1247,6 +1549,8 @@
     getWaveState,
     /** 可调波次参数（就地改数字即可热调；改 duration 等需等下阶段切换生效）。 */
     WAVE,
+    /** 可调刷怪距带（近/中/远外扩与权重；热调后下次刷怪生效）。 */
+    SPAWN_RANGE,
     /** 调试只读。 */
     getMobs: () => mobs.slice(),
   };

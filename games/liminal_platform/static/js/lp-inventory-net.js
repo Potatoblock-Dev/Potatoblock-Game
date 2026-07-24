@@ -27,12 +27,23 @@
     target.slots = next.slots;
   }
 
-  /** 应用房间共享库存（仓库 / 地面 / 炮塔箱）。 */
+  /** 应用房间共享库存（物资仓 / 设施仓 / 地面 / 炮塔箱）。 */
   function applyRoomOnly(detail) {
     const room = detail?.room || detail;
     if (!room) return;
-    if (room.storage && window.LpInventory?.getStorageInventory) {
-      overwriteInventory(window.LpInventory.getStorageInventory(), room.storage);
+    const inv = window.LpInventory;
+    const Core = window.LpInventoryCore;
+    if (room.storage && inv?.getStorageInventory) {
+      overwriteInventory(inv.getStorageInventory(), room.storage);
+    }
+    const facilityBag = inv?.getFacilityStorageInventory?.();
+    if (facilityBag) {
+      if (room.storage_facility) {
+        overwriteInventory(facilityBag, room.storage_facility);
+      } else if (room.storage && Core?.migrateFacilitiesToFacilityWarehouse) {
+        // 旧快照无设施仓：把物资仓里的设施迁过来。
+        Core.migrateFacilitiesToFacilityWarehouse(inv.getStorageInventory(), facilityBag);
+      }
     }
     if (room.ground && window.LpGroundLoot?.applyFromSnapshot) {
       window.LpGroundLoot.applyFromSnapshot(room.ground);
@@ -40,9 +51,10 @@
     if (room.crates && window.LpGuardTurret?.applyCratesFromSnapshot) {
       window.LpGuardTurret.applyCratesFromSnapshot(room.crates);
     }
-    window.LpInventory?.renderAfterAuthority?.();
+    inv?.renderAfterAuthority?.();
     window.LpHandsHud?.render?.();
     window.LpGuardCrateUi?.refresh?.();
+    window.LpFacilityEdit?.refreshTray?.();
   }
 
   /**

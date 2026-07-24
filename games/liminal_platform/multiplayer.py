@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 import string
 import time
@@ -54,7 +55,7 @@ FUEL_MAX = 100.0
 FUEL_PER_ADD = 18.0
 CHAT_MAX_LEN = 40
 INV_OP_MIN_INTERVAL = 0.04
-ROOM_BAGS = frozenset({"storage", "ground", "crate_ammo", "crate_recycle"})
+ROOM_BAGS = frozenset({"storage", "storage_facility", "ground", "crate_ammo", "crate_recycle"})
 
 CLOSE_REPLACED = 4002
 CLOSE_ROOM_FULL = 4005
@@ -79,8 +80,8 @@ def _default_appearance(user_id: str) -> Dict[str, Any]:
 
 
 def _build_platforms() -> List[Dict[str, float]]:
-    # 与 carriage-spec CARRIAGES 对齐：卫兵→仓储→动力→绘轨→枢机
-    cars = [COUPLER_JOIN * i for i in range(5)]
+    # 与 carriage-spec CARRIAGES 对齐：卫兵→仓储→空车厢→动力→绘轨→枢机
+    cars = [COUPLER_JOIN * i for i in range(6)]
     floors = [
         {"left": wx + WALK_LEFT, "right": wx + WALK_RIGHT, "y": FLOOR_Y} for wx in cars
     ]
@@ -103,8 +104,8 @@ def _build_platforms() -> List[Dict[str, float]]:
 PLATFORMS = _build_platforms()
 WORLD_LEFT = PLATFORMS[0]["left"] + HALF_W
 WORLD_RIGHT = PLATFORMS[-1]["right"] - HALF_W
-# 开局出生在动力车厢（编组左→右：卫兵、仓储、动力、绘轨、枢机）走道中心
-POWER_CAR_WORLD_X = COUPLER_JOIN * 2
+# 开局出生在动力车厢（编组左→右：卫兵、仓储、空车厢、动力、绘轨、枢机）走道中心
+POWER_CAR_WORLD_X = COUPLER_JOIN * 3
 DEFAULT_X = POWER_CAR_WORLD_X + (WALK_LEFT + WALK_RIGHT) / 2.0
 
 
@@ -207,6 +208,8 @@ class LiminalPlayer:
         self.drone_vy = None
         self.drone_aim = None
         self.drone_phase = None
+        # 所在场景：train | platform（客户端上报；发车锁用）
+        self.scene = "train"
         self.inventories = Inv.PlayerInventories()
         self.sync_held_from_inv()
 
@@ -275,6 +278,9 @@ class LiminalPlayer:
                         data["dronePhase"] = phase
             except (TypeError, ValueError):
                 pass
+        scene = str(getattr(self, "scene", "train") or "train").strip().lower()
+        if scene in ("train", "platform"):
+            data["scene"] = scene
         return data
 
 
@@ -354,6 +360,12 @@ class LiminalRoom:
 
     def step_train(self, dt: float) -> None:
         """列车积分：牵引力/功率包络 + 滚动与风阻（与客户端 lp-train-drive.js 对齐）。"""
+        # 月台发车锁：有人在月台时保持空档
+        if any(
+            p.connected and str(getattr(p, "scene", "train")) == "platform"
+            for p in self.players.values()
+        ):
+            self.train["throttle"] = 0.0
         throttle = float(self.train["throttle"])
         brake = float(self.train["brake"])
         speed = float(self.train["speed"])
@@ -594,6 +606,11 @@ class LiminalLobbyManager:
             player.death_cause = None
             player.downed_remain = None
         self._apply_drone_pose(player, payload)
+        scene = str(payload.get("scene") or "").strip().lower()
+        if scene in ("train", "platform"):
+            player.scene = scene
+        elif not getattr(player, "scene", None):
+            player.scene = "train"
 
     def _apply_drone_pose(self, player: LiminalPlayer, payload: Dict[str, Any]) -> None:
         """写入伴飞无人机位姿（客户端权威，仅回显广播；缺字段则清掉）。"""
@@ -660,6 +677,13 @@ class LiminalLobbyManager:
                 return
         player.turret_id = want
 
+    def _any_player_on_platform(self, room: "LiminalRoom") -> bool:
+        """房内是否有在线玩家仍在月台场景（发车锁）。"""
+        for other in room.players.values():
+            if other.connected and str(getattr(other, "scene", "train")) == "platform":
+                return True
+        return False
+
     async def handle_train(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
@@ -671,9 +695,14 @@ class LiminalLobbyManager:
         room._train_set_times[user_id] = now
         if "throttle" in payload:
             try:
-                room.train["throttle"] = _clamp(float(payload["throttle"]), -5.0, 5.0)
+                want = _clamp(float(payload["throttle"]), -5.0, 5.0)
             except (TypeError, ValueError):
-                pass
+                want = room.train["throttle"]
+            # 任一人在月台：禁止离开空档（发车锁）
+            if abs(want) > 0.01 and self._any_player_on_platform(room):
+                room.train["throttle"] = 0.0
+            else:
+                room.train["throttle"] = want
         if "brake" in payload:
             try:
                 room.train["brake"] = _clamp(float(payload["brake"]), 0.0, 1.0)
@@ -683,6 +712,8 @@ class LiminalLobbyManager:
             room.train["emergency"] = True
             room.train["throttle"] = 0.0
         if room.train.get("emergency"):
+            room.train["throttle"] = 0.0
+        if self._any_player_on_platform(room):
             room.train["throttle"] = 0.0
 
     async def handle_fuel_add(self, user_id: str, payload: Dict[str, Any]) -> None:
@@ -924,7 +955,7 @@ class LiminalLobbyManager:
         )
 
     async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:
-        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop / rotate / sort。"""
+        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop / rotate / sort / set_ammo。"""
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
@@ -951,6 +982,8 @@ class LiminalLobbyManager:
             room_changed = self._inv_rotate(room, player, payload)
         elif action == "sort":
             room_changed = self._inv_sort(room, player, payload)
+        elif action == "set_ammo":
+            self._inv_set_ammo(room, player, payload)
         else:
             return
         overflow = Inv.sync_player_to_equip(player.inventories.player, player.inventories.equip)
@@ -1266,12 +1299,12 @@ class LiminalLobbyManager:
     def _inv_sort(
         self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
     ) -> bool:
-        """整理 player / storage 网格：合并可叠加堆并左上紧凑重排。"""
+        """整理 player / storage / storage_facility 网格：合并可叠加堆并左上紧凑重排。"""
         bag_ref = payload.get("bag") or payload.get("from")
         if not isinstance(bag_ref, dict):
             return False
         name = str(bag_ref.get("bag") or bag_ref.get("inv") or "").strip()
-        if name not in ("player", "storage"):
+        if name not in ("player", "storage", "storage_facility"):
             return False
         inv = self._resolve_bag(room, player, bag_ref)
         if inv is None:
@@ -1279,6 +1312,35 @@ class LiminalLobbyManager:
         if not Inv.sort_inventory(inv):
             return False
         return name in ROOM_BAGS
+
+    def _inv_set_ammo(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> None:
+        """设置个人袋中带 maxAmmo 的堆叠弹药（如灭火器）；钳制到图鉴上限。"""
+        bag_ref = payload.get("bag")
+        inv = self._resolve_bag(room, player, bag_ref)
+        if inv is None or not isinstance(bag_ref, dict):
+            return
+        name = str(bag_ref.get("bag") or bag_ref.get("inv") or "").strip()
+        if name not in ("player", "hands", "equip"):
+            return
+        try:
+            index = int(bag_ref.get("index"))
+            ammo = float(payload.get("ammo"))
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(ammo):
+            return
+        origin = inv.origin_index(index)
+        stack = inv.get_slot(origin)
+        if not stack:
+            return
+        item = Inv.ITEMS.get(stack["itemId"]) or {}
+        max_ammo = item.get("maxAmmo")
+        if max_ammo is None:
+            return
+        clamped = max(0.0, min(float(max_ammo), ammo))
+        inv.update_slot(origin, {"ammo": clamped})
 
     def _inv_crate(
         self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]

@@ -1,9 +1,10 @@
 /**
- * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑；支持自动奔跑（进房默认锁定奔跑）。
+ * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑、下蹲；支持自动奔跑（进房默认锁定奔跑）。
  */
 (() => {
-  const STORAGE_KEY = 'liminal-platform-input-bindings-v6';
+  const STORAGE_KEY = 'liminal-platform-input-bindings-v7';
   const LEGACY_STORAGE_KEYS = [
+    'liminal-platform-input-bindings-v6',
     'liminal-platform-input-bindings-v5',
     'liminal-platform-input-bindings-v4',
     'liminal-platform-input-bindings-v3',
@@ -18,6 +19,7 @@
     fire: [['KeyJ'], []],
     reload: [['KeyR'], []],
     sprint: [['ShiftLeft'], ['ShiftRight']],
+    kneel: [['KeyS'], ['ArrowDown']],
     handsHud: [['KeyX'], []],
   };
   const ACTION_NAMES = {
@@ -27,6 +29,7 @@
     fire: '开火',
     reload: '装填',
     sprint: '奔跑',
+    kneel: '下蹲',
     handsHud: '切换手部/弹种/弹链',
   };
   const DEFAULT_SETTINGS = {
@@ -243,14 +246,18 @@
         ? `${formatAction('sprint') || 'Shift'} 切换走/跑`
         : `${formatAction('sprint') || 'Shift'} 按住奔跑`;
       status.textContent =
-        `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${formatAction('handsHud') || 'X'} 切换手部 · 1/2/3 选手部 · ${sprintHint}`;
+        `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${formatAction('handsHud') || 'X'} 切换手部 · 1/2/3 选手部 · ${formatAction('kneel') || 'S / ↓'} 下蹲 · ${sprintHint}`;
     }
-    const hint = document.getElementById('lpInventoryHint');
-    if (hint) {
-      const coarse = window.matchMedia('(hover: none), (pointer: coarse)').matches;
-      hint.textContent = coarse
-        ? '点按查看 · 拖拽到格子移动 · 点关闭退出'
-        : `悬停弹出说明 · 拖拽移动 · Shift+点击快速转移 · ${formatAction('inventory')} 关闭`;
+    if (typeof window.LpInventory?.updateHint === 'function') {
+      window.LpInventory.updateHint();
+    } else {
+      const hint = document.getElementById('lpInventoryHint');
+      if (hint) {
+        const coarse = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+        hint.textContent = coarse
+          ? '点按查看 · 拖拽到格子移动 · 点关闭退出'
+          : `悬停弹出说明 · 拖拽移动 · Shift+点击 / ${formatAction('interact')} 快速转移 · ${formatAction('inventory')} 关闭`;
+      }
     }
   }
 

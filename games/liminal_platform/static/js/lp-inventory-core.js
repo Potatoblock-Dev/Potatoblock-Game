@@ -48,7 +48,7 @@
     return Number(rot) === 90 ? 0 : 90;
   }
 
-  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；医疗箱保留耐久；保留 rot）。bagId 决定叠加上限。 */
+  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；医疗箱保留耐久；灭火器保留弹药；保留 rot）。bagId 决定叠加上限。 */
   function normalizeStack(stack, bagId = null) {
     if (!stack?.itemId || !stack.qty) return null;
     if (stack.occupiedBy != null) return null;
@@ -64,6 +64,11 @@
     if (item.maxDurability) {
       const durRaw = stack.dur != null ? Number(stack.dur) : item.maxDurability;
       out.dur = Math.max(0, Math.min(item.maxDurability, Math.floor(durRaw)));
+    }
+    if (item.maxAmmo) {
+      const ammoRaw = stack.ammo != null ? Number(stack.ammo) : item.maxAmmo;
+      const ammo = Number.isFinite(ammoRaw) ? ammoRaw : item.maxAmmo;
+      out.ammo = Math.max(0, Math.min(item.maxAmmo, ammo));
     }
     if (stackRot(stack) === 90) out.rot = 90;
     return out;
@@ -107,11 +112,12 @@
       return orientedSize(itemId, rot);
     }
 
-    /** 是否允许放入此库存；装备栏需指定槽位下标。手部 0/1 仅武器，快捷槽禁止武器。 */
+    /** 是否允许放入此库存；装备栏需指定槽位下标。手部 0/1 仅武器（或可任意手槽物品），快捷槽禁止武器；双仓储分流设施。 */
     acceptsItem(itemId, index = null) {
       if (!Catalog.getItem(itemId)) return false;
       if (this.id === 'hands') {
         if (!Catalog.canHoldInHand(itemId)) return false;
+        if (Catalog.canHoldAnyHandSlot?.(itemId)) return true;
         const isWeapon = Boolean(Catalog.isWeapon?.(itemId));
         if (index == null) {
           // 未指定槽：武器可进 0/1，其它可进 3 号槽（index 2）；具体格由 canPlaceAt 判定。
@@ -128,6 +134,12 @@
         }
         const key = this.slotKeys[index];
         return Catalog.canEquipInSlot(itemId, key);
+      }
+      if (this.id === 'storage') {
+        return !Catalog.isPlaceableFacility?.(itemId);
+      }
+      if (this.id === 'storage_facility') {
+        return Boolean(Catalog.isPlaceableFacility?.(itemId));
       }
       return true;
     }
@@ -388,6 +400,7 @@
           const out = { itemId: slot.itemId, qty: slot.qty };
           if (slot.mag != null) out.mag = slot.mag;
           if (slot.dur != null) out.dur = slot.dur;
+          if (slot.ammo != null) out.ammo = slot.ammo;
           if (stackRot(slot) === 90) out.rot = 90;
           return out;
         }),
@@ -446,6 +459,16 @@
     { index: 8, stack: { itemId: 'first_aid_kit', qty: 1 } },
     { index: 16, stack: { itemId: 'gur65', qty: 1, mag: 27 } },
     { index: 19, stack: { itemId: 'hummingbird_drone', qty: 1, mag: 120 } },
+    { index: 24, stack: { itemId: 'fire_extinguisher', qty: 1, ammo: 100 } },
+  ];
+
+  /** 设施专用仓库开局种子。 */
+  const FACILITY_STORAGE_SEED = [
+    { index: 0, stack: { itemId: 'facility_crate', qty: 8 } },
+    { index: 1, stack: { itemId: 'facility_workbench', qty: 2 } },
+    { index: 3, stack: { itemId: 'facility_shelf', qty: 4 } },
+    { index: 5, stack: { itemId: 'facility_locker', qty: 3 } },
+    { index: 8, stack: { itemId: 'facility_fire_extinguisher_station', qty: 2 } },
   ];
 
   /** 装备栏背包槽物品。 */
@@ -480,11 +503,12 @@
     return list;
   }
 
-  /** 拷贝堆叠字段（qty / mag / dur / rot），供整理合并使用。 */
+  /** 拷贝堆叠字段（qty / mag / dur / ammo / rot），供整理合并使用。 */
   function cloneStackFields(stack) {
     const out = { itemId: stack.itemId, qty: stack.qty };
     if (stack.mag != null) out.mag = stack.mag;
     if (stack.dur != null) out.dur = stack.dur;
+    if (stack.ammo != null) out.ammo = stack.ammo;
     if (stackRot(stack) === 90) out.rot = 90;
     return out;
   }
@@ -501,7 +525,7 @@
       const item = Catalog.getItem(stack.itemId);
       if (!item) continue;
       const cap = maxStackFor(bagId, item);
-      if (cap <= 1 || stack.mag != null || stack.dur != null) {
+      if (cap <= 1 || stack.mag != null || stack.dur != null || stack.ammo != null) {
         merged.push(stack);
         continue;
       }
@@ -576,7 +600,13 @@
    */
   function sortInventory(inventory) {
     if (!inventory || inventory.ignoreItemSize || inventory.slotKeys) return false;
-    if (inventory.id !== 'player' && inventory.id !== 'storage') return false;
+    if (
+      inventory.id !== 'player' &&
+      inventory.id !== 'storage' &&
+      inventory.id !== 'storage_facility'
+    ) {
+      return false;
+    }
     const collected = collectStacks(inventory);
     if (!collected.length) return true;
     const merged = mergeStacksForSort(collected, inventory.id);
@@ -657,34 +687,79 @@
     return new Inventory('player', PLAYER_BASE_COLS, PLAYER_BASE_ROWS, PLAYER_SEED);
   }
 
-  /** 新建默认仓库。 */
+  /** 新建默认物资仓库。 */
   function createDefaultStorage() {
     return new Inventory('storage', 8, 8, STORAGE_SEED);
   }
 
+  /** 新建默认设施仓库。 */
+  function createDefaultFacilityStorage() {
+    return new Inventory('storage_facility', 8, 8, FACILITY_STORAGE_SEED);
+  }
+
   /**
-   * TEST_ONLY — remove after playtest：仓储种子物资补到 maxStack（或缺省 qty），取用不尽。
-   * 与服务端 refill_storage_infinite 对齐；不碰玩家存入的非种子格。
+   * TEST_ONLY — remove after playtest：物资仓种子补到 maxStack（或缺省 qty），取用不尽。
+   * 与服务端 refill_storage_infinite 对齐；不碰玩家存入的非种子格；跳过可摆放设施。
    */
   function restoreTestInfiniteStorage(storage) {
     if (!storage || !window.LpItemCatalog?.TEST_AUTO_REFILL_CONSUMABLES) return;
     for (const entry of STORAGE_SEED) {
       const itemId = entry.stack.itemId;
       const item = Catalog.getItem(itemId);
+      /* 可摆放设施不参与无限补货，否则编辑扣库无效。 */
+      if (Catalog.isPlaceableFacility?.(itemId)) continue;
       const want = item?.maxStack || entry.stack.qty || 1;
       const have = storage.countItem(itemId) || 0;
       if (have >= want) continue;
       storage.addItem(itemId, want - have);
       const magSize = item?.magazineSize;
       const maxDur = item?.maxDurability;
-      if (magSize == null && maxDur == null) continue;
+      const maxAmmo = item?.maxAmmo;
+      if (magSize == null && maxDur == null && maxAmmo == null) continue;
       for (let i = 0; i < storage.size(); i += 1) {
         if (storage.isCovered(i)) continue;
         const st = storage.slots[i];
         if (!st || st.itemId !== itemId) continue;
         if (magSize != null && st.mag == null) st.mag = magSize;
         if (maxDur != null && st.dur == null) st.dur = maxDur;
+        if (maxAmmo != null && st.ammo == null) st.ammo = maxAmmo;
       }
+    }
+  }
+
+  /**
+   * 将物资仓中的可摆放设施整堆迁入设施仓（旧存档一次性迁移）。
+   * @param {Inventory} storage
+   * @param {Inventory} facilityStorage
+   * @returns {number} 迁入的堆数
+   */
+  function migrateFacilitiesToFacilityWarehouse(storage, facilityStorage) {
+    if (!storage || !facilityStorage) return 0;
+    let moved = 0;
+    for (let i = 0; i < storage.size(); i += 1) {
+      if (storage.isCovered(i)) continue;
+      const stack = storage.getSlot(i);
+      if (!stack || !Catalog.isPlaceableFacility?.(stack.itemId)) continue;
+      const taken = storage.takeSlot(i);
+      if (!taken) continue;
+      const leftover = facilityStorage.addItem(taken.itemId, taken.qty);
+      if (leftover > 0) storage.addItem(taken.itemId, leftover);
+      if (leftover < taken.qty) moved += 1;
+    }
+    return moved;
+  }
+
+  /**
+   * 旧存档补种可摆放设施：仅当该 id 数量为 0 时按种子 qty 放入（不刷到 maxStack）。
+   * @param {Inventory} facilityStorage
+   */
+  function ensurePlaceableFacilitySeeds(facilityStorage) {
+    if (!facilityStorage) return;
+    for (const entry of FACILITY_STORAGE_SEED) {
+      const itemId = entry.stack.itemId;
+      if (!Catalog.isPlaceableFacility?.(itemId)) continue;
+      if ((facilityStorage.countItem(itemId) || 0) > 0) continue;
+      facilityStorage.addItem(itemId, entry.stack.qty || 1);
     }
   }
 
@@ -713,7 +788,7 @@
     player.addItem(stack.itemId, stack.qty);
   }
 
-  /** 将旧双手槽扩展为三槽；武器槽清出非武器，快捷槽清出枪械。 */
+  /** 将旧双手槽扩展为三槽；武器槽清出非武器（可任意手槽物品除外），快捷槽清出枪械。 */
   function ensureHandsShape(hands, player) {
     let next = hands;
     if (hands.cols !== HANDS_COLS || hands.rows !== HANDS_ROWS || hands.size() !== HANDS_COLS) {
@@ -722,11 +797,12 @@
         if (hands.isCovered?.(i)) continue;
         const stack = hands.getSlot(i);
         if (!stack) continue;
-        if (i === HANDS_UTILITY_INDEX && Catalog.isWeapon?.(stack.itemId)) {
+        const anySlot = Catalog.canHoldAnyHandSlot?.(stack.itemId);
+        if (i === HANDS_UTILITY_INDEX && Catalog.isWeapon?.(stack.itemId) && !anySlot) {
           dumpStackToPlayer(player, stack);
           continue;
         }
-        if (i !== HANDS_UTILITY_INDEX && !Catalog.isWeapon?.(stack.itemId)) {
+        if (i !== HANDS_UTILITY_INDEX && !Catalog.isWeapon?.(stack.itemId) && !anySlot) {
           dumpStackToPlayer(player, stack);
           continue;
         }
@@ -737,12 +813,16 @@
 
     for (let i = 0; i < HANDS_UTILITY_INDEX; i += 1) {
       const stack = next.getSlot(i);
-      if (stack && !Catalog.isWeapon?.(stack.itemId)) {
+      if (
+        stack &&
+        !Catalog.isWeapon?.(stack.itemId) &&
+        !Catalog.canHoldAnyHandSlot?.(stack.itemId)
+      ) {
         dumpStackToPlayer(player, next.takeSlot(i));
       }
     }
     const util = next.getSlot(HANDS_UTILITY_INDEX);
-    if (util && Catalog.isWeapon?.(util.itemId)) {
+    if (util && Catalog.isWeapon?.(util.itemId) && !Catalog.canHoldAnyHandSlot?.(util.itemId)) {
       const taken = next.takeSlot(HANDS_UTILITY_INDEX);
       dumpStackToPlayer(player, taken);
     }
@@ -790,6 +870,7 @@
     return {
       player,
       storage: partial.storage,
+      facilityStorage: partial.facilityStorage || createDefaultFacilityStorage(),
       hands: ensureHandsShape(partial.hands || createDefaultHands(), player),
       equip,
       overflow: shaped.overflow || [],
@@ -807,6 +888,9 @@
         return bundleInventories({
           player: Inventory.fromJSON(parsed.player),
           storage: Inventory.fromJSON(parsed.storage),
+          facilityStorage: parsed.storage_facility
+            ? Inventory.fromJSON(parsed.storage_facility)
+            : new Inventory('storage_facility', 8, 8),
           hands: parsed.hands
             ? Inventory.fromJSON(parsed.hands, { ignoreItemSize: true })
             : createDefaultHands(),
@@ -827,51 +911,61 @@
   /** 读取或初始化持久化库存。 */
   function loadInventories() {
     const saved = localStorage.getItem(STORAGE_KEY);
+    let loaded;
     if (!saved) {
-      return (
+      loaded =
         migrateFromLegacy() ||
         bundleInventories({
           player: createDefaultPlayer(),
           storage: createDefaultStorage(),
+          facilityStorage: createDefaultFacilityStorage(),
           hands: createDefaultHands(),
           equip: createDefaultEquip(),
           seedOverflow: PLAYER_OVERFLOW_SEED,
-        })
-      );
+        });
+    } else {
+      try {
+        const parsed = JSON.parse(saved);
+        loaded = bundleInventories({
+          player: Inventory.fromJSON(parsed.player),
+          storage: Inventory.fromJSON(parsed.storage),
+          facilityStorage: parsed.storage_facility
+            ? Inventory.fromJSON(parsed.storage_facility)
+            : new Inventory('storage_facility', 8, 8),
+          hands: parsed.hands
+            ? Inventory.fromJSON(parsed.hands, { ignoreItemSize: true })
+            : createDefaultHands(),
+          equip: parsed.equip
+            ? Inventory.fromJSON(parsed.equip, {
+                ignoreItemSize: true,
+                slotKeys: EQUIP_SLOT_KEYS,
+              })
+            : createDefaultEquip(),
+        });
+      } catch {
+        loaded = bundleInventories({
+          player: createDefaultPlayer(),
+          storage: createDefaultStorage(),
+          facilityStorage: createDefaultFacilityStorage(),
+          hands: createDefaultHands(),
+          equip: createDefaultEquip(),
+          seedOverflow: PLAYER_OVERFLOW_SEED,
+        });
+      }
     }
-    try {
-      const parsed = JSON.parse(saved);
-      return bundleInventories({
-        player: Inventory.fromJSON(parsed.player),
-        storage: Inventory.fromJSON(parsed.storage),
-        hands: parsed.hands
-          ? Inventory.fromJSON(parsed.hands, { ignoreItemSize: true })
-          : createDefaultHands(),
-        equip: parsed.equip
-          ? Inventory.fromJSON(parsed.equip, {
-              ignoreItemSize: true,
-              slotKeys: EQUIP_SLOT_KEYS,
-            })
-          : createDefaultEquip(),
-      });
-    } catch {
-      return bundleInventories({
-        player: createDefaultPlayer(),
-        storage: createDefaultStorage(),
-        hands: createDefaultHands(),
-        equip: createDefaultEquip(),
-        seedOverflow: PLAYER_OVERFLOW_SEED,
-      });
-    }
+    migrateFacilitiesToFacilityWarehouse(loaded.storage, loaded.facilityStorage);
+    ensurePlaceableFacilitySeeds(loaded.facilityStorage);
+    return loaded;
   }
 
   /** 保存库存到 localStorage。 */
-  function saveInventories(player, storage, hands, equip) {
+  function saveInventories(player, storage, hands, equip, facilityStorage) {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         player: player.toJSON(),
         storage: storage.toJSON(),
+        storage_facility: (facilityStorage || createDefaultFacilityStorage()).toJSON(),
         hands: hands.toJSON(),
         equip: equip.toJSON(),
       })
@@ -944,6 +1038,7 @@
     const incoming = { ...probe, qty: Math.min(rawQty, transitCap) };
     if (stack?.mag != null && incoming.mag == null) incoming.mag = stack.mag;
     if (stack?.dur != null && incoming.dur == null) incoming.dur = stack.dur;
+    if (stack?.ammo != null && incoming.ammo == null) incoming.ammo = stack.ammo;
     if (stackRot(stack) === 90) incoming.rot = 90;
 
     const origin = inventory.originIndex(index);
@@ -960,6 +1055,7 @@
       const leftover = { itemId: incoming.itemId, qty: leftoverQty };
       if (incoming.mag != null) leftover.mag = incoming.mag;
       if (incoming.dur != null) leftover.dur = incoming.dur;
+      if (incoming.ammo != null) leftover.ammo = incoming.ammo;
       if (stackRot(incoming) === 90) leftover.rot = 90;
       return leftover;
     }
@@ -974,6 +1070,7 @@
       const leftover = { itemId: incoming.itemId, qty: leftoverQty };
       if (incoming.mag != null) leftover.mag = incoming.mag;
       if (incoming.dur != null) leftover.dur = incoming.dur;
+      if (incoming.ammo != null) leftover.ammo = incoming.ammo;
       if (stackRot(incoming) === 90) leftover.rot = 90;
       return leftover;
     }
@@ -1035,5 +1132,8 @@
     isAmmoOntoWeaponIntent,
     tryLoadAmmoOntoWeapon,
     restoreTestInfiniteStorage,
+    ensurePlaceableFacilitySeeds,
+    migrateFacilitiesToFacilityWarehouse,
+    createDefaultFacilityStorage,
   };
 })();
