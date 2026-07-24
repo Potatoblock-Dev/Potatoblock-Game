@@ -311,19 +311,23 @@
       w: 3,
       h: 2,
       canHoldInHand: true,
-      icon: '/static/games/liminal-platform/img/items/hummingbird-drone-icon.png?v=1',
-      bodySprite: '/static/games/liminal-platform/img/drone/hummingbird-body.png?v=1',
-      barrelSprite: '/static/games/liminal-platform/img/drone/hummingbird-barrel.png?v=1',
+      icon: '/static/games/liminal-platform/img/items/hummingbird-drone-icon.png?v=2',
+      bodySprite: '/static/games/liminal-platform/img/drone/hummingbird-body.png?v=2',
+      barrelSprite: '/static/games/liminal-platform/img/drone/hummingbird-barrel.png?v=2',
       bodyDrawW: 56,
       bodyDrawH: 24,
+      /** 326×38 原图像素等比缩到宽 34（高 ≈4）。 */
       barrelDrawW: 34,
-      barrelDrawH: 5,
-      /** 炮管挂点相对机身中心（世界像素，机身未镜像时）。 */
-      barrelMount: { x: 0, y: 9 },
-      /** 炮管贴图内枢轴（左端接收座中心；精灵默认朝右）。 */
-      barrelPivotX: 5,
-      barrelPivotY: 2.5,
-      muzzleLength: 30,
+      barrelDrawH: 4,
+      /**
+       * 挂点：机身灰柱底端中心（原生约 y=192 → 绘制局部 y≈10.2）。
+       * 枢轴：炮管绿座顶心（与灰柱相接；原生 ≈(88.5,4) → 绘制 (9.2,0.45)）。
+       * 旧值 mount(0,9) pivot(5,2.5) H=5 muzzle=30。
+       */
+      barrelMount: { x: 0, y: 10.2 },
+      barrelPivotX: 9.2,
+      barrelPivotY: 0.45,
+      muzzleLength: 34,
       magazineSize: 120,
       ammoId: 'small_caliber_ammo',
       burstCount: 3,
@@ -343,37 +347,57 @@
       fireSoundVolume: 0.4,
     },
     /**
-     * 急救箱：手部 3 号槽（index 2，工具槽）持有；对准自己或近距队友按开火键持续治疗。
-     * 足迹宽 2 × 高 2；耐久存 stack.dur。
+     * 医疗箱：手部 3 号槽持有；对准自己或近距队友按开火键持续治疗（回血）。
+     * 足迹宽 1 × 高 2；耐久存 stack.dur。不用于濒死复活。
      */
     medkit: {
       id: 'medkit',
+      name: '医疗箱',
+      short: '医',
+      type: 'medical',
+      use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
+      icon: '/static/games/liminal-platform/img/items/medkit-icon.png?v=3',
+      color: '#7f1d1d',
+      accent: '#fca5a5',
+      maxStack: 1,
+      w: 1,
+      h: 2,
+      canHoldInHand: true,
+      handSlot: 2,
+      maxDurability: 40,
+      selfHealPerSec: 12,
+      allyHealPerSec: 28,
+      durCostPerSec: 8,
+      allyRange: 150,
+      selfAimRadius: 72,
+      allyAimRadius: 88,
+      /** 持续治疗用；不可整箱复活。 */
+      canHeal: true,
+      canRevive: false,
+    },
+    /**
+     * 急救箱：手部 3 号槽持有；对准濒死队友开火消耗整箱复活。
+     * 足迹宽 2 × 高 2。不提供持续回血。
+     */
+    first_aid_kit: {
+      id: 'first_aid_kit',
       name: '急救箱',
       short: '救',
       type: 'medical',
-      use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
-      icon: '/static/games/liminal-platform/img/items/medkit-icon.png?v=2',
-      color: '#7f1d1d',
-      accent: '#fca5a5',
+      use: '濒死救援专用。对准倒地队友按开火，消耗整箱将其拉起——平时包扎请用医疗箱。',
+      icon: '/static/games/liminal-platform/img/items/first-aid-kit-icon.png?v=1',
+      color: '#991b1b',
+      accent: '#fde047',
       maxStack: 1,
       w: 2,
       h: 2,
       canHoldInHand: true,
-      /** 仅手部 3 号（utility index 2）；主手 0/1 仍只收武器。 */
       handSlot: 2,
-      maxDurability: 40,
-      /** 自疗回复（HP/秒）。 */
-      selfHealPerSec: 12,
-      /** 近距队友回复（HP/秒，快于自疗）。 */
-      allyHealPerSec: 28,
-      /** 持续使用时耐久消耗（点/秒）。 */
-      durCostPerSec: 8,
-      /** 可治疗队友的最大距离（世界像素）。 */
       allyRange: 150,
-      /** 瞄准点落在自身附近视为自疗。 */
       selfAimRadius: 72,
-      /** 瞄准点落在队友附近视为队友治疗。 */
       allyAimRadius: 88,
+      canHeal: false,
+      canRevive: true,
     },
   };
 
@@ -530,10 +554,21 @@
     return Boolean(item && item.type === 'ammo');
   }
 
-  /** 是否为医疗箱（可持用治疗）。 */
+  /** 是否为医疗箱（持续回血）。 */
   function isMedkit(itemOrId) {
     const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
-    return Boolean(item && (item.id === 'medkit' || item.type === 'medical'));
+    return Boolean(item && item.id === 'medkit');
+  }
+
+  /** 是否为急救箱（濒死整箱复活）。 */
+  function isFirstAidKit(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    return Boolean(item && item.id === 'first_aid_kit');
+  }
+
+  /** 手部医疗类工具（医疗箱或急救箱）。 */
+  function isMedicalTool(itemOrId) {
+    return isMedkit(itemOrId) || isFirstAidKit(itemOrId);
   }
 
   /**
@@ -573,6 +608,8 @@
     iconFollowsRot,
     isAmmo,
     isMedkit,
+    isFirstAidKit,
+    isMedicalTool,
     isFullAuto,
     getWeaponId,
     weaponAcceptsAmmo,

@@ -1,7 +1,6 @@
 /**
  * 火器持握调试面板：本地调参 + 导出 JSON，供写回 catalog / ProceduralMotion。
- * LOCAL/DEBUG ONLY — do not enable in production upload.
- * 仅 URL ?debugHold=1|true 挂载；生产默认关闭。` 切换显隐。
+ * LOCAL ONLY — 仅 localhost / 127.0.0.1；生产页不注入本脚本。` 呼出/收起。
  */
 (() => {
   const HOLD_KEYS = [
@@ -37,25 +36,43 @@
    * }} */
   let state = null;
   let rootEl = null;
-  let panelOpen = true;
+  let panelOpen = false;
   let statusEl = null;
+  let keyBound = false;
+
+  /** 是否本地开发主机。 */
+  function isLocalDevHost() {
+    const n = String(location.hostname || '').toLowerCase();
+    return n === 'localhost' || n === '127.0.0.1' || n === '[::1]' || n === '::1';
+  }
 
   /**
    * 是否启用调试模块。
-   * 仅认明确的 ?debugHold=1|true；拒绝 ?debugHold%3D1（整段成 key）与 localStorage/localhost 默认开。
+   * 仅本地主机；?debugHold=0|false 可强制关。生产页不加载本脚本。
    */
   function isEnabled() {
     const params = new URLSearchParams(location.search);
     const flag = params.get('debugHold');
     if (flag === '0' || flag === 'false') return false;
-    return flag === '1' || flag === 'true';
+    return isLocalDevHost();
   }
 
-  /** 打开面板（须已 ?debugHold=1；未挂载时先 mount）。 */
+  /** 打开面板（本地；未挂载时先 mount）。 */
   function openPanel() {
     if (!isEnabled()) return;
     if (!rootEl) mount();
-    else setPanelOpen(true);
+    setPanelOpen(true);
+  }
+
+  /** 切换显隐；未挂载则挂载并打开。 */
+  function togglePanel() {
+    if (!isEnabled()) return;
+    if (!rootEl) {
+      mount();
+      setPanelOpen(true);
+      return;
+    }
+    setPanelOpen(!panelOpen);
   }
 
   /** 从默认规格 + 物品 holdPose / 绘制字段拼出当前可调值。 */
@@ -310,7 +327,7 @@
     el.innerHTML = `
       <header class="lp-hpd-head">
         <strong>Hold Pose Debug</strong>
-        <span class="lp-hpd-hint">\` 显隐 · ?debugHold=1</span>
+        <span class="lp-hpd-hint">\` 呼出 · 仅本地</span>
         <button type="button" class="lp-hpd-close" data-action="hide" title="隐藏">×</button>
       </header>
       <p class="lp-hpd-status" data-role="status">…</p>
@@ -485,18 +502,9 @@
     rootEl.addEventListener('keydown', (event) => event.stopPropagation());
     rootEl.addEventListener('keyup', (event) => event.stopPropagation());
 
-    window.addEventListener('keydown', (event) => {
-      if (event.code !== 'Backquote' || event.repeat) return;
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      setPanelOpen(!panelOpen);
-      event.preventDefault();
-    });
-
     setInterval(syncToHeldWeapon, 400);
     syncToHeldWeapon();
-    setPanelOpen(true);
+    setPanelOpen(panelOpen);
   }
 
   window.LpHoldPoseDebug = {
@@ -506,11 +514,27 @@
     mergeDraw,
     getAimWorld,
     openPanel,
+    togglePanel,
   };
 
+  function bindHotkey() {
+    if (keyBound || !isEnabled()) return;
+    window.addEventListener('keydown', (event) => {
+      if (event.code !== 'Backquote' || event.repeat) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (event.target instanceof HTMLSelectElement) return;
+      togglePanel();
+      event.preventDefault();
+    });
+    keyBound = true;
+  }
+
   function boot() {
-    /* LOCAL/DEBUG ONLY — no HUD launcher in shipped UI; URL gate only */
-    if (isEnabled()) mount();
+    /* LOCAL ONLY — ` 呼出；不自动弹出 */
+    if (!isEnabled()) return;
+    bindHotkey();
   }
 
   if (document.readyState === 'loading') {

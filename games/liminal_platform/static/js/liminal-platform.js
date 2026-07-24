@@ -394,10 +394,13 @@
     window.LpHudVitals?.syncHp?.(playerHp, PLAYER_MAX_HP);
   }
 
-  /** 装填：优先无人机（选中时），否则手持武器。 */
+  /** 装填：选中蜂鸟时走抓取换弹；否则手持武器（含换弹动画）。 */
   function requestReload() {
     if (isUiOpen() || window.LpGuardTurret?.isManned?.()) return;
-    if (window.LpHummingbirdDrone?.tryReloadIfSelected?.()) return;
+    if (window.LpHummingbirdDrone?.isDroneSelected?.()) {
+      window.LpHummingbirdDrone.tryReload?.();
+      return;
+    }
     window.LpCombat?.tryReload?.();
   }
 
@@ -1164,7 +1167,12 @@
   }
 
   window.addEventListener('keydown', (event) => {
-    if (event.target instanceof HTMLInputElement) return;
+    if (
+      event.target instanceof HTMLInputElement ||
+      event.target instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
     keys.add(event.code);
 
     if (window.LpPlayerDeath?.tryRespawnFromEvent?.(event, respawnHooks())) {
@@ -1235,12 +1243,18 @@
         window.LpHandsHud?.cycleActive?.();
       }
     }
-    /* 武装入座时数字键 1…N 直接选弹种（左→右）。 */
-    if (window.LpArmedAmmo?.isActive?.()) {
+    /* 武装入座：数字键 1…N 选弹种；否则 1/2/3 选手部槽（同点 HUD）。 */
+    if (!event.repeat) {
       const digit = /^Digit([1-9])$/.exec(event.code);
       if (digit) {
-        event.preventDefault();
-        window.LpArmedAmmo.selectByNumber(Number(digit[1]));
+        const n = Number(digit[1]);
+        if (window.LpArmedAmmo?.isActive?.()) {
+          event.preventDefault();
+          window.LpArmedAmmo.selectByNumber(n);
+        } else if (n >= 1 && n <= 3) {
+          event.preventDefault();
+          window.LpHandsHud?.selectByNumber?.(n);
+        }
       }
     }
     if (window.LpInputBindings?.matchesKeyEvent('fire', event)) {

@@ -409,6 +409,26 @@
   }
 
   /**
+   * 单格轨宽：网格总宽 ÷ --cols（勿用 is-span 按钮宽，否则幽灵按足迹² 放大）。
+   * @param {HTMLElement|null} gridEl
+   * @returns {number}
+   */
+  function singleCellTrackPx(gridEl) {
+    if (!gridEl) return 0;
+    const colsRaw =
+      gridEl.style.getPropertyValue('--cols') ||
+      getComputedStyle(gridEl).getPropertyValue('--cols');
+    const cols = Number.parseInt(String(colsRaw).trim(), 10);
+    const rect = gridEl.getBoundingClientRect();
+    if (cols > 0 && rect.width > 8) return rect.width / cols;
+    const probe = gridEl.querySelector(
+      '.lp-inventory-slot:not([hidden]):not(.is-span)'
+    );
+    const w = probe?.getBoundingClientRect?.().width;
+    return w > 8 ? w : 0;
+  }
+
+  /**
    * 按朝向足迹算箱拖拽幽灵宽高（与主栏 cursorGhost 同式：cell×w/h，长边≤3 格）。
    * @param {string} itemId
    * @param {number} rot
@@ -416,10 +436,8 @@
    */
   function crateGhostSizePx(itemId, rot = 0) {
     const size = Core.orientedSize(itemId, rot);
-    const probe =
-      crateGrid?.querySelector('.lp-inventory-slot:not([hidden])') ||
-      bagGrid?.querySelector('.lp-inventory-slot:not([hidden])');
-    const raw = probe?.getBoundingClientRect?.().width;
+    const raw =
+      singleCellTrackPx(crateGrid) || singleCellTrackPx(bagGrid) || 48;
     const cell = Math.max(24, Math.round((raw > 8 ? raw : 48) * 0.78));
     const fw = Math.max(1, Number(size?.w) || 1);
     const fh = Math.max(1, Number(size?.h) || 1);

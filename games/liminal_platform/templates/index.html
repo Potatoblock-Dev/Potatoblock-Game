@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>{{ game.name }} · Liminal Platform</title>
   <link rel="stylesheet" href="/static/css/site.css">
-  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=134">
+  <link rel="stylesheet" href="/static/games/liminal-platform/css/liminal-platform.css?v=135">
 </head>
 <body class="lp-page" data-user-id="{{ user_id }}" data-nickname="{{ nickname }}">
   <div class="lp-stage">
@@ -788,27 +788,30 @@
   <script src="/static/games/avatar-lobby/js/avatar-skin-cache.js?v=1"></script>
   <script src="/static/games/avatar-lobby/js/avatar-entity.js?v=29"></script>
   <script src="/static/games/liminal-platform/js/carriage-spec.js?v=17"></script>
-  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=54"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=22"></script>
+  <script src="/static/games/liminal-platform/js/lp-item-catalog.js?v=56"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-core.js?v=23"></script>
   <script src="/static/games/liminal-platform/js/lp-key-prompts.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=16"></script>
+  <script src="/static/games/liminal-platform/js/lp-input-bindings.js?v=17"></script>
   <script src="/static/games/liminal-platform/js/liminal-interact-spec.js?v=12"></script>
   <script src="/static/games/liminal-platform/js/liminal-interact.js?v=23"></script>
-  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=2"></script>
+  <script src="/static/games/liminal-platform/js/lp-ground-loot.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-inventory-net.js?v=1"></script>
-  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=41"></script>
-  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=10"></script>
+  <script src="/static/games/liminal-platform/js/lp-inventory-ui.js?v=42"></script>
+  <script src="/static/games/liminal-platform/js/lp-hands-hud.js?v=11"></script>
   <script src="/static/games/liminal-platform/js/lp-armed-ammo.js?v=17"></script>
-  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=10"></script>
-  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=14"></script>
+  <script src="/static/games/liminal-platform/js/lp-fuel-feed.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-guard-crate-ui.js?v=15"></script>
   <script src="/static/games/liminal-platform/js/lp-touch-controls.js?v=19"></script>
   <script src="/static/games/liminal-platform/js/lp-weapon-hold.js?v=14"></script>
-  <script src="/static/games/liminal-platform/js/lp-hold-pose-debug.js?v=6"></script>
+  {% if lp_local_debug %}
+  <script src="/static/games/liminal-platform/js/lp-hold-pose-debug.js?v=7"></script>
+  <script src="/static/games/liminal-platform/js/lp-debug-spawn-item.js?v=2"></script>
+  {% endif %}
   <script src="/static/games/liminal-platform/js/lp-reload-action.js?v=6"></script>
   <script src="/static/games/liminal-platform/js/lp-impact-fx.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-combat.js?v=44"></script>
-  <script src="/static/games/liminal-platform/js/lp-medkit.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-hummingbird-drone.js?v=1"></script>
+  <script src="/static/games/liminal-platform/js/lp-medkit.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-hummingbird-drone.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-guard-turret.js?v=71"></script>
   <script src="/static/games/liminal-platform/js/lp-sfx.js?v=4"></script>
   <script src="/static/games/liminal-platform/js/lp-train-audio.js?v=5"></script>
@@ -816,8 +819,8 @@
   <script src="/static/games/liminal-platform/js/lp-train-drive.js?v=11"></script>
   <script src="/static/games/liminal-platform/js/lp-carriage-bob.js?v=3"></script>
   <script src="/static/games/liminal-platform/js/lp-track.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-mob-bubble-fill.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/lp-mobs.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-mob-bubble-fill.js?v=3"></script>
+  <script src="/static/games/liminal-platform/js/lp-mobs.js?v=14"></script>
   <script src="/static/games/liminal-platform/js/lp-pressure.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-player-death.js?v=1"></script>
   <script src="/static/games/liminal-platform/js/lp-hud-vitals.js?v=2"></script>
@@ -832,10 +835,10 @@
   <script src="/static/games/liminal-platform/js/lp-auto-autopilot.js?v=2"></script>
   <script src="/static/games/liminal-platform/js/lp-auto-executors.js?v=11"></script>
   <script src="/static/games/liminal-platform/js/lp-auto-console.js?v=23"></script>
-  <script src="/static/games/liminal-platform/js/lp-network.js?v=11"></script>
+  <script src="/static/games/liminal-platform/js/lp-network.js?v=12"></script>
   <script src="/static/games/liminal-platform/js/lp-multiplayer-ui.js?v=3"></script>
-  <script src="/static/games/liminal-platform/js/lp-session.js?v=18"></script>
+  <script src="/static/games/liminal-platform/js/lp-session.js?v=19"></script>
   <script src="/static/games/liminal-platform/js/lp-fullscreen.js?v=2"></script>
-  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=70"></script>
+  <script src="/static/games/liminal-platform/js/liminal-platform.js?v=71"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 /**
- * 手部三槽预览：常显；按绑定键循环切换选中槽。
+ * 手部三槽预览：常显；绑定键循环切换，数字键 1/2/3 直选槽。
  * 桌面左下；移动端与跑走键同簇置右上（见 .lp-hotbar-cluster）。
  */
 (() => {
@@ -81,6 +81,12 @@
         ? `手部 · ${TOAST_LABELS[activeIndex]}（${name}）`
         : `手部 · ${TOAST_LABELS[activeIndex]}`
     );
+  }
+
+  /** 键盘数字 1–3 → 槽 0–2（与点击 HUD 同一持久化路径）。 */
+  function selectByNumber(n) {
+    if (n < 1 || n > 3) return;
+    setActiveIndex(n - 1);
   }
 
   /** 绘制单槽内容。 */
@@ -177,6 +183,7 @@
   window.LpHandsHud = {
     render,
     cycleActive,
+    selectByNumber,
     toggleVisible,
     setVisible,
     isVisible,

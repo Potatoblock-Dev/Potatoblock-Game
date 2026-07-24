@@ -1,6 +1,6 @@
 /**
  * 小怪：地面「保龄球」沿轨跑到车头/车尾再跳入车厢；空中「气球」经连接处进入后在舱内漂浮。
- * 封闭图形填充经 LpMobBubbleFill；视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路。
+ * 封闭图形填充经 LpMobBubbleFill（半透明泡泡/流动 + 流动彩虹描边）；视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路。
  * 命中半径即 profile.radius（弹道 / 玩家碰撞随放大同步）。kind 仍为 ground|air（战斗/传感）。
  */
 (() => {
@@ -84,6 +84,27 @@
   const RAIL_CENTER_LIFT = 0;
   /** 刷怪相对视野再外扩的半径倍率，避免边缘半露。 */
   const SPAWN_VIEW_PAD = 1.35;
+
+  /** 保龄球三脚爬行：周期频率（Hz，静止基速）；移动时再乘速度增益。 */
+  const CRAWL_HZ = 1.35;
+  /** 单脚前后跨步相对半径。 */
+  const CRAWL_STRIDE = 0.22;
+  /** 抬腿高度相对半径。 */
+  const CRAWL_LIFT = 0.16;
+  /** 脚球半径相对主体半径。 */
+  const CRAWL_FOOT_R = 0.26;
+  /** 三脚沿身基线间距（朝向局部 x，相对半径）。 */
+  const CRAWL_BASE_X = [0.28, -0.05, -0.4];
+  /** 三脚基线 y 偏置（相对半径；贴主体下方）。 */
+  const CRAWL_BASE_Y = [0.5, 0.52, 0.48];
+
+  /** 气球四卫星环绕角速度（rad/s）。 */
+  const ORBIT_SPEED = 1.55;
+  /** 环绕椭圆半轴（相对主体半径）。 */
+  const ORBIT_RX = 0.98;
+  const ORBIT_RY = 0.52;
+  /** 卫星球半径相对主体半径。 */
+  const ORBIT_SAT_R = 0.32;
 
   /** @type {Array<ReturnType<typeof createMob>>} */
   let mobs = [];
@@ -282,6 +303,76 @@
       return m.targetX > m.x ? 1 : -1;
     }
     return 1;
+  }
+
+  /**
+   * 视觉动画时钟（秒）；与泡泡帧时钟解耦，仅驱动爬行/环绕。
+   * @returns {number}
+   */
+  function animTimeSec() {
+    return performance.now() * 0.001;
+  }
+
+  /**
+   * 保龄球三脚爬行位姿：相位错开 120°，抬腿前送、着地后蹬（侧视可读）。
+   * 不改 m.x/m.y / bowlingCenterY / 命中半径，只返回绘制坐标。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {number} r
+   * @param {1|-1} f
+   * @returns {{ x: number, y: number, rad: number, i: number }[]}
+   */
+  function bowlingCrawlFeet(m, r, f) {
+    const speedGain = Math.min(1.85, 0.55 + Math.abs(m.vx || 0) / 85);
+    const t =
+      animTimeSec() * CRAWL_HZ * speedGain * Math.PI * 2 + (m.vfxSeed || 0);
+    const footR = r * CRAWL_FOOT_R;
+    /** @type {{ x: number, y: number, rad: number, i: number }[]} */
+    const feet = [];
+    for (let i = 0; i < 3; i += 1) {
+      const phase = t + (i * Math.PI * 2) / 3;
+      const swing = Math.sin(phase);
+      const lift = Math.max(0, Math.cos(phase)) * r * CRAWL_LIFT;
+      const stride = swing * r * CRAWL_STRIDE;
+      feet.push({
+        x: m.x + f * (CRAWL_BASE_X[i] * r + stride),
+        y: m.y + CRAWL_BASE_Y[i] * r - lift,
+        rad: footR * (i === 1 ? 0.95 : 1),
+        i,
+      });
+    }
+    // 抬起（更小 y）先画，着地后画。
+    feet.sort((a, b) => a.y - b.y);
+    return feet;
+  }
+
+  /**
+   * 气球四卫星环绕位姿：十字等分相位 + 扁椭圆；按 depth 从后往前排。
+   * 纯外观；命中仍用主体 m.radius。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {number} r
+   * @param {number} cy 主体中心 Y（含 bob）
+   * @returns {{ x: number, y: number, rad: number, depth: number, i: number }[]}
+   */
+  function balloonOrbitSats(m, r, cy) {
+    const t = animTimeSec() * ORBIT_SPEED + (m.vfxSeed || 0) * 0.37;
+    const satR = r * ORBIT_SAT_R;
+    const rx = r * ORBIT_RX;
+    const ry = r * ORBIT_RY;
+    /** @type {{ x: number, y: number, rad: number, depth: number, i: number }[]} */
+    const sats = [];
+    for (let i = 0; i < 4; i += 1) {
+      const ang = t + (i * Math.PI) / 2;
+      const depth = Math.sin(ang);
+      sats.push({
+        x: m.x + Math.cos(ang) * rx,
+        y: cy + depth * ry,
+        rad: satR * (0.88 + 0.12 * (0.5 + 0.5 * Math.cos(ang))),
+        depth,
+        i,
+      });
+    }
+    sats.sort((a, b) => a.depth - b.depth);
+    return sats;
   }
 
   /**
@@ -516,6 +607,8 @@
     const ry = bowlingCenterY(railY(S), m.radius);
     if (m.phase === 'rail') {
       m.y = ry;
+      // 轨面横移时推进 bob，供爬行周期慢速循环。
+      m.bob += dt * 5.2;
       if (moveToward(m, m.jumpX, ry, m.speed, dt)) {
         beginGroundJump(m, S);
       }
@@ -675,12 +768,12 @@
   }
 
   /**
-   * 描边已绘制的当前 path（命中闪白叠在描边前由调用方处理）。
+   * 回退：用 mob.stroke 描当前已构建的 path（无 Bub 流动描边时）。
    * @param {CanvasRenderingContext2D} ctx
    * @param {ReturnType<typeof createMob>} m
    * @param {number} lineScale
    */
-  function strokeMobOutline(ctx, m, lineScale) {
+  function strokeMobOutlineSolid(ctx, m, lineScale) {
     ctx.lineWidth = Math.max(1.5, m.radius * lineScale);
     ctx.strokeStyle = m.stroke;
     ctx.lineJoin = 'round';
@@ -688,7 +781,7 @@
   }
 
   /**
-   * 用泡泡填充圆并描边；无 Bub 时纯色填充。
+   * 封闭圆：半透明泡泡填充 + 流动彩虹描边（无 Bub 时纯色+实线）。
    * @param {CanvasRenderingContext2D} ctx
    * @param {object | null | undefined} Bub
    * @param {number} x
@@ -708,13 +801,75 @@
       ctx.fillStyle = m.color;
       ctx.fill();
     }
-    ctx.beginPath();
-    ctx.arc(x, y, rad, 0, Math.PI * 2);
-    strokeMobOutline(ctx, m, lineScale);
+    const lw = Math.max(1.5, m.radius * lineScale);
+    if (Bub?.strokeFlowingCircle) {
+      Bub.strokeFlowingCircle(ctx, x, y, rad, seed, {
+        lineWidth: lw,
+        palette: fillOpts.palette,
+      });
+    } else if (Bub?.strokeFlowingOutline) {
+      Bub.strokeFlowingOutline(ctx, { cx: x, cy: y, rx: rad, ry: rad }, seed, {
+        lineWidth: lw,
+        palette: fillOpts.palette,
+      });
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      strokeMobOutlineSolid(ctx, m, lineScale);
+    }
   }
 
   /**
-   * 侧视保龄球：驼峰主体 + 前头圆 + 双脚球 + 后钩尾；各封闭区泡泡填充。
+   * 椭圆 / 任意 path：半透明泡泡填充后画流动描边；无 Bub 时实色+实线。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {object | null | undefined} Bub
+   * @param {ReturnType<typeof createMob>} m
+   * @param {string|number} seed
+   * @param {Function|{ cx: number, cy: number, rx: number, ry: number }} pathOrBounds
+   * @param {object} fillOpts
+   * @param {number} lineScale
+   * @param {'path'|'ellipse'} mode
+   */
+  function fillStrokeClosed(ctx, Bub, m, seed, pathOrBounds, fillOpts, lineScale, mode) {
+    const lw = Math.max(1.5, m.radius * lineScale);
+    if (mode === 'ellipse' && Bub?.fillEllipse) {
+      const b = pathOrBounds;
+      Bub.fillEllipse(ctx, b.cx, b.cy, b.rx, b.ry, seed, fillOpts);
+    } else if (mode === 'path' && Bub?.fillPath) {
+      Bub.fillPath(ctx, pathOrBounds, seed, fillOpts);
+    } else if (Bub?.drawBubbleFill) {
+      Bub.drawBubbleFill(ctx, pathOrBounds, 0, seed, fillOpts);
+    } else if (mode === 'ellipse') {
+      const b = pathOrBounds;
+      ctx.beginPath();
+      ctx.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      pathOrBounds(ctx);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    }
+    if (Bub?.strokeFlowingOutline) {
+      Bub.strokeFlowingOutline(ctx, pathOrBounds, seed, {
+        lineWidth: lw,
+        palette: fillOpts.palette,
+      });
+    } else if (mode === 'ellipse') {
+      const b = pathOrBounds;
+      ctx.beginPath();
+      ctx.ellipse(b.cx, b.cy, b.rx, b.ry, 0, 0, Math.PI * 2);
+      strokeMobOutlineSolid(ctx, m, lineScale);
+    } else {
+      ctx.beginPath();
+      pathOrBounds(ctx);
+      strokeMobOutlineSolid(ctx, m, lineScale);
+    }
+  }
+
+  /**
+   * 侧视保龄球：驼峰主体 + 前头圆 + 3 爬行脚球 + 后钩尾；半透明泡泡 + 流动描边。
    * @param {CanvasRenderingContext2D} ctx
    * @param {ReturnType<typeof createMob>} m
    * @param {object | null | undefined} Bub
@@ -729,16 +884,15 @@
     const headR = r * 0.38;
     const headX = m.x + f * r * 0.62;
     const headY = m.y - r * 0.02;
-    const footR = r * 0.28;
-    const footY = m.y + r * 0.48;
-    const feet = [
-      { x: m.x + f * r * 0.18, y: footY + r * 0.02 },
-      { x: m.x - f * r * 0.38, y: footY - r * 0.02 },
-    ];
+    const feet = bowlingCrawlFeet(m, r, f);
     const sid = m.id || 'bowl';
+    // 不传不透明 base，让 clip 内只剩半透明洗/流/泡。
     const fillOpts = {
-      base: m.color,
       palette: BOWLING_PALETTE,
+      alpha: 0.05,
+      flowAlpha: 0.07,
+      bubbleAlpha: 0.18,
+      bubblePulse: 0.14,
     };
 
     const tailCx = m.x - f * r * 0.55;
@@ -772,58 +926,59 @@
       ry: tailRy * 1.1,
     });
 
-    if (Bub?.fillPath) {
-      Bub.fillPath(ctx, pathTail, `${sid}:tail`, { ...fillOpts, count: 3 });
-    } else if (Bub?.drawBubbleFill) {
-      Bub.drawBubbleFill(ctx, pathTail, 0, `${sid}:tail`, { ...fillOpts, count: 3 });
-    } else {
-      ctx.beginPath();
-      pathTail(ctx);
-      ctx.fillStyle = m.color;
-      ctx.fill();
-    }
-    ctx.beginPath();
-    pathTail(ctx);
-    strokeMobOutline(ctx, m, 0.09);
-
-    fillStrokeCircle(
+    fillStrokeClosed(
       ctx,
       Bub,
-      feet[1].x,
-      feet[1].y,
-      footR * 0.95,
       m,
-      `${sid}:footR`,
+      `${sid}:tail`,
+      pathTail,
       { ...fillOpts, count: 3 },
-      0.1
+      0.09,
+      'path'
     );
 
-    if (Bub?.fillEllipse) {
-      Bub.fillEllipse(ctx, bodyCx, bodyCy, bodyRx, bodyRy, `${sid}:body`, {
-        ...fillOpts,
-        count: 8,
-      });
-    } else {
-      ctx.beginPath();
-      ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
-      ctx.fillStyle = m.color;
-      ctx.fill();
+    // 爬行球：先画偏后/抬起的，主体后再画偏前的着地球。
+    const mid = Math.ceil(feet.length / 2);
+    for (let k = 0; k < mid; k += 1) {
+      const ft = feet[k];
+      fillStrokeCircle(
+        ctx,
+        Bub,
+        ft.x,
+        ft.y,
+        ft.rad,
+        m,
+        `${sid}:foot${ft.i}`,
+        { ...fillOpts, count: 3 },
+        0.1
+      );
     }
-    ctx.beginPath();
-    ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
-    strokeMobOutline(ctx, m, 0.11);
 
-    fillStrokeCircle(
+    fillStrokeClosed(
       ctx,
       Bub,
-      feet[0].x,
-      feet[0].y,
-      footR,
       m,
-      `${sid}:footF`,
-      { ...fillOpts, count: 4 },
-      0.1
+      `${sid}:body`,
+      { cx: bodyCx, cy: bodyCy, rx: bodyRx, ry: bodyRy },
+      { ...fillOpts, count: 8 },
+      0.11,
+      'ellipse'
     );
+
+    for (let k = mid; k < feet.length; k += 1) {
+      const ft = feet[k];
+      fillStrokeCircle(
+        ctx,
+        Bub,
+        ft.x,
+        ft.y,
+        ft.rad,
+        m,
+        `${sid}:foot${ft.i}`,
+        { ...fillOpts, count: 3 },
+        0.1
+      );
+    }
 
     fillStrokeCircle(
       ctx,
@@ -848,7 +1003,7 @@
       ctx.fill();
       for (const ft of feet) {
         ctx.beginPath();
-        ctx.arc(ft.x, ft.y, footR, 0, Math.PI * 2);
+        ctx.arc(ft.x, ft.y, ft.rad, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.beginPath();
@@ -858,7 +1013,7 @@
   }
 
   /**
-   * 侧视气球：大主体圆 + 内核圆 + 左右附属球；各封闭区泡泡填充。
+   * 侧视气球：主体 + 内核 + 4 环绕卫星球；半透明泡泡 + 流动描边。
    * @param {CanvasRenderingContext2D} ctx
    * @param {ReturnType<typeof createMob>} m
    * @param {object | null | undefined} Bub
@@ -868,30 +1023,29 @@
     const bob = Math.sin(m.bob || 0) * r * 0.04;
     const bodyR = r * 0.78;
     const coreR = r * 0.32;
-    const satR = r * 0.34;
-    const satSpread = r * 0.92;
     const cy = m.y + bob;
-    const sats = [
-      { x: m.x - satSpread, y: cy + r * 0.02 },
-      { x: m.x + satSpread, y: cy - r * 0.02 },
-    ];
+    const sats = balloonOrbitSats(m, r, cy);
     const sid = m.id || 'balloon';
     const fillOpts = {
-      base: m.color,
       palette: BALLOON_PALETTE,
+      alpha: 0.05,
+      flowAlpha: 0.08,
+      bubbleAlpha: 0.2,
+      bubblePulse: 0.15,
     };
 
-    for (let i = 0; i < sats.length; i += 1) {
-      const s = sats[i];
+    // sats 已按 depth 升序；depth<0 在后，插在主体之前。
+    for (const s of sats) {
+      if (s.depth >= 0) break;
       fillStrokeCircle(
         ctx,
         Bub,
         s.x,
         s.y,
-        satR,
+        s.rad,
         m,
-        `${sid}:sat${i}`,
-        { ...fillOpts, count: 4 },
+        `${sid}:sat${s.i}`,
+        { ...fillOpts, count: 3 },
         0.1
       );
     }
@@ -920,6 +1074,21 @@
       0.09
     );
 
+    for (const s of sats) {
+      if (s.depth < 0) continue;
+      fillStrokeCircle(
+        ctx,
+        Bub,
+        s.x,
+        s.y,
+        s.rad,
+        m,
+        `${sid}:sat${s.i}`,
+        { ...fillOpts, count: 3 },
+        0.1
+      );
+    }
+
     if (m.hitFlash > 0) {
       const a = 0.55 * (m.hitFlash / HIT_FLASH_LIFE);
       ctx.fillStyle = `rgba(255,255,255,${a})`;
@@ -931,7 +1100,7 @@
       ctx.fill();
       for (const s of sats) {
         ctx.beginPath();
-        ctx.arc(s.x, s.y, satR, 0, Math.PI * 2);
+        ctx.arc(s.x, s.y, s.rad, 0, Math.PI * 2);
         ctx.fill();
       }
     }

@@ -1,6 +1,6 @@
 /**
- * 怪体内封闭区彩色泡泡 + 液态流动填充（Canvas clip）。
- * 供 LpMobs 等在每个封闭轮廓内调用；共享帧时钟、种子驱动，泡泡数有上限。
+ * 怪体内封闭区半透明彩色泡泡 + 液态流动填充（Canvas clip），
+ * 以及封闭轮廓的流动彩虹描边。供 LpMobs 等调用；共享帧时钟、种子驱动。
  */
 (() => {
   /** 单区默认泡泡数。 */
@@ -9,7 +9,16 @@
   const MAX_COUNT = 12;
   /** 流动色带条数。 */
   const FLOW_BANDS = 3;
-  /** 调色盘：高饱和小圆点。 */
+  /** 底色洗白默认透明度（半透明，不盖住轮廓）。 */
+  const DEFAULT_BASE_ALPHA = 0.06;
+  /** 流动色带默认透明度。 */
+  const DEFAULT_FLOW_ALPHA = 0.08;
+  /** 泡泡主体默认透明度下限 / 脉冲幅度。 */
+  const DEFAULT_BUBBLE_ALPHA = 0.2;
+  const DEFAULT_BUBBLE_PULSE = 0.16;
+  /** 流动描边默认透明度。 */
+  const DEFAULT_OUTLINE_ALPHA = 0.88;
+  /** 调色盘：高饱和小圆点 / 描边色停。 */
   const PALETTE = [
     [255, 99, 132],
     [255, 206, 86],
@@ -74,13 +83,15 @@
    * @param {number} ry
    * @param {string} key
    * @param {number} t
+   * @param {number} flowAlpha
+   * @param {number[][]} palette
    */
-  function paintFlowBands(ctx, cx, cy, rx, ry, key, t) {
+  function paintFlowBands(ctx, cx, cy, rx, ry, key, t, flowAlpha, palette) {
     for (let i = 0; i < FLOW_BANDS; i += 1) {
       const phase = hash01(key, i + 90) * Math.PI * 2;
       const amp = ry * (0.1 + hash01(key, i + 100) * 0.16);
       const y0 = cy - ry * 0.7 + ((i + 0.5) / FLOW_BANDS) * ry * 1.4;
-      const rgb = PALETTE[(i + Math.floor(hash01(key, i) * 3)) % PALETTE.length];
+      const rgb = palette[(i + Math.floor(hash01(key, i) * 3)) % palette.length];
       ctx.beginPath();
       const steps = 10;
       for (let s = 0; s <= steps; s += 1) {
@@ -103,13 +114,31 @@
         ctx.lineTo(x, y);
       }
       ctx.closePath();
-      ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.16)`;
+      ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${flowAlpha})`;
       ctx.fill();
     }
   }
 
   /**
-   * 从 pathFn 或椭圆 bounds 解析裁剪区与近似包围盒。
+   * 从 pathFn 或椭圆 bounds 解析裁剪区与近似包围盒（不 clip）。
+   * @param {Function|{ cx: number, cy: number, rx: number, ry?: number }} pathOrBounds
+   * @returns {{ cx: number, cy: number, rx: number, ry: number } | null}
+   */
+  function resolveBounds(pathOrBounds) {
+    if (typeof pathOrBounds === 'function') {
+      const b = typeof pathOrBounds.bounds === 'function' ? pathOrBounds.bounds() : null;
+      if (b && b.rx > 0 && b.ry > 0) return b;
+      return null;
+    }
+    const cx = pathOrBounds.cx;
+    const cy = pathOrBounds.cy;
+    const rx = Math.max(0.5, pathOrBounds.rx);
+    const ry = Math.max(0.5, pathOrBounds.ry != null ? pathOrBounds.ry : rx);
+    return { cx, cy, rx, ry };
+  }
+
+  /**
+   * 从 pathFn 或椭圆 bounds 解析裁剪区与近似包围盒并 clip。
    * @param {CanvasRenderingContext2D} ctx
    * @param {Function|{ cx: number, cy: number, rx: number, ry?: number }} pathOrBounds
    * @returns {{ cx: number, cy: number, rx: number, ry: number } | null}
@@ -118,28 +147,85 @@
     ctx.beginPath();
     if (typeof pathOrBounds === 'function') {
       pathOrBounds(ctx);
-      const b = typeof pathOrBounds.bounds === 'function' ? pathOrBounds.bounds() : null;
+      const b = resolveBounds(pathOrBounds);
       ctx.clip();
-      if (b && b.rx > 0 && b.ry > 0) return b;
-      return null;
+      return b;
     }
-    const cx = pathOrBounds.cx;
-    const cy = pathOrBounds.cy;
-    const rx = Math.max(0.5, pathOrBounds.rx);
-    const ry = Math.max(0.5, pathOrBounds.ry != null ? pathOrBounds.ry : rx);
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    const box = resolveBounds(pathOrBounds);
+    if (!box) return null;
+    ctx.ellipse(box.cx, box.cy, box.rx, box.ry, 0, 0, Math.PI * 2);
     ctx.clip();
-    return { cx, cy, rx, ry };
+    return box;
   }
 
   /**
-   * 在封闭区内画底色 + 流动色带 + 彩色泡泡（clip 到 path / 椭圆）。
+   * 沿包围盒构造随时间旋转的彩虹线性渐变（色停严格递增，供描边）。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{ cx: number, cy: number, rx: number, ry: number }} box
+   * @param {string} key
+   * @param {number} t
+   * @param {number[][]} palette
+   * @param {number} alpha
+   * @param {number} speed
+   * @returns {CanvasGradient}
+   */
+  function flowingOutlineGradient(ctx, box, key, t, palette, alpha, speed) {
+    const angle = t * speed + hash01(key, 3) * Math.PI * 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const { cx, cy, rx, ry } = box;
+    const g = ctx.createLinearGradient(
+      cx + cos * rx,
+      cy + sin * ry,
+      cx - cos * rx,
+      cy - sin * ry
+    );
+    const n = Math.max(3, Math.min(palette.length, 6));
+    const drift = (t * speed * 0.35 + hash01(key, 7)) % 1;
+    /** @type {{ u: number, rgba: string }[]} */
+    const stops = [];
+    for (let i = 0; i < n; i += 1) {
+      const u = (i / (n - 1) + drift) % 1;
+      const rgb =
+        palette[(i + Math.floor(hash01(key, i + 11) * palette.length)) % palette.length];
+      stops.push({ u, rgba: `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})` });
+    }
+    stops.sort((a, b) => a.u - b.u);
+    // 去重同偏移；0/1 端点用对端色衔接，保持循环流动感。
+    let lastU = -1;
+    if (stops[0].u > 0.001) {
+      g.addColorStop(0, stops[stops.length - 1].rgba);
+      lastU = 0;
+    }
+    for (const s of stops) {
+      const u = Math.min(1, Math.max(0, s.u));
+      if (u <= lastU + 1e-4) continue;
+      g.addColorStop(u, s.rgba);
+      lastU = u;
+    }
+    if (lastU < 0.999) {
+      g.addColorStop(1, stops[0].rgba);
+    }
+    return g;
+  }
+
+  /**
+   * 在封闭区内画半透明底洗 + 流动色带 + 彩色泡泡（clip 到 path / 椭圆）。
+   * 默认不铺不透明实色；opts.base 若传入实色会盖住泡泡感，调用方宜省略或传 rgba。
    * @param {CanvasRenderingContext2D} ctx
    * @param {Function|{ cx: number, cy: number, rx: number, ry?: number }} pathOrBounds
    *   pathFn 可挂 `.bounds()` 返回 {cx,cy,rx,ry} 供粒子散布。
    * @param {number} [_dt] 保留兼容；实际用 beginFrame 共享时钟
    * @param {string|number} seed 稳定种子（建议 mobId + 部位名）
-   * @param {{ count?: number, base?: string, alpha?: number, palette?: number[][] }} [opts]
+   * @param {{
+   *   count?: number,
+   *   base?: string,
+   *   alpha?: number,
+   *   flowAlpha?: number,
+   *   bubbleAlpha?: number,
+   *   bubblePulse?: number,
+   *   palette?: number[][]
+   * }} [opts]
    */
   function drawBubbleFill(ctx, pathOrBounds, _dt, seed, opts = {}) {
     if (!ctx || pathOrBounds == null) return;
@@ -149,7 +235,12 @@
       1,
       Math.min(MAX_COUNT, opts.count != null ? Math.floor(opts.count) : DEFAULT_COUNT)
     );
-    const baseAlpha = opts.alpha != null ? opts.alpha : 0.2;
+    const baseAlpha = opts.alpha != null ? opts.alpha : DEFAULT_BASE_ALPHA;
+    const flowAlpha = opts.flowAlpha != null ? opts.flowAlpha : DEFAULT_FLOW_ALPHA;
+    const bubbleAlpha =
+      opts.bubbleAlpha != null ? opts.bubbleAlpha : DEFAULT_BUBBLE_ALPHA;
+    const bubblePulse =
+      opts.bubblePulse != null ? opts.bubblePulse : DEFAULT_BUBBLE_PULSE;
     const palette =
       opts.palette && opts.palette.length ? opts.palette : PALETTE;
 
@@ -169,7 +260,7 @@
     const { cx, cy, rx, ry } = box;
     ctx.fillStyle = `rgba(255, 248, 240, ${baseAlpha})`;
     ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
-    paintFlowBands(ctx, cx, cy, rx, ry, key, t);
+    paintFlowBands(ctx, cx, cy, rx, ry, key, t, flowAlpha, palette);
 
     for (let i = 0; i < count; i += 1) {
       const a = hash01(key, i);
@@ -189,14 +280,75 @@
       const pulse = 0.55 + 0.35 * Math.sin(t * (2.2 + b) + i);
       ctx.beginPath();
       ctx.arc(px, py, size * (0.75 + 0.25 * pulse), 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${0.45 + 0.35 * pulse})`;
+      ctx.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${bubbleAlpha + bubblePulse * pulse})`;
       ctx.fill();
       ctx.beginPath();
       ctx.arc(px - size * 0.28, py - size * 0.28, size * 0.28, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(255,255,255,${0.35 * pulse})`;
+      ctx.fillStyle = `rgba(255,255,255,${0.22 * pulse})`;
       ctx.fill();
     }
 
+    ctx.restore();
+  }
+
+  /**
+   * 沿封闭轮廓描流动彩虹描边（色相沿包围盒渐变并随时间漂移）。
+   * pathFn 可挂 `.bounds()`；椭圆可用 {cx,cy,rx,ry}；无 bounds 时用 opts.bounds。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {Function|{ cx: number, cy: number, rx: number, ry?: number }} pathOrBounds
+   * @param {string|number} seed
+   * @param {{
+   *   lineWidth?: number,
+   *   palette?: number[][],
+   *   alpha?: number,
+   *   speed?: number,
+   *   bounds?: { cx: number, cy: number, rx: number, ry: number }
+   * }} [opts]
+   */
+  function strokeFlowingOutline(ctx, pathOrBounds, seed, opts = {}) {
+    if (!ctx || pathOrBounds == null) return;
+    const key = String(seed);
+    const t = nowSec();
+    const palette =
+      opts.palette && opts.palette.length ? opts.palette : PALETTE;
+    const alpha = opts.alpha != null ? opts.alpha : DEFAULT_OUTLINE_ALPHA;
+    const speed = opts.speed != null ? opts.speed : 1.15;
+    const lineWidth = opts.lineWidth != null ? opts.lineWidth : 2;
+    const box = resolveBounds(pathOrBounds) || opts.bounds || null;
+    if (!box) return;
+
+    ctx.save();
+    ctx.beginPath();
+    if (typeof pathOrBounds === 'function') {
+      pathOrBounds(ctx);
+    } else {
+      ctx.ellipse(box.cx, box.cy, box.rx, box.ry, 0, 0, Math.PI * 2);
+    }
+    ctx.lineWidth = lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = flowingOutlineGradient(
+      ctx,
+      box,
+      key,
+      t,
+      palette,
+      alpha,
+      speed
+    );
+    ctx.stroke();
+    // 外层淡彩光晕，增强「泡泡轮廓」感（不参与命中）。
+    ctx.lineWidth = lineWidth * 1.85;
+    ctx.strokeStyle = flowingOutlineGradient(
+      ctx,
+      box,
+      key + ':glow',
+      t * 0.92 + 0.4,
+      palette,
+      alpha * 0.28,
+      speed * 0.85
+    );
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -207,7 +359,7 @@
    * @param {number} y
    * @param {number} r
    * @param {string|number} seed
-   * @param {{ count?: number, base?: string, alpha?: number }} [opts]
+   * @param {{ count?: number, base?: string, alpha?: number, flowAlpha?: number, bubbleAlpha?: number }} [opts]
    */
   function fillCircle(ctx, x, y, r, seed, opts = {}) {
     if (!(r > 0)) return;
@@ -222,7 +374,7 @@
    * @param {number} rx
    * @param {number} ry
    * @param {string|number} seed
-   * @param {{ count?: number, base?: string, alpha?: number }} [opts]
+   * @param {{ count?: number, base?: string, alpha?: number, flowAlpha?: number, bubbleAlpha?: number }} [opts]
    */
   function fillEllipse(ctx, x, y, rx, ry, seed, opts = {}) {
     if (!(rx > 0) || !(ry > 0)) return;
@@ -234,11 +386,25 @@
    * @param {CanvasRenderingContext2D} ctx
    * @param {Function} pathFn
    * @param {string|number} seed
-   * @param {{ count?: number, base?: string, alpha?: number, palette?: number[][] }} [opts]
+   * @param {{ count?: number, base?: string, alpha?: number, flowAlpha?: number, bubbleAlpha?: number, palette?: number[][] }} [opts]
    */
   function fillPath(ctx, pathFn, seed, opts = {}) {
     if (typeof pathFn !== 'function') return;
     drawBubbleFill(ctx, pathFn, 0, seed, opts);
+  }
+
+  /**
+   * 圆形流动描边便捷方法。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} r
+   * @param {string|number} seed
+   * @param {{ lineWidth?: number, palette?: number[][], alpha?: number, speed?: number }} [opts]
+   */
+  function strokeFlowingCircle(ctx, x, y, r, seed, opts = {}) {
+    if (!(r > 0)) return;
+    strokeFlowingOutline(ctx, { cx: x, cy: y, rx: r, ry: r }, seed, opts);
   }
 
   /** 清空时钟标记（波次 reset / 调试）。 */
@@ -255,7 +421,13 @@
     fillCircle,
     fillEllipse,
     fillPath,
+    strokeFlowingOutline,
+    strokeFlowingCircle,
     reset,
     PALETTE,
+    DEFAULT_BASE_ALPHA,
+    DEFAULT_FLOW_ALPHA,
+    DEFAULT_BUBBLE_ALPHA,
+    DEFAULT_OUTLINE_ALPHA,
   };
 })();

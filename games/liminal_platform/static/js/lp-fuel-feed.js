@@ -288,12 +288,30 @@
     else openPanel();
   }
 
+  /**
+   * 燃料源网格单格轨宽（÷ --cols；回退时跳过 is-span，避免幽灵足迹²）。
+   * @returns {number}
+   */
+  function fuelCellTrackPx() {
+    if (!sourceGrid) return 0;
+    const colsRaw =
+      sourceGrid.style.getPropertyValue('--cols') ||
+      getComputedStyle(sourceGrid).getPropertyValue('--cols');
+    const cols = Number.parseInt(String(colsRaw).trim(), 10);
+    const rect = sourceGrid.getBoundingClientRect();
+    if (cols > 0 && rect.width > 8) return rect.width / cols;
+    const probe = sourceGrid.querySelector(
+      '.lp-inventory-slot:not(.is-span), .lp-fuel-slot, button:not(.is-span)'
+    );
+    const w = probe?.getBoundingClientRect?.().width;
+    return w > 8 ? w : 0;
+  }
+
   /** 放置拖拽幽灵并套用当前燃料外观（按足迹比例，煤 1×1 仍为正方）。 */
   function placeGhost(clientX, clientY, itemId) {
     const item = Catalog?.getItem?.(itemId);
     const size = Core?.orientedSize?.(itemId, 0) || { w: 1, h: 1 };
-    const probe = sourceGrid?.querySelector('.lp-inventory-slot, .lp-fuel-slot, button');
-    const raw = probe?.getBoundingClientRect?.().width;
+    const raw = fuelCellTrackPx() || 48;
     const cell = Math.max(24, Math.round((raw > 8 ? raw : 48) * 0.78));
     const fw = Math.max(1, Number(size.w) || 1);
     const fh = Math.max(1, Number(size.h) || 1);

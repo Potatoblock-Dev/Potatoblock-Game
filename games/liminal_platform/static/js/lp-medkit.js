@@ -1,11 +1,11 @@
 /**
- * 医疗箱：手部 3 号槽（index 2）持用；开火键对准自己或近距队友持续治疗并扣耐久。
- * 联机：发 heal 意图，服务端校验耐久后广播 player_healed；离线本地结算。
- * 瞄准濒死队友时改为一次性 revive（消耗整箱医箱）。
+ * 医疗箱 / 急救箱：手部 3 号槽持用。
+ * - 医疗箱 medkit：开火键对准自己或近距队友持续治疗并扣耐久。
+ * - 急救箱 first_aid_kit：瞄准濒死队友开火，消耗整箱复活。
+ * 联机：heal / revive 意图由服务端校验。
  */
 (() => {
   const Catalog = window.LpItemCatalog;
-  /** 手部 3 号（0-based index 2）。 */
   const HAND_SLOT_INDEX = 2;
   const NET_INTERVAL = 0.1;
 
@@ -13,10 +13,13 @@
   let lastMode = null;
   let reviveSent = false;
 
-  /** 当前选中手部槽上的医疗箱（须为 3 号或显式 handSlot）。 */
-  function getHeldMedkitSlot() {
+  /**
+   * 取手部医疗类工具槽。
+   * @param {'heal'|'revive'|'any'} purpose
+   */
+  function getHeldMedicalSlot(purpose = 'any') {
     const hands = window.LpInventory?.getHandsInventory?.();
-    if (!hands || !Catalog?.isMedkit) return null;
+    if (!hands || !Catalog) return null;
     const preferred = window.LpHandsHud?.getActiveIndex?.();
     const order = [];
     if (preferred === 0 || preferred === 1 || preferred === 2) order.push(preferred);
@@ -25,11 +28,12 @@
       if (index >= hands.size()) continue;
       if (hands.isCovered?.(index)) continue;
       let stack = hands.getSlot(index);
-      if (!stack || !Catalog.isMedkit(stack.itemId)) continue;
+      if (!stack || !Catalog.isMedicalTool?.(stack.itemId)) continue;
       const item = Catalog.getItem(stack.itemId);
       if (!item) continue;
-      // 仅当选中的是该槽（或唯有工具槽有医箱且当前选中工具槽）才视为持用
       if (preferred != null && preferred !== index) continue;
+      if (purpose === 'heal' && !item.canHeal) continue;
+      if (purpose === 'revive' && !item.canRevive) continue;
       if (item.maxDurability != null && stack.dur == null) {
         stack = hands.updateSlot?.(index, { dur: item.maxDurability }) || {
           ...stack,
@@ -41,19 +45,27 @@
     return null;
   }
 
-  /** 是否正持用医疗箱（选中 3 号槽且有医箱）。 */
+  /** 当前选中手部槽上的医疗箱（回血）。 */
+  function getHeldMedkitSlot() {
+    return getHeldMedicalSlot('heal');
+  }
+
+  /** 当前选中手部槽上的急救箱（复活）。 */
+  function getHeldFirstAidSlot() {
+    return getHeldMedicalSlot('revive');
+  }
+
+  /** 是否正持用医疗箱或急救箱（开火改走医疗逻辑）。 */
   function isHoldingMedkit() {
-    return Boolean(getHeldMedkitSlot());
+    return Boolean(getHeldMedicalSlot('any'));
   }
 
   /**
-   * 根据瞄准点解析治疗目标：近距队友优先，否则自身（瞄准靠近自己）。
+   * 根据瞄准点解析目标：近距队友优先，否则自身。
    * @returns {{ mode: 'self'|'ally'|'none', targetId: string|null, ally: object|null }}
    */
-  function resolveHealTarget(aimX, aimY, selfX, selfY, remotes) {
-    const held = getHeldMedkitSlot();
-    if (!held) return { mode: 'none', targetId: null, ally: null };
-    const item = held.item;
+  function resolveHealTarget(aimX, aimY, selfX, selfY, remotes, item) {
+    if (!item) return { mode: 'none', targetId: null, ally: null };
     const allyRange = Number(item.allyRange) || 150;
     const selfAim = Number(item.selfAimRadius) || 72;
     const allyAim = Number(item.allyAimRadius) || 88;
@@ -85,39 +97,39 @@
     return { mode: 'none', targetId: null, ally: null };
   }
 
-  /** 离线：扣耐久并返回本帧治疗量；耗尽移除。 */
+  /** 离线扣医疗箱耐久并返回本帧治疗量。 */
   function consumeDurOffline(held, dt, ally) {
     const { hands, index, stack, item } = held;
-    const dur = stack.dur ?? item.maxDurability ?? 0;
+    let dur = Number(stack.dur);
+    if (!Number.isFinite(dur)) dur = Number(item.maxDurability) || 0;
     if (dur <= 0) {
       hands.takeSlot?.(index);
       window.LpInventory?.persistAndRender?.();
+      window.LpHandsHud?.render?.();
       return 0;
     }
-    const rate = ally
-      ? Number(item.allyHealPerSec) || 28
-      : Number(item.selfHealPerSec) || 12;
-    const costRate = Number(item.durCostPerSec) || 8;
+    const rate = Number(ally ? item.allyHealPerSec : item.selfHealPerSec) || 0;
+    const costRate = Number(item.durCostPerSec) || 0;
     let amount = rate * dt;
-    let cost = costRate * dt;
-    if (costRate > 0 && cost > dur) {
-      const scale = dur / cost;
+    let durCost = costRate * dt;
+    if (costRate > 0 && durCost > dur) {
+      const scale = dur / durCost;
       amount *= scale;
-      cost = dur;
+      durCost = dur;
     }
-    const next = Math.max(0, Math.round(dur - cost));
-    if (next <= 0) {
+    const nextDur = Math.max(0, Math.round(dur - durCost));
+    if (nextDur <= 0) {
       hands.takeSlot?.(index);
     } else {
-      hands.updateSlot?.(index, { dur: next });
+      hands.updateSlot?.(index, { dur: nextDur });
     }
     window.LpInventory?.persistAndRender?.();
     window.LpHandsHud?.render?.();
     return amount;
   }
 
-  /** 离线：整箱消耗（濒死队友复活；单机无真实队友时仅清箱）。 */
-  function consumeWholeMedkitOffline(held) {
+  /** 离线消耗整箱急救箱。 */
+  function consumeWholeKitOffline(held) {
     const { hands, index } = held;
     hands.takeSlot?.(index);
     window.LpInventory?.persistAndRender?.();
@@ -125,9 +137,7 @@
   }
 
   /**
-   * 每帧：若按住开火且持医疗箱，按瞄准解析目标并治疗 / 复活濒死队友。
-   * @param {number} dt
-   * @param {{ fireHeld: boolean, aimX: number, aimY: number, selfX: number, selfY: number, remotes?: object[], localUserId?: string }} ctx
+   * 每帧：持医疗类工具且按住开火 → 回血或复活。
    */
   function tick(dt, ctx = {}) {
     if (!ctx.fireHeld || !isHoldingMedkit()) {
@@ -139,14 +149,19 @@
       lastMode = null;
       return null;
     }
-    const held = getHeldMedkitSlot();
-    if (!held) return null;
+
+    const firstAid = getHeldFirstAidSlot();
+    const medkit = getHeldMedkitSlot();
+    const probeItem = firstAid?.item || medkit?.item;
+    if (!probeItem) return null;
+
     const target = resolveHealTarget(
       ctx.aimX,
       ctx.aimY,
       ctx.selfX,
       ctx.selfY,
-      ctx.remotes
+      ctx.remotes,
+      probeItem
     );
     if (target.mode === 'none') {
       lastMode = null;
@@ -158,6 +173,11 @@
       target.mode === 'ally' && target.ally && target.ally._lpLifeState === 'downed';
 
     if (allyDowned) {
+      if (!firstAid) {
+        lastMode = null;
+        reviveSent = false;
+        return { mode: 'need_first_aid' };
+      }
       lastMode = 'revive';
       const online = Boolean(window.LpInventoryNet?.isActive?.());
       if (online) {
@@ -167,18 +187,22 @@
           new CustomEvent('lp:revive', {
             detail: {
               targetId: target.targetId,
-              handIndex: held.index,
+              handIndex: firstAid.index,
             },
           })
         );
         return { mode: 'revive', online: true };
       }
-      // 离线：无真实队友权威态，仅消耗医箱占位
-      consumeWholeMedkitOffline(held);
+      consumeWholeKitOffline(firstAid);
       return { mode: 'revive', offline: true };
     }
 
     reviveSent = false;
+    if (!medkit) {
+      lastMode = null;
+      return { mode: 'need_medkit' };
+    }
+
     lastMode = target.mode;
     const online = Boolean(window.LpInventoryNet?.isActive?.());
     if (online) {
@@ -190,7 +214,7 @@
         new CustomEvent('lp:heal', {
           detail: {
             targetId: target.mode === 'ally' ? target.targetId : null,
-            handIndex: held.index,
+            handIndex: medkit.index,
             dt: sendDt,
             aimX: ctx.aimX,
             aimY: ctx.aimY,
@@ -199,7 +223,7 @@
       );
       return { mode: target.mode, online: true };
     }
-    const amount = consumeDurOffline(held, dt, target.mode === 'ally');
+    const amount = consumeDurOffline(medkit, dt, target.mode === 'ally');
     if (amount > 0 && target.mode === 'self') {
       window.LpGame?.heal?.(amount);
     }
@@ -227,6 +251,7 @@
   window.LpMedkit = {
     HAND_SLOT_INDEX,
     getHeldMedkitSlot,
+    getHeldFirstAidSlot,
     isHoldingMedkit,
     resolveHealTarget,
     tick,

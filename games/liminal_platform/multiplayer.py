@@ -201,6 +201,12 @@ class LiminalPlayer:
         self.life_state = "alive"
         self.downed_remain = None
         self.death_cause = None
+        self.drone_x = None
+        self.drone_y = None
+        self.drone_vx = None
+        self.drone_vy = None
+        self.drone_aim = None
+        self.drone_phase = None
         self.inventories = Inv.PlayerInventories()
         self.sync_held_from_inv()
 
@@ -253,6 +259,22 @@ class LiminalPlayer:
             data["aimY"] = round(self.aim_y, 2)
         if manned:
             data["turretId"] = self.turret_id
+        if self.drone_x is not None and self.drone_y is not None:
+            try:
+                data["droneX"] = round(float(self.drone_x), 2)
+                data["droneY"] = round(float(self.drone_y), 2)
+                if self.drone_vx is not None:
+                    data["droneVx"] = round(float(self.drone_vx), 3)
+                if self.drone_vy is not None:
+                    data["droneVy"] = round(float(self.drone_vy), 3)
+                if self.drone_aim is not None:
+                    data["droneAim"] = round(float(self.drone_aim), 4)
+                if self.drone_phase is not None:
+                    phase = int(self.drone_phase)
+                    if 0 <= phase <= 3:
+                        data["dronePhase"] = phase
+            except (TypeError, ValueError):
+                pass
         return data
 
 
@@ -571,6 +593,52 @@ class LiminalLobbyManager:
         elif life == "alive":
             player.death_cause = None
             player.downed_remain = None
+        self._apply_drone_pose(player, payload)
+
+    def _apply_drone_pose(self, player: LiminalPlayer, payload: Dict[str, Any]) -> None:
+        """写入伴飞无人机位姿（客户端权威，仅回显广播；缺字段则清掉）。"""
+        if "droneX" not in payload or "droneY" not in payload:
+            player.drone_x = None
+            player.drone_y = None
+            player.drone_vx = None
+            player.drone_vy = None
+            player.drone_aim = None
+            player.drone_phase = None
+            return
+        try:
+            player.drone_x = _clamp(
+                float(payload["droneX"]), WORLD_LEFT - 400.0, WORLD_RIGHT + 400.0
+            )
+            player.drone_y = _clamp(float(payload["droneY"]), -900.0, 200.0)
+        except (TypeError, ValueError):
+            player.drone_x = None
+            player.drone_y = None
+            player.drone_vx = None
+            player.drone_vy = None
+            player.drone_aim = None
+            player.drone_phase = None
+            return
+        try:
+            player.drone_vx = _clamp(float(payload.get("droneVx") or 0.0), -800.0, 800.0)
+            player.drone_vy = _clamp(float(payload.get("droneVy") or 0.0), -800.0, 800.0)
+        except (TypeError, ValueError):
+            player.drone_vx = 0.0
+            player.drone_vy = 0.0
+        if "droneAim" in payload:
+            try:
+                player.drone_aim = float(payload["droneAim"])
+            except (TypeError, ValueError):
+                player.drone_aim = None
+        else:
+            player.drone_aim = None
+        if "dronePhase" in payload:
+            try:
+                phase = int(payload["dronePhase"])
+                player.drone_phase = phase if 0 <= phase <= 3 else 0
+            except (TypeError, ValueError):
+                player.drone_phase = 0
+        else:
+            player.drone_phase = 0
 
     def _apply_turret_claim(
         self, room: "LiminalRoom", player: LiminalPlayer, raw_turret_id: Any
@@ -829,13 +897,13 @@ class LiminalLobbyManager:
         if getattr(other, "life_state", "alive") != "downed":
             await player.connection.enqueue(player.inv_message(room))
             return
-        item = Inv.ITEMS.get(Inv.MEDKIT_ID) or {}
+        item = Inv.ITEMS.get(Inv.FIRST_AID_KIT_ID) or Inv.ITEMS.get(Inv.MEDKIT_ID) or {}
         ally_range = float(item.get("allyRange") or 150)
         dist = ((other.x - player.x) ** 2 + (other.y - player.y) ** 2) ** 0.5
         if dist > ally_range + 40:
             await player.connection.enqueue(player.inv_message(room))
             return
-        consumed = Inv.consume_held_medkit(
+        consumed = Inv.consume_held_first_aid(
             player.inventories, hand_index=payload.get("handIndex")
         )
         await player.connection.enqueue(player.inv_message(room))

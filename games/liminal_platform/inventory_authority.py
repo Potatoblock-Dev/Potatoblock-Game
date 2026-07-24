@@ -26,6 +26,7 @@ STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (4, {"itemId": "turret_ammo", "qty": 80}),
     (5, {"itemId": "small_caliber_ammo", "qty": 90}),
     (6, {"itemId": "medkit", "qty": 1, "dur": 40}),
+    (8, {"itemId": "first_aid_kit", "qty": 1}),
     (16, {"itemId": "gur65", "qty": 1, "mag": 27}),
     (19, {"itemId": "hummingbird_drone", "qty": 1, "mag": 120}),
 ]
@@ -85,7 +86,7 @@ ITEMS: Dict[str, Dict[str, Any]] = {
     },
     "medkit": {
         "maxStack": 1,
-        "w": 2,
+        "w": 1,
         "h": 2,
         "type": "medical",
         "canHold": True,
@@ -95,6 +96,19 @@ ITEMS: Dict[str, Dict[str, Any]] = {
         "durCostPerSec": 8,
         "allyRange": 150,
         "handSlot": 2,
+        "canHeal": True,
+        "canRevive": False,
+    },
+    "first_aid_kit": {
+        "maxStack": 1,
+        "w": 2,
+        "h": 2,
+        "type": "medical",
+        "canHold": True,
+        "allyRange": 150,
+        "handSlot": 2,
+        "canHeal": False,
+        "canRevive": True,
     },
 }
 
@@ -104,6 +118,7 @@ HANDS_UTILITY = 2  # 手部 3 号槽（0-based）；医疗箱等工具类
 HANDS_WEAPON_SLOTS = (0, 1)
 PLAYER_MAX_HP = 100
 MEDKIT_ID = "medkit"
+FIRST_AID_KIT_ID = "first_aid_kit"
 
 
 def max_stack_in(bag_id: Optional[str], item: Optional[Dict[str, Any]]) -> int:
@@ -1088,7 +1103,7 @@ def consume_from_personal(personal: PlayerInventories, item_id: str, qty: int) -
 def get_held_medkit_slot(
     personal: PlayerInventories, hand_index: Optional[int] = None
 ) -> Optional[Tuple[int, Dict[str, Any], Dict[str, Any]]]:
-    """取手部医疗箱槽；优先 hand_index，否则扫 3 号工具槽。返回 (index, stack, item)。"""
+    """取手部医疗箱槽（仅 medkit）；优先 hand_index，否则扫 3 号工具槽。"""
     hands = personal.hands
     order: List[int] = []
     if hand_index is not None:
@@ -1110,6 +1125,32 @@ def get_held_medkit_slot(
         if stack.get("dur") is None and item.get("maxDurability"):
             hands.update_slot(index, {"dur": int(item["maxDurability"])})
             stack = hands.get_slot(index) or stack
+        return index, stack, item
+    return None
+
+
+def get_held_first_aid_slot(
+    personal: PlayerInventories, hand_index: Optional[int] = None
+) -> Optional[Tuple[int, Dict[str, Any], Dict[str, Any]]]:
+    """取手部急救箱槽（仅 first_aid_kit）；优先 hand_index，否则扫 3 号工具槽。"""
+    hands = personal.hands
+    order: List[int] = []
+    if hand_index is not None:
+        try:
+            hi = int(hand_index)
+        except (TypeError, ValueError):
+            hi = -1
+        if 0 <= hi < hands.size():
+            order.append(hi)
+    if HANDS_UTILITY not in order:
+        order.append(HANDS_UTILITY)
+    for index in order:
+        if hands.is_covered(index):
+            continue
+        stack = hands.get_slot(index)
+        if not stack or stack.get("itemId") != FIRST_AID_KIT_ID:
+            continue
+        item = ITEMS.get(FIRST_AID_KIT_ID) or {}
         return index, stack, item
     return None
 
@@ -1166,8 +1207,15 @@ def apply_medkit_tick(
 def consume_held_medkit(
     personal: PlayerInventories, *, hand_index: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
-    """权威消耗整箱手部医疗箱（濒死复活）；成功返回 {handIndex}，否则 None。"""
-    held = get_held_medkit_slot(personal, hand_index)
+    """兼容旧名：改为消耗急救箱（濒死复活）。"""
+    return consume_held_first_aid(personal, hand_index=hand_index)
+
+
+def consume_held_first_aid(
+    personal: PlayerInventories, *, hand_index: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """权威消耗整箱手部急救箱（濒死复活）；成功返回 {handIndex}，否则 None。"""
+    held = get_held_first_aid_slot(personal, hand_index)
     if not held:
         return None
     index, _stack, _item = held

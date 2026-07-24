@@ -1007,18 +1007,34 @@
    * @param {object|null|undefined} inventory
    * @returns {HTMLElement|null}
    */
-  function visibleSlotProbeFor(inventory) {
+  /** 库存对应的网格 DOM（测单格轨宽用）。 */
+  function gridElFor(inventory) {
     if (!inventory) return null;
-    if (inventory === player) {
-      return playerGrid?.querySelector('.lp-inventory-slot:not([hidden])') || null;
-    }
-    if (inventory === storage) {
-      return storageGrid?.querySelector('.lp-inventory-slot:not([hidden])') || null;
-    }
-    if (inventory === state.groundInv && groundGrid) {
-      return groundGrid.querySelector('.lp-inventory-slot:not([hidden])');
-    }
+    if (inventory === player) return playerGrid;
+    if (inventory === storage) return storageGrid;
+    if (inventory === state.groundInv && groundGrid) return groundGrid;
     return null;
+  }
+
+  /**
+   * 单格轨宽（px）：网格总宽 ÷ --cols。
+   * 禁止用 is-span 按钮的 getBoundingClientRect（那是足迹总宽，再 ×w/h 会把幽灵放大成「足迹²」）。
+   * @param {HTMLElement|null} gridEl
+   * @returns {number} 测不到时为 0
+   */
+  function singleCellTrackPx(gridEl) {
+    if (!gridEl) return 0;
+    const colsRaw =
+      gridEl.style.getPropertyValue('--cols') ||
+      getComputedStyle(gridEl).getPropertyValue('--cols');
+    const cols = Number.parseInt(String(colsRaw).trim(), 10);
+    const rect = gridEl.getBoundingClientRect();
+    if (cols > 0 && rect.width > 8) return rect.width / cols;
+    const probe = gridEl.querySelector(
+      '.lp-inventory-slot:not([hidden]):not(.is-span)'
+    );
+    const w = probe?.getBoundingClientRect?.().width;
+    return w > 8 ? w : 0;
   }
 
   /**
@@ -1027,13 +1043,15 @@
    * 网格 place-* 高亮仍按实格，与幽灵缩放无关。
    */
   function cursorGhostCellPx() {
-    const probe =
-      visibleSlotProbeFor(state.hoverSlot?.inventory) ||
-      root?.querySelector('.lp-equip-slot-host .lp-inventory-slot') ||
-      playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
-    const w = probe?.getBoundingClientRect?.().width;
-    const cell = w > 8 ? w : 48;
-    return Math.max(24, Math.round(cell * 0.78));
+    let raw = singleCellTrackPx(gridElFor(state.hoverSlot?.inventory));
+    if (!(raw > 8)) {
+      const equipProbe = root?.querySelector(
+        '.lp-equip-slot-host .lp-inventory-slot'
+      );
+      raw = equipProbe?.getBoundingClientRect?.().width || 0;
+    }
+    if (!(raw > 8)) raw = singleCellTrackPx(playerGrid) || 48;
+    return Math.max(24, Math.round((raw > 8 ? raw : 48) * 0.78));
   }
 
   /**

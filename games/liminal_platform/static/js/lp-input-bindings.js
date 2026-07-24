@@ -243,7 +243,7 @@
         ? `${formatAction('sprint') || 'Shift'} 切换走/跑`
         : `${formatAction('sprint') || 'Shift'} 按住奔跑`;
       status.textContent =
-        `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${sprintHint}`;
+        `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${formatAction('handsHud') || 'X'} 切换手部 · 1/2/3 选手部 · ${sprintHint}`;
     }
     const hint = document.getElementById('lpInventoryHint');
     if (hint) {
