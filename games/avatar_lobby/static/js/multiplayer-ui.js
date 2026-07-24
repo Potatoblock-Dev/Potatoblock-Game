@@ -1,8 +1,11 @@
 /**
  * 多人房间控件：在线状态、人数、创建/加入/返回公共大厅、复制邀请链接。
+ * 连线状态带迟滞：短时断线仍显示「连线」，避免与「重连」来回闪。
  */
 (() => {
   const PUBLIC_ROOM_ID = window.AvatarNetwork?.PUBLIC_ROOM_ID || 'public';
+  /** 已连线后，断线未超过此时长仍显示「连线」。 */
+  const ONLINE_HOLD_MS = 1500;
 
   function bindMultiplayerUi(session) {
     const statusEl = document.getElementById('mpStatus');
@@ -15,6 +18,7 @@
     const publicBtn = document.getElementById('mpPublicButton');
     const inviteBtn = document.getElementById('mpInviteButton');
 
+    /** 写入房间操作反馈文案。 */
     function setFeedback(text, isError = false) {
       if (!feedbackEl) return;
       feedbackEl.textContent = text || '';
@@ -22,17 +26,94 @@
     }
 
     let lastStatus = session.mode === 'offline' ? 'offline-mode' : 'connecting';
+    let everOnline = false;
+    /** 展示态：online | connecting | reconnecting | offline | replaced | offline-mode */
+    let displayKind = session.mode === 'offline' ? 'offline-mode' : 'connecting';
+    let holdTimer = null;
 
+    /** 将展示态映射为状态条文案。 */
     function statusText() {
-      if (session.connected) return '在线';
-      if (lastStatus === 'replaced') return '已在其他窗口打开';
-      if (session.mode === 'offline') return '离线模式';
-      return lastStatus === 'connecting' ? '连接中' : '重连中';
+      if (displayKind === 'online') return '连线';
+      if (displayKind === 'replaced') return '已在其他窗口打开';
+      if (displayKind === 'offline-mode') return '离线模式';
+      if (displayKind === 'offline') return '断线';
+      if (displayKind === 'connecting') return '连接中';
+      return '重连';
     }
 
+    /** 是否按「已连线」样式着色。 */
+    function isOnlineStyle() {
+      return displayKind === 'online';
+    }
+
+    /** 根据底层 connectionchange / connected 更新展示态（含迟滞）。 */
+    function syncDisplayKind() {
+      if (session.mode === 'offline' || lastStatus === 'offline-mode') {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+        displayKind = 'offline-mode';
+        return;
+      }
+
+      if (session.connected || lastStatus === 'online') {
+        everOnline = true;
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+        displayKind = 'online';
+        return;
+      }
+
+      if (lastStatus === 'replaced') {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+        displayKind = 'replaced';
+        return;
+      }
+
+      if (lastStatus === 'offline' && session.manualClose) {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+        displayKind = 'offline';
+        return;
+      }
+
+      const nextKind = everOnline ? 'reconnecting' : 'connecting';
+
+      if (displayKind === 'online') {
+        if (!holdTimer) {
+          holdTimer = setTimeout(() => {
+            holdTimer = null;
+            if (session.connected) {
+              displayKind = 'online';
+            } else if (lastStatus === 'replaced') {
+              displayKind = 'replaced';
+            } else if (lastStatus === 'offline' && session.manualClose) {
+              displayKind = 'offline';
+            } else {
+              displayKind = everOnline ? 'reconnecting' : 'connecting';
+            }
+            render();
+          }, ONLINE_HOLD_MS);
+        }
+        return;
+      }
+
+      displayKind = nextKind;
+    }
+
+    /** 刷新状态条、房间名、人数与按钮可用态。 */
     function render() {
+      syncDisplayKind();
       if (statusEl) {
-        const online = session.connected;
+        const online = isOnlineStyle();
         statusEl.textContent = statusText();
         statusEl.classList.toggle('is-online', online);
         statusEl.classList.toggle('is-offline', !online);

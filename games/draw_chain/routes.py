@@ -192,16 +192,6 @@ MIN_DRAW_SECONDS = 10
 MAX_DRAW_SECONDS = 120
 DEFAULT_DRAW_SECONDS = 60
 BASE_WORD_BANK_PATH = GAME_DIR / "base_word_bank.txt"
-USER_WORD_BANKS_DIR = GAME_DIR / "user_word_banks"
-USER_WORD_BANK_MANIFEST = "manifest.json"
-
-
-def sanitize_user_storage_id(user_id: str) -> str:
-    """把通行证 UID 收成可作目录名的安全片段。"""
-    text = "".join(
-        ch if ch.isalnum() or ch in "-_" else "_" for ch in str(user_id).strip()
-    )[:64]
-    return text or "unknown"
 
 
 def safe_bank_filename(filename: str) -> str:
@@ -210,164 +200,6 @@ def safe_bank_filename(filename: str) -> str:
     if not name or name in {".", ".."}:
         return ""
     return name[:100]
-
-
-def user_word_banks_dir(user_id: str) -> Path:
-    """返回该用户词库记忆目录。"""
-    return USER_WORD_BANKS_DIR / sanitize_user_storage_id(user_id)
-
-
-def read_user_word_bank_manifest(user_id: str) -> List[str]:
-    """读取用户记忆的词库文件名列表。"""
-    path = user_word_banks_dir(user_id) / USER_WORD_BANK_MANIFEST
-    if not path.is_file():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return []
-    files = payload.get("files") if isinstance(payload, dict) else None
-    if not isinstance(files, list):
-        return []
-    ordered: List[str] = []
-    seen: set[str] = set()
-    for item in files:
-        name = safe_bank_filename(str(item))
-        if not name.lower().endswith(".txt"):
-            continue
-        key = name.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(name)
-    return ordered
-
-
-def write_user_word_bank_manifest(user_id: str, filenames: List[str]) -> None:
-    """写回用户词库记忆清单；空清单则删除 manifest。"""
-    directory = user_word_banks_dir(user_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    manifest_path = directory / USER_WORD_BANK_MANIFEST
-    ordered: List[str] = []
-    seen: set[str] = set()
-    for item in filenames:
-        name = safe_bank_filename(str(item))
-        if not name.lower().endswith(".txt"):
-            continue
-        key = name.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(name)
-    if not ordered:
-        if manifest_path.is_file():
-            try:
-                manifest_path.unlink()
-            except OSError:
-                pass
-        return
-    manifest_path.write_text(
-        json.dumps({"files": ordered}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def remember_user_word_bank(user_id: str, filename: str, content: str) -> None:
-    """房主导入成功后，把 TXT 落到该用户记忆目录。"""
-    name = safe_bank_filename(filename)
-    if not name.lower().endswith(".txt"):
-        return
-    if not isinstance(content, str):
-        return
-    if len(content.encode("utf-8")) > MAX_WORD_BANK_BYTES:
-        return
-    directory = user_word_banks_dir(user_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    target = (directory / name).resolve()
-    if target.parent != directory.resolve():
-        return
-    target.write_text(content, encoding="utf-8")
-    files = [
-        item
-        for item in read_user_word_bank_manifest(user_id)
-        if item.casefold() != name.casefold()
-    ]
-    files.append(name)
-    write_user_word_bank_manifest(user_id, files)
-
-
-def forget_user_word_bank(user_id: str, filename: str) -> None:
-    """删除房主记忆中的单个词库文件与清单项。"""
-    name = safe_bank_filename(filename)
-    if not name:
-        return
-    directory = user_word_banks_dir(user_id)
-    target = directory / name
-    try:
-        if target.is_file() and target.resolve().parent == directory.resolve():
-            target.unlink()
-    except OSError:
-        pass
-    kept = [
-        item
-        for item in read_user_word_bank_manifest(user_id)
-        if item.casefold() != name.casefold()
-    ]
-    write_user_word_bank_manifest(user_id, kept)
-
-
-def restore_user_word_banks(room: Dict, user_id: str) -> int:
-    """创建房间时从记忆目录恢复词库；缺失或损坏的文件会从记忆中删除。"""
-    if room.get("custom_banks"):
-        return 0
-    remembered = read_user_word_bank_manifest(user_id)
-    if not remembered:
-        return 0
-    directory = user_word_banks_dir(user_id)
-    try:
-        directory_resolved = directory.resolve()
-    except OSError:
-        write_user_word_bank_manifest(user_id, [])
-        return 0
-    kept: List[str] = []
-    loaded = 0
-    total_words = 0
-    for filename in remembered:
-        path = directory / filename
-        try:
-            if not path.is_file() or path.resolve().parent != directory_resolved:
-                continue
-            content = path.read_text(encoding="utf-8")
-            words = parse_word_bank(content)
-            bank_name = get_custom_word_bank_name(content, filename)
-            if len(room["custom_banks"]) >= MAX_CUSTOM_BANKS:
-                kept.append(filename)
-                continue
-            if total_words + len(words) > MAX_TOTAL_CUSTOM_WORDS:
-                kept.append(filename)
-                continue
-            room["custom_banks"].append(
-                {
-                    "id": uuid.uuid4().hex,
-                    "filename": filename,
-                    "name": bank_name,
-                    "words": words,
-                    "enabled": True,
-                    "owner_user_id": user_id,
-                }
-            )
-            total_words += len(words)
-            kept.append(filename)
-            loaded += 1
-        except (OSError, UnicodeError, TypeError, ValueError):
-            try:
-                if path.is_file() and path.resolve().parent == directory_resolved:
-                    path.unlink()
-            except OSError:
-                pass
-            continue
-    write_user_word_bank_manifest(user_id, kept)
-    return loaded
 
 
 def parse_word_bank_content(
@@ -1806,9 +1638,9 @@ register_game(
 
 
 def import_custom_word_banks(
-    room: Dict, data: Dict, *, remember_for_user_id: Optional[str] = None
+    room: Dict, data: Dict, *, owner_user_id: Optional[str] = None
 ) -> List[Dict[str, object]]:
-    """逐个导入 TXT 文件并返回各自结果，坏文件不影响成功文件。"""
+    """逐个导入 TXT 到本局房间内存；不写服务端长期词库存储。"""
     files = data.get("files")
     if not isinstance(files, list) or not files:
         raise ValueError("请选择要导入的 TXT 文件")
@@ -1838,16 +1670,11 @@ def import_custom_word_banks(
                 "name": bank_name,
                 "words": words,
                 "enabled": True,
-                "owner_user_id": str(remember_for_user_id or ""),
+                "owner_user_id": str(owner_user_id or ""),
             }
             room["custom_banks"].append(bank)
             existing_names.add(filename.casefold())
             total_words += len(words)
-            if remember_for_user_id:
-                try:
-                    remember_user_word_bank(remember_for_user_id, filename, content)
-                except OSError:
-                    logger.exception("保存用户词库记忆失败 user=%s file=%s", remember_for_user_id, filename)
             results.append(
                 {
                     "filename": filename,
@@ -1892,7 +1719,7 @@ def apply_word_bank_update(room: Dict, data: Dict) -> None:
 
 
 def delete_custom_word_bank(room: Dict, bank_id: str) -> Tuple[str, str]:
-    """按服务端 ID 删除自定义词库，并返回 (文件名, 记忆归属 UID)。
+    """按服务端 ID 删除本局自定义词库，并返回 (文件名, owner_user_id)。
 
     删光所有词库也允许：开始游戏时会单独校验词池非空。
     """
@@ -2082,33 +1909,16 @@ async def game_websocket(websocket: WebSocket):
                     "disconnect_token": "",
                 }
                 player_rooms[player_id] = room_id
-                became_owner = False
                 if room["owner_id"] is None and (
                     room["phase"] != "playing"
                     or player_id in room["original_player_ids"]
                 ):
                     room["owner_id"] = player_id
-                    became_owner = True
-                restored_banks = 0
-                if became_owner and room["phase"] == "lobby":
-                    try:
-                        restored_banks = restore_user_word_banks(room, player_id)
-                    except OSError:
-                        logger.exception("恢复用户词库记忆失败 user=%s", player_id)
                 if is_spectator:
                     room["pending_players"].append(player_id)
                 update_original_player_absence_timer(room_id, room)
                 await send_room_states(room)
                 await send_player_state(room, player_id, include_strokes=True)
-                if restored_banks > 0:
-                    await send_json(
-                        websocket,
-                        {
-                            "type": "message",
-                            "sender": "系统", "sender_icon": "book",
-                            "text": f"已从记忆恢复 {restored_banks} 个自定义词库",
-                        },
-                    )
                 await broadcast(
                     room_id,
                     {
@@ -2308,14 +2118,13 @@ async def game_websocket(websocket: WebSocket):
                 try:
                     if msg_type == "word_bank_import":
                         results = import_custom_word_banks(
-                            room, data, remember_for_user_id=player_id
+                            room, data, owner_user_id=player_id
                         )
                         await send_json(websocket, {"type": "word_bank_imported", "results": results})
                     elif msg_type == "word_bank_delete":
-                        filename, owner_user_id = delete_custom_word_bank(
+                        filename, _owner_user_id = delete_custom_word_bank(
                             room, str(data.get("bank_id", ""))
                         )
-                        forget_user_word_bank(owner_user_id or player_id, filename)
                         await send_json(
                             websocket,
                             {"type": "word_bank_deleted", "message": f"已删除 {filename}"},

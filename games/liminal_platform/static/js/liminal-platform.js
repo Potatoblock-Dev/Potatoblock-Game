@@ -882,7 +882,20 @@
     }
     if (window.LpInputBindings?.matchesKeyEvent('handsHud', event)) {
       event.preventDefault();
-      window.LpHandsHud?.cycleActive?.();
+      /* 武装入座：与手部共用键，循环弹种；否则切换手部槽。 */
+      if (window.LpArmedAmmo?.isActive?.()) {
+        window.LpArmedAmmo.cycle();
+      } else {
+        window.LpHandsHud?.cycleActive?.();
+      }
+    }
+    /* 武装入座时数字键 1…N 直接选弹种（左→右）。 */
+    if (window.LpArmedAmmo?.isActive?.()) {
+      const digit = /^Digit([1-9])$/.exec(event.code);
+      if (digit) {
+        event.preventDefault();
+        window.LpArmedAmmo.selectByNumber(Number(digit[1]));
+      }
     }
     if (window.LpInputBindings?.matchesKeyEvent('fire', event)) {
       event.preventDefault();

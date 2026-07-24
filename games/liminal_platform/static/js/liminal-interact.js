@@ -213,12 +213,24 @@
 
   /**
    * 模式状态描述条：屏幕下方居中（炮塔操控等；非世界锚点交互提示）。
-   * Canvas 绘制，无可选中 DOM 文本。移动端抬高，避开摇杆/开火键拇指区。
+   * Canvas 绘制，无可选中 DOM 文本。移动端抬高，避开摇杆/开火键拇指区；
+   * 武装弹种栏可见时再抬高，避免与底栏重叠。
    */
   function drawStatusBanner(ctx, dpr, line, options = {}) {
     const { mobile = false } = options;
     const h = window.innerHeight || 600;
-    const bottom = mobile ? 168 : 52;
+    let bottom = mobile ? 168 : 52;
+    if (window.LpArmedAmmo?.isActive?.()) {
+      const ammoEl = document.getElementById('lpArmedAmmoHud');
+      const rect = ammoEl && !ammoEl.hidden ? ammoEl.getBoundingClientRect() : null;
+      /* labelH=34 → 半高 17；再留 12px 缝 */
+      const clearAboveAmmo = rect
+        ? h - rect.top + 17 + 12
+        : mobile
+          ? 240
+          : 118;
+      bottom = Math.max(bottom, clearAboveAmmo);
+    }
     drawFloatingLabel(ctx, dpr, viewWCenter(), h - bottom, line);
   }
 

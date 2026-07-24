@@ -139,7 +139,7 @@
     recycleInv: null,
   };
 
-  /** 读取或新建弹药箱 / 回收箱库存。 */
+  /** 读取或新建弹药箱 / 回收箱库存；若本地存档含 belts 则灌入 LpArmedAmmo。 */
   function ensureInventories() {
     if (state.ammoInv && state.recycleInv) return;
     const raw = localStorage.getItem('lp-guard-crates-v1');
@@ -148,6 +148,9 @@
         const parsed = JSON.parse(raw);
         state.ammoInv = Core.Inventory.fromJSON(parsed.ammo);
         state.recycleInv = Core.Inventory.fromJSON(parsed.recycle);
+        if (parsed.belts) {
+          window.LpArmedAmmo?.applyBeltsFromSnapshot?.('guard', parsed.belts);
+        }
         return;
       } catch (_) {
         /* fall through */
@@ -159,20 +162,22 @@
     state.recycleInv = new Core.Inventory('guard-recycle', 3, 2, []);
   }
 
-  /** 持久化弹药箱与回收箱。 */
+  /** 持久化弹药箱与回收箱（弹链由 LpArmedAmmo 自管；此处附带副本便于日后联机同快照）。 */
   function saveCrates() {
     if (window.LpInventoryNet?.isActive?.()) return;
     ensureInventories();
+    const belts = window.LpArmedAmmo?.beltsToJSON?.('guard') || null;
     localStorage.setItem(
       'lp-guard-crates-v1',
       JSON.stringify({
         ammo: state.ammoInv.toJSON(),
         recycle: state.recycleInv.toJSON(),
+        belts,
       })
     );
   }
 
-  /** 用服务端快照覆盖弹药箱/回收箱。 */
+  /** 用服务端快照覆盖弹药箱/回收箱（若含 belts 则同步弹链）。 */
   function applyCratesFromSnapshot(crates) {
     ensureInventories();
     if (crates?.ammo) {
@@ -180,6 +185,9 @@
     }
     if (crates?.recycle) {
       state.recycleInv = Core.Inventory.fromJSON(crates.recycle);
+    }
+    if (crates?.belts) {
+      window.LpArmedAmmo?.applyBeltsFromSnapshot?.('guard', crates.belts);
     }
     window.LpGuardCrateUi?.refresh?.();
   }
@@ -725,8 +733,16 @@
     });
   }
 
-  /** 生成炮塔飞行炮弹实体（射程用 shell 弹种 maxRange）。 */
-  function spawnTurretTracer(muzzle) {
+  /**
+   * 生成炮塔飞行炮弹实体（射程用 shell 弹种 maxRange）。
+   * 外观用 peek 的下一发弹种；游标由 tryFire 在成功开火后 advance 一次。
+   */
+  function spawnTurretTracer(muzzle, ammoType) {
+    const typeId =
+      ammoType ||
+      window.LpArmedAmmo?.peekFireTypeId?.() ||
+      window.LpArmedAmmo?.getSelectedId?.() ||
+      'ap';
     window.LpCombat?.spawnProjectile?.({
       originX: muzzle.x,
       originY: muzzle.y,
@@ -734,6 +750,7 @@
       dirY: muzzle.dirY,
       weaponId: 'guard_turret',
       style: 'shell',
+      ammoType: typeId,
       facing: muzzle.dirX >= 0 ? 1 : -1,
       flash: false,
     });
@@ -854,6 +871,12 @@
     }
     state.fireCooldown = FIRE_COOLDOWN;
 
+    /* 弹链循环：本触发 peek 一次类型；双联多枪口共用该类型，成功后再 advance 一次游标。 */
+    const ammoType =
+      window.LpArmedAmmo?.peekFireTypeId?.() ||
+      window.LpArmedAmmo?.getSelectedId?.() ||
+      'ap';
+
     const muzzles = [];
     let primaryFired = null;
     for (const id of ready) {
@@ -872,10 +895,11 @@
       };
       muzzles.push(fired);
       if (id === state.manned) primaryFired = fired;
-      spawnTurretTracer(fired);
+      spawnTurretTracer(fired, ammoType);
       spawnMuzzleFlash(fired);
     }
     if (muzzles.length === 0) return null;
+    window.LpArmedAmmo?.advanceFireCursor?.();
     /* 一发弹药 → 回收箱 +1 shell_casing；无抛壳特效。联机由服务端权威写入。 */
     if (!online) depositCasing();
     window.LpCombat?.syncCrosshairBloom?.();
@@ -911,6 +935,7 @@
           turret: true,
           source: 'turret',
           turretId: state.manned,
+          ammoType,
           shots,
         },
       })

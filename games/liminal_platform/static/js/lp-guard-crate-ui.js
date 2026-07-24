@@ -17,8 +17,26 @@
   const bagTitle = document.getElementById('lpGuardCrateBagTitle');
   const ghost = document.getElementById('lpGuardCrateDragGhost');
   const dock = document.getElementById('lpGuardCrateDock');
+  const layout = document.getElementById('lpGuardCrateLayout');
+  const ammoBottom = document.getElementById('lpGuardAmmoBottom');
 
   if (!root || !crateZone || !crateGrid || !bagGrid || !ghost || !Core) return;
+
+  /**
+   * 弹药箱模式：底栏挂弹链编辑（supportsBelts）或弹种介绍（火炮类）。
+   * 回收箱模式：隐藏底栏，仅保留上下存取双栏。
+   */
+  function syncAmmoBottom() {
+    if (!ammoBottom || !window.LpArmedAmmo) return;
+    if (mode === 'ammo') {
+      layout?.classList.add('has-ammo-bottom');
+      window.LpArmedAmmo.mountCrateBottom?.(ammoBottom, 'guard');
+    } else {
+      layout?.classList.remove('has-ammo-bottom');
+      window.LpArmedAmmo.unmountCrateBottom?.();
+      ammoBottom.hidden = true;
+    }
+  }
 
   const MODES = {
     ammo: {
@@ -258,6 +276,7 @@
 
     bagViewInv = buildBagViewInventory(c.itemId);
     renderInvGrid(bagGrid, bagViewInv, 'bag');
+    syncAmmoBottom();
   }
 
   /** 同步离席提示。 */
@@ -315,6 +334,9 @@
     open = false;
     mode = null;
     bagViewInv = null;
+    window.LpArmedAmmo?.unmountCrateBottom?.();
+    if (ammoBottom) ammoBottom.hidden = true;
+    layout?.classList.remove('has-ammo-bottom');
     root.hidden = true;
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-crate-feed-open');

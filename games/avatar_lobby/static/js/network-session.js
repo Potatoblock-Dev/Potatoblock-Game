@@ -109,18 +109,24 @@
       this.joinRoom(PUBLIC_ROOM_ID);
     }
 
+    /** 打开（或替换）WebSocket；替换时先摘掉旧 socket，避免 onclose 误排重连。 */
     _open() {
       this._clearTimers();
       // 被顶替后用户主动创建/加入房间时恢复自动重连。
       this.manualClose = false;
-      if (this.ws) {
-        try { this.ws.close(); } catch (_err) { /* ignore */ }
+      const prev = this.ws;
+      this.ws = null;
+      if (prev) {
+        try { prev.close(); } catch (_err) { /* ignore */ }
       }
-      this._emit('connectionchange', { status: 'connecting' });
+      // 自动重连统一用 reconnecting，避免 UI 在 connecting/offline 间闪烁。
+      const status = this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting';
+      this._emit('connectionchange', { status });
       const socket = new WebSocket(wsUrl());
       this.ws = socket;
 
       socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.connected = true;
         this.reconnectAttempt = 0;
         this.lastPongAt = performance.now();
@@ -139,6 +145,7 @@
       };
 
       socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         let payload;
         try {
           payload = JSON.parse(event.data);
@@ -149,6 +156,7 @@
       };
 
       socket.onclose = (event) => {
+        if (this.ws !== socket) return;
         this.connected = false;
         this.ws = null;
         this._clearPing();

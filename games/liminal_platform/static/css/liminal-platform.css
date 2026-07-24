@@ -399,10 +399,60 @@ body.lp-crate-feed-open {
 
 /* ---- 卫兵防御弹药箱 / 回收箱：库存格占地（与主物品栏 footprint 一致） ---- */
 
+/* 2 上 + 1 底构图（弹药模式）；回收箱仅用上排双栏 */
+.lp-guard-crate-root .lp-guard-crate-layout {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 12px 14px;
+  width: min(560px, 92vw);
+  max-height: min(86vh, 720px);
+  pointer-events: none;
+}
+
+.lp-guard-crate-root .lp-guard-crate-top {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: stretch;
+  pointer-events: none;
+}
+
+.lp-guard-crate-root .lp-guard-ammo-bottom {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 140px;
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  border-radius: var(--lp-radius);
+  background: rgb(12 12 12 / 0.78);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  color: #e5e5e5;
+  pointer-events: auto;
+}
+
+.lp-guard-crate-root .lp-guard-ammo-bottom[hidden] {
+  display: none !important;
+}
+
+.lp-guard-crate-root:not(.has-ammo-bottom) .lp-guard-ammo-bottom,
+.lp-guard-crate-layout:not(.has-ammo-bottom) .lp-guard-ammo-bottom {
+  display: none !important;
+}
+
 .lp-guard-crate-zone {
   gap: 10px;
   width: auto;
-  min-width: min(220px, 46vw);
+  min-width: 0;
   height: auto;
   min-height: 0;
   padding: 12px 14px 14px;
@@ -1882,6 +1932,277 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   color: #a3a3a3;
   text-align: center;
   pointer-events: none;
+}
+
+/* ---- 武装车厢弹种栏（屏幕正下方；入座机炮时显示） ---- */
+
+.lp-armed-ammo-hud {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 4;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.lp-armed-ammo-hud[hidden] {
+  display: none;
+}
+
+.lp-armed-ammo-list {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgb(163 163 163 / 0.45);
+  border-radius: var(--lp-radius);
+  background: rgb(12 12 12 / 0.78);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35), 0 8px 18px rgb(0 0 0 / 0.35);
+}
+
+.lp-armed-ammo-slot {
+  position: relative;
+  min-width: 72px;
+  margin: 0;
+  padding: 8px 12px 18px;
+  border: 1px solid rgb(115 115 115 / 0.75);
+  border-radius: 0;
+  background: rgb(28 28 28 / 0.95);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.4);
+  color: #e5e5e5;
+  cursor: pointer;
+  text-align: center;
+}
+
+.lp-armed-ammo-slot.is-active {
+  border-color: rgb(251 191 36 / 0.95);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.4),
+    0 0 0 2px rgb(251 191 36 / 0.45);
+}
+
+.lp-armed-ammo-slot[data-ammo-id='t'].is-active {
+  border-color: rgb(74 222 128 / 0.95);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.4),
+    0 0 0 2px rgb(74 222 128 / 0.4);
+}
+
+.lp-armed-ammo-tag {
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #f8fafc;
+  line-height: 1.1;
+}
+
+.lp-armed-ammo-slot[data-ammo-id='t'] .lp-armed-ammo-tag {
+  color: #86efac;
+}
+
+.lp-armed-ammo-slot[data-ammo-id='ap'] .lp-armed-ammo-tag {
+  color: #cbd5e1;
+}
+
+.lp-armed-ammo-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--lp-text-muted);
+  letter-spacing: 0.04em;
+}
+
+.lp-armed-ammo-key {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #737373;
+  pointer-events: none;
+}
+
+.lp-armed-ammo-belt {
+  min-width: 96px;
+  padding-bottom: 20px;
+}
+
+.lp-armed-ammo-belt-pattern {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.lp-armed-ammo-chip {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #cbd5e1;
+}
+
+.lp-armed-ammo-chip[data-ammo-id='t'] {
+  color: #86efac;
+}
+
+.lp-armed-ammo-chip.is-next {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.lp-armed-ammo-chip-sep {
+  font-size: 10px;
+  color: #737373;
+}
+
+/* 弹种/弹链详情：复用 .lp-inventory-detail；挂 body 时需高于弹药箱/底栏 */
+.lp-armed-ammo-detail {
+  z-index: 60;
+}
+
+.lp-armed-ammo-detail-icon {
+  display: grid;
+  place-items: center;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #f8fafc;
+}
+
+/* ---- 弹药箱弹链编辑（仅 supportsBelts 车厢） ---- */
+
+.lp-guard-belt-panel {
+  width: min(520px, 92vw);
+  margin: 10px auto 0;
+  padding: 10px 12px 12px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  border-radius: var(--lp-radius);
+  background: rgb(12 12 12 / 0.78);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  color: #e5e5e5;
+}
+
+.lp-guard-belt-panel[hidden] {
+  display: none !important;
+}
+
+.lp-guard-belt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.lp-guard-belt-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #fde68a;
+}
+
+.lp-guard-belt-add,
+.lp-guard-belt-remove,
+.lp-guard-belt-label,
+.lp-guard-belt-chip {
+  margin: 0;
+  border: 1px solid rgb(115 115 115 / 0.7);
+  border-radius: 0;
+  background: rgb(28 28 28 / 0.95);
+  color: #e5e5e5;
+  cursor: pointer;
+}
+
+.lp-guard-belt-add,
+.lp-guard-belt-remove {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.lp-guard-belt-add:disabled,
+.lp-guard-belt-remove:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lp-guard-belt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lp-guard-belt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgb(115 115 115 / 0.45);
+  background: rgb(20 20 20 / 0.9);
+}
+
+.lp-guard-belt-row.is-active {
+  border-color: rgb(251 191 36 / 0.85);
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.35);
+}
+
+.lp-guard-belt-label {
+  min-width: 52px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.lp-guard-belt-label[aria-pressed='true'] {
+  border-color: rgb(251 191 36 / 0.9);
+  color: #fde68a;
+}
+
+.lp-guard-belt-slots {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lp-guard-belt-chip {
+  min-width: 40px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.lp-guard-belt-chip[data-ammo-id='t'] {
+  color: #86efac;
+  border-color: rgb(74 222 128 / 0.45);
+}
+
+.lp-guard-belt-chip[data-ammo-id='ap'] {
+  color: #cbd5e1;
+}
+
+.lp-guard-belt-sep {
+  color: #737373;
+  font-size: 12px;
+}
+
+.lp-guard-belt-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--lp-text-muted);
+  letter-spacing: 0.02em;
 }
 
 .lp-load-error {

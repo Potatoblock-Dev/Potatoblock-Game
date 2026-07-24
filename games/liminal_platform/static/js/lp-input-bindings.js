@@ -27,7 +27,7 @@
     fire: '开火',
     reload: '装填',
     sprint: '奔跑',
-    handsHud: '切换手部',
+    handsHud: '切换手部/弹种/弹链',
   };
   const DEFAULT_SETTINGS = {
     autoRun: false,

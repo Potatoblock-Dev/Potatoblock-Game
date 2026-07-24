@@ -698,6 +698,10 @@ class LiminalLobbyManager:
             fired["turretId"] = turret_id
         if len(shots_out) > 1:
             fired["shots"] = shots_out
+        # 武装弹种透传（ap / t）；仅外观与后续玩法，不改扣弹逻辑
+        ammo_type = str(payload.get("ammoType") or "").strip().lower()
+        if ammo_type in ("ap", "t"):
+            fired["ammoType"] = ammo_type
         await room.broadcast(fired, exclude_id=user_id)
 
     async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:

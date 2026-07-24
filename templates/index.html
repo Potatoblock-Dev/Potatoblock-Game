@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0f172a">
+    <meta name="theme-color" content="#121212">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -33,10 +33,25 @@
       else if (mode === 'auto') { const h = new Date().getHours(); theme = (h >= 7 && h < 19) ? 'light' : 'dark'; }
       document.documentElement.dataset.theme = theme;
       localStorage.setItem('pb-theme', theme);
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', theme === 'light' ? '#eef1f6' : '#121212');
     })();
     </script>
     <style>
-    /* 主页只用到少量 Tailwind 灰阶类，浅色模式在这里逐个覆盖 */
+    /* 深色：纯灰度（覆盖 Tailwind 默认 gray/slate 偏蓝） */
+    body {
+      background-color: #121212;
+      color: #f5f5f5;
+    }
+    .bg-gray-950 { background-color: #121212; }
+    .bg-gray-900 { background-color: #1c1c1c; }
+    .bg-gray-800 { background-color: #262626; }
+    .hover\:bg-gray-800:hover { background-color: #2e2e2e; }
+    .text-gray-400 { color: rgb(163 163 163); }
+    .text-gray-500 { color: rgb(115 115 115); }
+    .hover\:text-white:hover { color: #fafafa; }
+
+    /* 主页浅色覆盖 */
     html[data-theme='light'] body { background-color: #eef1f6; color: #0f172a; }
     html[data-theme='light'] .bg-gray-900 { background-color: #ffffff; }
     html[data-theme='light'] .bg-gray-800 { background-color: #f1f5f9; }
@@ -51,11 +66,11 @@
       position: relative;
       display: inline-flex; align-items: center; justify-content: center;
       width: 30px; height: 30px; margin-left: 8px; vertical-align: middle;
-      border: 1px solid rgb(148 163 184 / .35); border-radius: 999px;
+      border: 1px solid rgb(163 163 163 / .35); border-radius: 999px;
       background: transparent; color: inherit; cursor: pointer; transition: background .15s;
       padding: 0;
     }
-    .topbar-icon-btn:hover { background: rgb(148 163 184 / .18); }
+    .topbar-icon-btn:hover { background: rgb(163 163 163 / .18); }
     .topbar-icon-btn svg,
     .topbar-icon-btn .ui-icon { width: 15px; height: 15px; display: block; }
     a.topbar-icon-btn { text-decoration: none; color: inherit; }
@@ -71,11 +86,11 @@
     .settings-button {
       display: inline-flex; align-items: center; justify-content: center;
       width: 30px; height: 30px; margin-left: 8px; vertical-align: middle;
-      border: 1px solid rgb(148 163 184 / .35); border-radius: 999px;
+      border: 1px solid rgb(163 163 163 / .35); border-radius: 999px;
       background: transparent; color: inherit; cursor: pointer; transition: background .15s;
       padding: 0;
     }
-    .settings-button:hover { background: rgb(148 163 184 / .18); }
+    .settings-button:hover { background: rgb(163 163 163 / .18); }
     .settings-button svg,
     .settings-button .ui-icon { width: 15px; height: 15px; display: block; }
     .settings-close svg,
@@ -101,11 +116,11 @@
     .changelog-panel {
       width: 100%; max-width: 420px; max-height: min(78dvh, 640px);
       padding: 22px; overflow: auto;
-      border: 1px solid rgb(148 163 184 / .25); border-radius: 16px;
+      border: 1px solid rgb(163 163 163 / .25); border-radius: 16px;
       background: #1c1c1c; color: inherit; box-shadow: 0 16px 48px rgb(0 0 0 / .45);
     }
     html[data-theme='light'] .changelog-panel { background: #ffffff; box-shadow: 0 16px 48px rgb(15 23 42 / .18); }
-    .changelog-entry + .changelog-entry { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgb(148 163 184 / .18); }
+    .changelog-entry + .changelog-entry { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgb(163 163 163 / .18); }
     .changelog-entry-head {
       display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
       margin-bottom: 8px; font-size: 14px;
@@ -123,33 +138,33 @@
     html[data-theme='light'] .settings-overlay { background: rgb(15 23 42 / .4); }
     .settings-panel {
       width: 100%; max-width: 400px; padding: 22px;
-      border: 1px solid rgb(148 163 184 / .25); border-radius: 16px;
+      border: 1px solid rgb(163 163 163 / .25); border-radius: 16px;
       background: #1c1c1c; color: inherit; box-shadow: 0 16px 48px rgb(0 0 0 / .45);
     }
     html[data-theme='light'] .settings-panel { background: #ffffff; box-shadow: 0 16px 48px rgb(15 23 42 / .18); }
     .settings-title { display: flex; align-items: center; justify-content: space-between; font-size: 17px; font-weight: 700; }
     .settings-close { width: 30px; height: 30px; border-radius: 999px; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: inherit; padding: 0; }
-    .settings-close:hover { background: rgb(148 163 184 / .18); }
+    .settings-close:hover { background: rgb(163 163 163 / .18); }
     .settings-section { margin-top: 18px; }
     .settings-label { font-size: 12px; letter-spacing: .06em; opacity: .6; }
     .settings-link {
       display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 11px 14px;
-      border: 1px solid rgb(148 163 184 / .3); border-radius: 10px;
+      border: 1px solid rgb(163 163 163 / .3); border-radius: 10px;
       font-size: 14px; transition: background .15s;
     }
-    .settings-link:hover { background: rgb(148 163 184 / .12); }
+    .settings-link:hover { background: rgb(163 163 163 / .12); }
     .theme-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     .theme-mode-option {
-      padding: 10px 8px; border: 1px solid rgb(148 163 184 / .3); border-radius: 10px;
+      padding: 10px 8px; border: 1px solid rgb(163 163 163 / .3); border-radius: 10px;
       font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; transition: background .15s, border-color .15s;
     }
-    .theme-mode-option:hover { background: rgb(148 163 184 / .12); }
+    .theme-mode-option:hover { background: rgb(163 163 163 / .12); }
     .theme-mode-option.is-selected { border-color: #f59e0b; background: rgb(245 158 11 / .16); }
     /* 手动深浅色：用白天黑夜动画开关，替代原来的「深色」「浅色」两个按钮 */
     .theme-manual-row {
       display: flex; align-items: center; justify-content: space-between; gap: 12px;
       margin-top: 8px; padding: 10px 14px;
-      border: 1px solid rgb(148 163 184 / .3); border-radius: 10px;
+      border: 1px solid rgb(163 163 163 / .3); border-radius: 10px;
       transition: background .15s, border-color .15s;
     }
     .theme-manual-row.is-selected { border-color: #f59e0b; background: rgb(245 158 11 / .16); }
@@ -173,8 +188,8 @@
       transition: transform .7s cubic-bezier(0.56, 1.35, 0.52, 1) !important;
     }
     .theme-mode-hint { margin-top: 8px; font-size: 12px; opacity: .55; }
-    .pwa-hint { margin-top: 8px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; opacity: .85; border: 1px solid rgb(148 163 184 / .25); }
-    .pwa-action { margin-top: 8px; width: 100%; padding: 11px 14px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid rgb(148 163 184 / .3); background: rgb(245 158 11 / .15); }
+    .pwa-hint { margin-top: 8px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; opacity: .85; border: 1px solid rgb(163 163 163 / .25); }
+    .pwa-action { margin-top: 8px; width: 100%; padding: 11px 14px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid rgb(163 163 163 / .3); background: rgb(245 158 11 / .15); }
     .pwa-action:hover { background: rgb(245 158 11 / .25); }
     .pwa-guide-overlay {
       position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center;
@@ -186,7 +201,7 @@
     .pwa-guide-panel {
       width: min(440px, 100%); max-height: min(88dvh, 760px); overflow: auto;
       padding: 18px 16px 20px; border-radius: 16px 16px 12px 12px;
-      border: 1px solid rgb(148 163 184 / .28); background: #1c1c1c; color: inherit;
+      border: 1px solid rgb(163 163 163 / .28); background: #1c1c1c; color: inherit;
       box-shadow: 0 18px 48px rgb(0 0 0 / .5);
     }
     html[data-theme='light'] .pwa-guide-panel { background: #fff; box-shadow: 0 18px 48px rgb(15 23 42 / .2); }
@@ -196,13 +211,13 @@
     .pwa-guide-steps { display: flex; flex-direction: column; gap: 14px; }
     .pwa-guide-step {
       margin: 0; padding: 12px; border-radius: 12px;
-      border: 1px solid rgb(148 163 184 / .22); background: rgb(148 163 184 / .06);
+      border: 1px solid rgb(163 163 163 / .22); background: rgb(163 163 163 / .06);
     }
     .pwa-guide-step h3 { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
     .pwa-guide-step p { margin: 0 0 10px; font-size: 12px; line-height: 1.5; opacity: .8; }
     .pwa-guide-step img {
       display: block; width: 100%; height: auto; border-radius: 10px;
-      border: 1px solid rgb(148 163 184 / .25); background: #0b1220;
+      border: 1px solid rgb(163 163 163 / .25); background: #171717;
     }
     .pwa-guide-actions { margin-top: 14px; display: flex; gap: 8px; }
     .pwa-guide-actions .pwa-action { margin-top: 0; }
@@ -263,7 +278,7 @@
       margin-bottom: 4px;
       padding: 4px 10px;
       border-radius: 999px;
-      background: rgb(148 163 184 / .16);
+      background: rgb(163 163 163 / .16);
       backdrop-filter: blur(6px);
     }
     /* 桌面：顶栏可跟手，回弹略带回弹感；主题可全树渐变背景 */
@@ -310,7 +325,7 @@
       }
       .pull-refresh-inner {
         backdrop-filter: none;
-        background: rgb(148 163 184 / .22);
+        background: rgb(163 163 163 / .22);
       }
       /* 移动端：不给全体元素挂过渡（省性能）；文字瞬间切换。
          注意：不可先写 `* { transition:none }` 再写 body ——
@@ -540,6 +555,8 @@
         if (rootEl.dataset.theme === theme) return;
         rootEl.classList.add('theme-fading');
         rootEl.dataset.theme = theme;
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.setAttribute('content', theme === 'light' ? '#eef1f6' : '#121212');
         clearTimeout(themeFadeTimer);
         var fadeMs = window.matchMedia('(hover: none), (max-width: 639px)').matches ? 320 : 500;
         themeFadeTimer = setTimeout(() => rootEl.classList.remove('theme-fading'), fadeMs);

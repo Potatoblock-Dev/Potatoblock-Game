@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ game.name }}</title>
   <link rel="stylesheet" href="/static/css/site.css?v=20260718a">
-  <link rel="stylesheet" href="/static/games/draw-chain/css/theme.css?v=20260718d">
+  <link rel="stylesheet" href="/static/games/draw-chain/css/theme.css?v=20260724a">
   <link rel="stylesheet" href="/static/games/draw-chain/css/drawing-board.css?v=20260722b">
   <link rel="stylesheet" href="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.css">
   <script src="https://cdn.potatoblock.com/day-night-toggle-button/theme-button.js"></script>
@@ -314,6 +314,26 @@
     .chat-box::-webkit-scrollbar { width: 8px; }
     .chat-box::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--chip-bg-hover); }
     .chat-box::-webkit-scrollbar-track { background: transparent; }
+    .chat-rail { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 12px; }
+    .mobile-chat-toggle,
+    .mobile-chat-backdrop { display: none; }
+    .danmaku-layer { display: none; }
+    .danmaku-item {
+      position: absolute; left: 100%; white-space: nowrap; max-width: min(78vw, 420px);
+      overflow: hidden; text-overflow: ellipsis;
+      padding: 4px 10px; border-radius: 999px;
+      background: rgb(15 15 30 / .72); color: #fff; font-size: 13px; font-weight: 700;
+      line-height: 1.35; box-shadow: 0 2px 10px rgb(0 0 0 / .28);
+      pointer-events: none; will-change: transform;
+      animation-name: danmaku-fly; animation-timing-function: linear; animation-fill-mode: forwards;
+    }
+    .danmaku-item.danmaku-system { color: var(--chat-system); }
+    .danmaku-item.danmaku-guess { color: var(--sky-text); }
+    .danmaku-item.danmaku-correct { color: var(--chat-correct); }
+    @keyframes danmaku-fly {
+      from { transform: translateX(0); }
+      to { transform: translateX(calc(-100% - 100vw)); }
+    }
     .player-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--chip-bg); }
     .player-actions { display: flex; align-items: center; gap: 8px; }
     .kick-button, .transfer-button { min-height: 30px; padding: 0 9px; border-radius: 7px; font-size: 12px; font-weight: 700; }
@@ -464,6 +484,62 @@
       .mobile-collapse-body.is-mobile-collapsed { display: none !important; }
       .drawer-toolbar .mobile-collapse-body.is-mobile-collapsed { display: block !important; }
       #playerPanel.is-mobile-collapsed .player-panel-header { margin-bottom: 0; }
+      .mobile-chat-toggle {
+        display: inline-flex; align-items: center; justify-content: center;
+        position: fixed; z-index: 22; width: 40px; height: 40px; padding: 0;
+        border: 1px solid var(--line); border-radius: 12px 0 0 12px;
+        background: color-mix(in srgb, var(--panel) 94%, transparent);
+        color: var(--blue-text); box-shadow: 0 8px 22px rgb(0 0 0 / .28);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      }
+      .mobile-chat-toggle[aria-expanded='true'] {
+        background: rgb(37 99 235 / .42); color: #fff;
+      }
+      .mobile-chat-toggle.is-guess-mode {
+        color: var(--sky-text);
+      }
+      .mobile-chat-toggle svg { width: 18px; height: 18px; display: block; }
+      .mobile-chat-backdrop {
+        display: none; position: fixed; z-index: 20; border: 0; padding: 0;
+        background: rgb(0 0 0 / .28); cursor: pointer;
+      }
+      .mobile-chat-backdrop.is-visible { display: block; }
+      .chat-rail {
+        position: fixed; z-index: 21; width: min(300px, 82vw);
+        display: flex; flex-direction: column; min-height: 0;
+        padding: 10px; gap: 0;
+        border: 1px solid var(--line); border-right: 0;
+        border-radius: 14px 0 0 14px;
+        background: color-mix(in srgb, var(--panel) 96%, transparent);
+        box-shadow: -8px 0 28px rgb(0 0 0 / .35);
+        backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        transform: translateX(100%);
+        transition: transform .22s ease;
+        pointer-events: none;
+      }
+      .chat-rail.is-mobile-chat-open {
+        transform: translateX(0);
+        pointer-events: auto;
+      }
+      .chat-rail #chatPanel,
+      .chat-rail #guessPanel {
+        flex: 1 1 auto; min-height: 0; height: 100%;
+        display: flex; flex-direction: column;
+        margin: 0; border-radius: 10px;
+      }
+      .chat-rail #chatPanel {
+        padding: 0; border: 0; background: transparent; border-radius: 0;
+      }
+      .chat-rail #guessPanel.hidden,
+      .chat-rail #chatPanel.hidden { display: none !important; }
+      .chat-rail .chat-box {
+        flex: 1 1 auto; height: auto; min-height: 0;
+      }
+      .danmaku-layer {
+        display: block; position: absolute; inset: 0; z-index: 5;
+        overflow: hidden; pointer-events: none;
+      }
+      body.is-mobile-chat-open .danmaku-layer { visibility: hidden; }
     }
     @media (max-width: 640px) {
       .game-header { align-items: flex-start; }
@@ -614,11 +690,16 @@
           <div class="canvas-stage">
             <div class="canvas-stage-surface">
             <canvas id="drawCanvas" aria-label="公共画布"></canvas>
+            <div id="danmakuLayer" class="danmaku-layer" aria-hidden="true"></div>
             <div id="artworkDisplayBadge" class="artwork-display-badge hidden" role="status" aria-live="polite">画作展示中</div>
             <div id="roundTransition" class="round-transition hidden" role="status" aria-live="assertive">
               <div><strong>下一位画师准备中</strong><span id="roundTransitionCountdown">1 秒</span></div>
             </div>
             </div>
+            <button id="mobileChatToggle" type="button" class="mobile-chat-toggle" aria-controls="chatRail" aria-expanded="false" title="聊天" aria-label="打开聊天">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>
+            </button>
+            <button id="mobileChatBackdrop" type="button" class="mobile-chat-backdrop" tabindex="-1" aria-label="关闭聊天"></button>
             <div id="drawingToolbar" class="drawer-toolbar">
             <div class="toolbar-head">
               <button id="drawingToolsToggle" type="button" class="mobile-section-toggle flex items-center gap-2" aria-controls="drawingToolsBody" aria-expanded="true">
@@ -801,6 +882,7 @@
             </div>
             <p id="replayMeta" class="replay-meta"></p>
           </section>
+          <div id="chatRail" class="chat-rail">
           <section id="guessPanel" class="guess-panel hidden">
             <strong class="guess-panel-title">轮到你猜词了</strong>
             <p class="guess-panel-hint">看看上一棒画了什么，写下你的答案</p>
@@ -818,6 +900,7 @@
             <div id="chatBox" class="chat-box rounded-lg bg-[#16162a] p-2 text-sm"></div>
             <div class="mt-2 flex gap-2"><input id="chatInput" type="text" maxlength="500" enterkeyhint="send" placeholder="输入消息" class="min-w-0 flex-1 rounded-lg bg-[#2a2a44] px-3 py-2 text-sm outline-none"><button id="sendButton" type="button" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold">发送</button></div>
           </section>
+          </div>
         </aside>
       </div>
     </section>
@@ -947,6 +1030,8 @@
     const STORAGE_LANDSCAPE_HINT = 'potatoblock.landscapeHintDismissed.v1';
     const STORAGE_AUTO_HIDE_TOOLS = 'potatoblock.autoHideToolsWhileDrawing.v1';
     const STORAGE_MUTED_PLAYERS = 'drawChain.mutedPlayers';
+    // 本机词库记忆：自定义 TXT 正文 + 启用勾选；不落服务端长期存储。
+    const STORAGE_WORD_BANK_MEMORY = 'drawChain.wordBankMemory.v1';
     const DEFAULT_SHORTCUTS = {
       undo: 'Mod+KeyZ',
       redo: 'Mod+Shift+KeyZ',
@@ -1044,6 +1129,8 @@
     let wordBankDraftRoomId = '';
     let pendingClientImportResults = [];
     let wordBankImportBusy = false;
+    let wordBankMemorySyncRoomId = '';
+    let wordBankMemoryPendingPrefsApply = false;
     let longPressTimer = null;
     let longPressTriggered = false;
     let dragPointerId = null;
@@ -1055,6 +1142,7 @@
     let drawCountdownTimer = null;
     let mobilePlayerPanelExpanded = false;
     let mobileDrawingToolsExpanded = false;
+    let mobileChatExpanded = false;
     let shortcuts = loadShortcutBindings();
     let capturingShortcutAction = null;
 
@@ -1093,6 +1181,11 @@
     const playerPanelBody = byId('playerPanelBody');
     const playerPanelToggleIcon = byId('playerPanelToggleIcon');
     const chatBox = byId('chatBox');
+    const chatRail = byId('chatRail');
+    const danmakuLayer = byId('danmakuLayer');
+    const mobileChatToggle = byId('mobileChatToggle');
+    const mobileChatBackdrop = byId('mobileChatBackdrop');
+    const canvasStageSurface = document.querySelector('.canvas-stage-surface');
     const artworkGalleryButton = byId('artworkGalleryButton');
     const latestArtworkPreview = byId('latestArtworkPreview');
     const latestArtworkAuthor = byId('latestArtworkAuthor');
@@ -1736,6 +1829,97 @@
       return window.matchMedia('(max-width: 767px)').matches;
     }
 
+    function isMobileGuessMode() {
+      return Boolean(guessPanel && !guessPanel.classList.contains('hidden'));
+    }
+
+    function syncChatRailGeometry() {
+      if (!chatRail || !mobileChatToggle || !canvasStageSurface) return;
+      if (!isMobileBoardLayout()) {
+        chatRail.style.top = '';
+        chatRail.style.height = '';
+        chatRail.style.right = '';
+        mobileChatToggle.style.top = '';
+        mobileChatToggle.style.right = '';
+        if (mobileChatBackdrop) {
+          mobileChatBackdrop.style.top = '';
+          mobileChatBackdrop.style.left = '';
+          mobileChatBackdrop.style.width = '';
+          mobileChatBackdrop.style.height = '';
+        }
+        return;
+      }
+      const rect = canvasStageSurface.getBoundingClientRect();
+      const top = Math.round(rect.top) + 'px';
+      const height = Math.max(120, Math.round(rect.height)) + 'px';
+      const edgeRight = Math.max(0, Math.round(window.innerWidth - rect.right));
+      const railWidth = Math.min(300, Math.round(window.innerWidth * 0.82));
+      const toggleRight = mobileChatExpanded ? edgeRight + railWidth : edgeRight;
+      chatRail.style.top = top;
+      chatRail.style.height = height;
+      chatRail.style.right = edgeRight + 'px';
+      mobileChatToggle.style.top = Math.round(rect.top + Math.min(72, Math.max(12, rect.height * 0.12))) + 'px';
+      mobileChatToggle.style.right = toggleRight + 'px';
+      if (mobileChatBackdrop) {
+        mobileChatBackdrop.style.top = top;
+        mobileChatBackdrop.style.left = Math.round(rect.left) + 'px';
+        mobileChatBackdrop.style.width = Math.round(rect.width) + 'px';
+        mobileChatBackdrop.style.height = height;
+      }
+    }
+
+    function updateMobileChatToggleLabel() {
+      if (!mobileChatToggle) return;
+      const guessing = isMobileGuessMode();
+      mobileChatToggle.classList.toggle('is-guess-mode', guessing);
+      const openLabel = guessing ? '关闭猜词' : '关闭聊天';
+      const closedLabel = guessing ? '打开猜词' : '打开聊天';
+      const label = mobileChatExpanded ? openLabel : closedLabel;
+      mobileChatToggle.setAttribute('aria-expanded', String(mobileChatExpanded));
+      mobileChatToggle.setAttribute('aria-label', label);
+      mobileChatToggle.title = guessing ? (mobileChatExpanded ? '关闭猜词' : '猜词') : (mobileChatExpanded ? '关闭聊天' : '聊天');
+    }
+
+    function setMobileChatOpen(open) {
+      mobileChatExpanded = Boolean(open) && isMobileBoardLayout();
+      if (chatRail) chatRail.classList.toggle('is-mobile-chat-open', mobileChatExpanded);
+      document.body.classList.toggle('is-mobile-chat-open', mobileChatExpanded);
+      updateMobileChatToggleLabel();
+      if (mobileChatBackdrop) mobileChatBackdrop.classList.toggle('is-visible', mobileChatExpanded);
+      syncChatRailGeometry();
+      if (!mobileChatExpanded) return;
+      if (isMobileGuessMode()) {
+        try { guessInput.focus({ preventScroll: true }); } catch (error) { guessInput.focus(); }
+      } else {
+        chatBox.scrollTop = chatBox.scrollHeight;
+        try { chatInput.focus({ preventScroll: true }); } catch (error) { chatInput.focus(); }
+      }
+    }
+
+    function shouldSpawnDanmaku() {
+      return isMobileBoardLayout() && !mobileChatExpanded && Boolean(danmakuLayer);
+    }
+
+    function spawnDanmaku(text, type) {
+      if (!danmakuLayer || !shouldSpawnDanmaku()) return;
+      const plain = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!plain) return;
+      while (danmakuLayer.childElementCount >= 10) danmakuLayer.firstElementChild.remove();
+      const item = document.createElement('div');
+      const kind = String(type || 'other');
+      item.className = 'danmaku-item danmaku-' + (kind === 'correct' || kind === 'guess' || kind === 'system' ? kind : 'other');
+      item.textContent = plain.length > 48 ? plain.slice(0, 48) + '…' : plain;
+      item.style.top = (8 + Math.random() * 72) + '%';
+      item.style.animationDuration = (5.5 + Math.random() * 3.5) + 's';
+      danmakuLayer.appendChild(item);
+      item.addEventListener('animationend', () => item.remove());
+    }
+
+    function afterChatAppend(plainText, type) {
+      chatBox.scrollTop = chatBox.scrollHeight;
+      spawnDanmaku(plainText, type);
+    }
+
     let autoHideToolsWhileDrawing = true;
     function syncFloatingToolsHiddenForStroke() {
       const hide = Boolean(
@@ -2091,6 +2275,8 @@
       phase = 'join';
       players = [];
       selfId = '';
+      wordBankMemorySyncRoomId = '';
+      wordBankMemoryPendingPrefsApply = false;
       roomScreen.classList.add('hidden');
       joinScreen.classList.remove('hidden');
       joinError.textContent = message;
@@ -2229,6 +2415,152 @@
       wordBankToggle.setAttribute('aria-expanded', String(expanded));
       wordBankToggleText.textContent = expanded ? '收起' : '展开';
       setChevronIcon(wordBankToggleIcon, expanded);
+    }
+
+    /** 返回空的本机词库记忆结构。 */
+    function emptyWordBankMemory() {
+      return {
+        prefsSaved: false,
+        builtinEnabled: [],
+        customEnabled: [],
+        knownCustom: [],
+        hintsEnabled: true,
+        drawSeconds: 60,
+        banks: []
+      };
+    }
+
+    /** 从 localStorage 读取本机词库正文与启用偏好。 */
+    function readWordBankMemory() {
+      try {
+        const raw = JSON.parse(localStorage.getItem(STORAGE_WORD_BANK_MEMORY) || 'null');
+        if (!raw || typeof raw !== 'object') return emptyWordBankMemory();
+        const banks = Array.isArray(raw.banks)
+          ? raw.banks
+              .filter(item => item && typeof item.filename === 'string' && typeof item.content === 'string')
+              .map(item => ({
+                filename: String(item.filename).slice(0, 100),
+                content: String(item.content)
+              }))
+          : [];
+        const drawSeconds = Math.max(10, Math.min(120, Number(raw.drawSeconds) || 60));
+        return {
+          prefsSaved: Boolean(raw.prefsSaved),
+          builtinEnabled: Array.isArray(raw.builtinEnabled) ? raw.builtinEnabled.map(String) : [],
+          customEnabled: Array.isArray(raw.customEnabled) ? raw.customEnabled.map(String) : [],
+          knownCustom: Array.isArray(raw.knownCustom) ? raw.knownCustom.map(String) : [],
+          hintsEnabled: raw.hintsEnabled !== false,
+          drawSeconds: drawSeconds,
+          banks: banks
+        };
+      } catch (error) {
+        return emptyWordBankMemory();
+      }
+    }
+
+    /** 把本机词库记忆写入 localStorage（配额不足时提示）。 */
+    function writeWordBankMemory(memory) {
+      try {
+        localStorage.setItem(STORAGE_WORD_BANK_MEMORY, JSON.stringify(memory));
+        return true;
+      } catch (error) {
+        setWordBankFeedback('本机词库记忆写入失败（可能超出浏览器存储配额）', true);
+        return false;
+      }
+    }
+
+    /** 按文件名大小写不敏感比较。 */
+    function sameBankFilename(a, b) {
+      return String(a || '').toLowerCase() === String(b || '').toLowerCase();
+    }
+
+    /** 将导入的 TXT 正文写入本机记忆，并默认勾选启用。 */
+    function rememberLocalWordBankFiles(payloadFiles) {
+      if (!Array.isArray(payloadFiles) || !payloadFiles.length) return;
+      const memory = readWordBankMemory();
+      payloadFiles.forEach(file => {
+        const filename = String(file.filename || '').slice(0, 100);
+        const content = String(file.content || '');
+        if (!filename || !filename.toLowerCase().endsWith('.txt')) return;
+        const existing = memory.banks.findIndex(bank => sameBankFilename(bank.filename, filename));
+        const entry = { filename: filename, content: content };
+        if (existing >= 0) memory.banks[existing] = entry;
+        else memory.banks.push(entry);
+        const alreadyKnown = memory.knownCustom.some(name => sameBankFilename(name, filename));
+        if (!alreadyKnown) {
+          memory.knownCustom.push(filename);
+          memory.customEnabled.push(filename);
+        }
+      });
+      writeWordBankMemory(memory);
+    }
+
+    /** 从本机记忆删除指定自定义词库正文与勾选记录。 */
+    function forgetLocalWordBankFile(filename) {
+      const memory = readWordBankMemory();
+      memory.banks = memory.banks.filter(bank => !sameBankFilename(bank.filename, filename));
+      memory.customEnabled = memory.customEnabled.filter(name => !sameBankFilename(name, filename));
+      memory.knownCustom = memory.knownCustom.filter(name => !sameBankFilename(name, filename));
+      writeWordBankMemory(memory);
+    }
+
+    /** 把当前勾选的基础/自定义词库、提示开关与每棒秒数记入本机。 */
+    function saveLocalWordBankTogglePrefs(builtinIds, customFilenames, hintsEnabled, drawSeconds) {
+      const memory = readWordBankMemory();
+      memory.prefsSaved = true;
+      memory.builtinEnabled = Array.isArray(builtinIds) ? builtinIds.map(String) : [];
+      memory.customEnabled = Array.isArray(customFilenames) ? customFilenames.map(String) : [];
+      memory.knownCustom = customWordBanks.map(bank => String(bank.filename || ''));
+      memory.hintsEnabled = hintsEnabled !== false;
+      memory.drawSeconds = Math.max(10, Math.min(120, Number(drawSeconds) || 60));
+      writeWordBankMemory(memory);
+    }
+
+    /** 按本机偏好向房间发送 word_bank_update（仅房主；自定义按文件名映射到本局 id）。 */
+    function applyLocalWordBankPrefsToRoom(settings, memory) {
+      if (!isHost || !memory || !memory.prefsSaved) return;
+      const roomCustoms = Array.isArray(settings && settings.custom_banks) ? settings.custom_banks : customWordBanks;
+      const builtin = Array.isArray(memory.builtinEnabled) ? memory.builtinEnabled.slice() : [];
+      const customIds = roomCustoms
+        .filter(bank => {
+          const filename = String(bank.filename || '');
+          if (memory.knownCustom.some(name => sameBankFilename(name, filename))) {
+            return memory.customEnabled.some(name => sameBankFilename(name, filename));
+          }
+          return Boolean(bank.enabled);
+        })
+        .map(bank => bank.id);
+      if (!builtin.length && !customIds.length) return;
+      send({
+        type: 'word_bank_update',
+        builtin_banks: builtin,
+        enabled_custom_bank_ids: customIds,
+        hints_enabled: memory.hintsEnabled !== false,
+        draw_seconds: Math.max(10, Math.min(120, Number(memory.drawSeconds) || 60))
+      });
+    }
+
+    /** 房主进大厅时：把本机词库正文导入本局（若缺失），再应用启用偏好。 */
+    function syncLocalWordBankMemoryToRoom(settings) {
+      if (!isHost || phase !== 'lobby' || !roomId) return;
+      if (wordBankMemorySyncRoomId === roomId) return;
+      if (wordBankImportBusy) return;
+      const memory = readWordBankMemory();
+      const roomCustoms = Array.isArray(settings && settings.custom_banks) ? settings.custom_banks : [];
+      const missing = memory.banks.filter(bank =>
+        !roomCustoms.some(roomBank => sameBankFilename(roomBank.filename, bank.filename))
+      );
+      if (missing.length) {
+        wordBankMemoryPendingPrefsApply = true;
+        importWordBankPayload(
+          missing.map(bank => ({ filename: bank.filename, content: bank.content })),
+          []
+        );
+        return;
+      }
+      wordBankMemorySyncRoomId = roomId;
+      wordBankMemoryPendingPrefsApply = false;
+      applyLocalWordBankPrefsToRoom(settings, memory);
     }
 
     function captureWordBankDraft() {
@@ -2395,6 +2727,8 @@
       pendingClientImportResults = Array.isArray(clientResults) ? clientResults.slice() : [];
       renderImportResults(pendingClientImportResults);
       if (!payloadFiles.length) return;
+      // 从本机记忆恢复进房间时正文已在 localStorage，勿再写以免打乱禁用勾选。
+      if (!wordBankMemoryPendingPrefsApply) rememberLocalWordBankFiles(payloadFiles);
       setWordBankImportBusy(true);
       setWordBankFeedback('正在导入 ' + payloadFiles.length + ' 个文件…', false);
       send({ type: 'word_bank_import', files: payloadFiles });
@@ -2505,16 +2839,23 @@
         confirmLabel: '删除',
       });
       if (!ok) return;
+      forgetLocalWordBankFile(bank.filename);
       send({ type: 'word_bank_delete', bank_id: bank.id });
       setWordBankFeedback('正在删除 ' + displayName + '…', false);
     }
 
     function applyWordBanks() {
       const builtin = Array.from(builtinBankOptions.querySelectorAll('.builtin-bank:checked')).map(input => input.dataset.bankId);
-      const custom = Array.from(customBankList.querySelectorAll('.custom-bank:checked')).map(input => input.dataset.bankId);
+      const customInputs = Array.from(customBankList.querySelectorAll('.custom-bank:checked'));
+      const custom = customInputs.map(input => input.dataset.bankId);
       if (!builtin.length && !custom.length) return setWordBankFeedback('至少选择一个词库', true);
       const drawSeconds = Math.max(10, Math.min(120, Math.round(Number(drawSecondsInput.value) || 60)));
       drawSecondsInput.value = String(drawSeconds);
+      const customFilenames = customInputs.map(input => {
+        const bank = customWordBanks.find(item => item.id === input.dataset.bankId);
+        return bank ? String(bank.filename || '') : '';
+      }).filter(Boolean);
+      saveLocalWordBankTogglePrefs(builtin, customFilenames, !disableHints.checked, drawSeconds);
       applyWordBankButton.disabled = true;
       setWordBankFeedback('正在应用…', false);
       send({ type: 'word_bank_update', builtin_banks: builtin, enabled_custom_bank_ids: custom, hints_enabled: !disableHints.checked, draw_seconds: drawSeconds });
@@ -2597,18 +2938,19 @@
       line.className = getChatClass(type || 'other');
       line.textContent = text;
       chatBox.appendChild(line);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      afterChatAppend(text, type || 'other');
     }
 
     function appendSystemChat(sender, text, senderIcon) {
       const line = document.createElement('div');
       line.className = getChatClass('system');
+      const plain = systemSenderLabel(sender) + '：' + String(text || '');
       line.append(
         createUiIcon(resolveSystemSenderIcon(sender, senderIcon), 'chat-system-icon'),
-        document.createTextNode(systemSenderLabel(sender) + '：' + String(text || ''))
+        document.createTextNode(plain)
       );
       chatBox.appendChild(line);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      afterChatAppend(plain, 'system');
     }
 
     function appendPlayerChat(name, text, type, chainPosition = 0) {
@@ -2618,10 +2960,15 @@
       nick.className = 'nickname';
       nick.textContent = name;
       const position = Math.max(0, Number(chainPosition) || 0);
-      if (position > 0) line.append(document.createTextNode(position + ' '));
+      let plain = '';
+      if (position > 0) {
+        line.append(document.createTextNode(position + ' '));
+        plain += position + ' ';
+      }
       line.append(nick, document.createTextNode(text));
+      plain += String(name || '') + String(text || '');
       chatBox.appendChild(line);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      afterChatAppend(plain, type || 'other');
     }
 
     function setChatScope(nextScope) {
@@ -2629,6 +2976,7 @@
       if (scope === chatScope) return;
       chatScope = scope;
       chatBox.replaceChildren();
+      if (danmakuLayer) danmakuLayer.replaceChildren();
       const labels = {
         room: '房间聊天',
         waiting: '候场聊天室',
@@ -2650,7 +2998,7 @@
       answer.textContent = String(word || '');
       line.append(nick, document.createTextNode('猜对了，答案是'), answer);
       chatBox.appendChild(line);
-      chatBox.scrollTop = chatBox.scrollHeight;
+      afterChatAppend(String(name || '') + '猜对了，答案是' + String(word || ''), 'correct');
     }
 
     function setWordDisplay(prefix, text, bankName = '') {
@@ -3015,8 +3363,11 @@
       if (!isHost) {
         wordBankSettingsDirty = false;
         wordBankDraftRoomId = '';
+        wordBankMemorySyncRoomId = '';
+        wordBankMemoryPendingPrefsApply = false;
       }
       renderWordBanks(message.word_bank_options || [], message.word_bank_settings || { builtin_banks: [] });
+      syncLocalWordBankMemoryToRoom(message.word_bank_settings || { builtin_banks: [] });
       renderPlayers();
       updateLobbyActions();
       updateRoomActionButtons({ watching: selfWatching });
@@ -3329,13 +3680,20 @@
         setWordBankImportBusy(false);
         renderImportResults(pendingClientImportResults.concat(message.results || []));
         pendingClientImportResults = [];
-        setWordBankFeedback('文件导入处理完成', false);
+        setWordBankFeedback(
+          wordBankMemoryPendingPrefsApply ? '正在从本机记忆恢复词库…' : '文件导入处理完成',
+          false
+        );
         return;
       }
       if (message.type === 'word_bank_updated') {
         wordBankSettingsDirty = false;
         wordBankDraftRoomId = '';
         applyWordBankButton.disabled = false;
+        if (wordBankMemoryPendingPrefsApply) {
+          wordBankMemoryPendingPrefsApply = false;
+          wordBankMemorySyncRoomId = roomId;
+        }
         setWordBankFeedback(message.message || '词库已更新', false);
         return;
       }
@@ -3514,10 +3872,14 @@
       const wasVisible = !guessPanel.classList.contains('hidden');
       guessPanel.classList.toggle('hidden', !show);
       chatPanel.classList.toggle('hidden', show);
+      updateMobileChatToggleLabel();
       if (show && !wasVisible) {
         guessInput.value = '';
         submitGuessButton.disabled = false;
-        guessInput.focus();
+        if (isMobileBoardLayout()) setMobileChatOpen(true);
+        else guessInput.focus();
+      } else if (!show && wasVisible && isMobileBoardLayout() && mobileChatExpanded) {
+        updateMobileChatToggleLabel();
       }
     }
 
@@ -4201,7 +4563,10 @@
     submitDrawingButton.addEventListener('click', () => send({ type: 'submit_drawing', round_id: currentRoundId }));
     replayCorrectButton.addEventListener('click', () => send({ type: 'replay_verdict_vote', is_correct: true }));
     replayWrongButton.addEventListener('click', () => send({ type: 'replay_verdict_vote', is_correct: false }));
-    byId('clearChatButton').addEventListener('click', () => chatBox.replaceChildren());
+    byId('clearChatButton').addEventListener('click', () => {
+      chatBox.replaceChildren();
+      if (danmakuLayer) danmakuLayer.replaceChildren();
+    });
     shortcutButton.addEventListener('click', () => {
       const expanded = shortcutButton.getAttribute('aria-expanded') === 'true';
       shortcutButton.setAttribute('aria-expanded', String(!expanded));
@@ -4539,9 +4904,24 @@
       if (!window.matchMedia('(max-width: 767px)').matches) return;
       syncMobileSections();
     });
-    window.addEventListener('resize', () => {
-      if (!window.matchMedia('(max-width: 767px)').matches) setMobileColorSheetOpen(false);
+    mobileChatToggle.addEventListener('click', () => {
+      if (!isMobileBoardLayout()) return;
+      setMobileChatOpen(!mobileChatExpanded);
     });
+    mobileChatBackdrop.addEventListener('click', () => setMobileChatOpen(false));
+    window.addEventListener('resize', () => {
+      if (!window.matchMedia('(max-width: 767px)').matches) {
+        setMobileColorSheetOpen(false);
+        setMobileChatOpen(false);
+      }
+      syncChatRailGeometry();
+    });
+    window.addEventListener('scroll', syncChatRailGeometry, { passive: true });
+    if (typeof ResizeObserver !== 'undefined' && canvasStageSurface) {
+      new ResizeObserver(syncChatRailGeometry).observe(canvasStageSurface);
+    }
+    syncChatRailGeometry();
+    updateMobileChatToggleLabel();
 
     wordBankToggle.addEventListener('click', () => setWordBankExpanded(wordBankToggle.getAttribute('aria-expanded') !== 'true'));
     wordBankDropZone.addEventListener('click', () => { if (!wordBankImportBusy) wordBankFile.click(); });

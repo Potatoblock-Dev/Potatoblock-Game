@@ -1,10 +1,15 @@
 /**
  * 阈限月台战斗层：手持武器开火、后坐散布、弹匣、地上弹壳。
- * 约定：弹药/炮弹均为飞行实体（离散弹头），禁止激光线/长曳光描边。
+ * 约定：弹药/炮弹均为飞行实体（离散弹头）；禁止激光线。
+ * 武装车厢 T（曳光）可带短绿色拖尾，弹体消失后尾迹再滞空渐隐；AP 无亮绿拖尾。
  */
 (() => {
   const Catalog = window.LpItemCatalog;
   const DEFAULT_COOLDOWN = 0.22;
+  /** T 曳光尾迹在弹体销毁后的默认滞空时长（秒）。 */
+  const TRAIL_LINGER_LIFE = 0.35;
+  /** 滞空尾迹条数上限（双塔连射时丢弃最旧，避免拖垮帧率）。 */
+  const MAX_LINGERING_TRAILS = 32;
   /**
    * 弹道射程兜底（世界像素）。优先 style.maxRange / item.maxRange / options.range。
    * 旧值 560 过短，炮弹约 0.3s 即消失。
@@ -84,6 +89,11 @@
     recoil: 0,
     shots: [],
     casings: [],
+    /**
+     * T 曳光滞空尾迹（与弹体解耦）。
+     * 每项：{ pts, life, maxLife, color, glow, width }
+     */
+    lingeringTrails: [],
   };
 
   /** 解析弹种样式键（物品 projectileStyle，或武器类别回退）。 */
@@ -400,6 +410,28 @@
     return DEFAULT_MAX_RANGE;
   }
 
+  /**
+   * 解析武装弹种（AP / T）；未知或缺省回退 null（用手持/默认 shell 外观）。
+   * @param {object} options
+   */
+  function resolveAmmoType(options = {}) {
+    const raw = String(options.ammoType || options.ammo || '').trim().toLowerCase();
+    if (!raw) return null;
+    if (raw === 'tracer') return 't';
+    if (raw === 'ap' || raw === 't') return raw;
+    const fromCatalog = window.LpArmedAmmo?.getType?.(raw);
+    return fromCatalog?.id || null;
+  }
+
+  /**
+   * 取弹种外观覆盖（体色 / 拖尾）；无弹种时 null。
+   * @param {string | null} ammoType
+   */
+  function ammoVisual(ammoType) {
+    if (!ammoType) return null;
+    return window.LpArmedAmmo?.getType?.(ammoType) || null;
+  }
+
   /** 生成飞行弹实体（本地或远端回放；不占用冷却、不检查持枪）。 */
   function spawnProjectile(options = {}) {
     const facing = options.facing >= 0 ? 1 : -1;
@@ -411,6 +443,9 @@
     const style = PROJECTILE_STYLE[styleKey] || PROJECTILE_STYLE.bullet;
     const range = resolveProjectileRange(options, style);
     const speed = options.speed ?? style.speed;
+    const ammoType = resolveAmmoType(options);
+    const visual = ammoVisual(ammoType);
+    const trailCfg = visual?.trail || null;
     const shot = {
       x: originX,
       y: originY,
@@ -425,6 +460,11 @@
       maxAge: range / speed + 0.2,
       weaponId,
       style: styleKey,
+      ammoType,
+      penetrates: Boolean(visual?.penetrates),
+      /** 拖尾采样点（世界坐标，队首为最新）。 */
+      trail: trailCfg ? [{ x: originX, y: originY }] : null,
+      trailMax: trailCfg?.length ?? 0,
       muzzleFlash: Boolean(options.flash),
       muzzleFlashLife: options.flash ? MUZZLE_FLASH_LIFE : 0,
       muzzleFlashMax: options.flash ? MUZZLE_FLASH_LIFE : 0,
@@ -441,6 +481,7 @@
       weaponId,
       range,
       style: styleKey,
+      ammoType,
       facing,
     };
   }
@@ -468,7 +509,40 @@
     return true;
   }
 
-  /** 推进冷却、后坐衰减、弹实体飞行与弹壳物理。 */
+  /**
+   * 弹体销毁时把 T 曳光采样点移交滞空池，短时渐隐；超上限丢最旧条。
+   * @param {object} shot
+   */
+  function releaseLingeringTrail(shot) {
+    const pts = shot.trail;
+    if (!pts || pts.length < 2) return;
+    const visual = ammoVisual(shot.ammoType);
+    const trailCfg = visual?.trail;
+    if (!trailCfg) return;
+    const life = Number(trailCfg.linger) > 0 ? Number(trailCfg.linger) : TRAIL_LINGER_LIFE;
+    while (state.lingeringTrails.length >= MAX_LINGERING_TRAILS) {
+      state.lingeringTrails.shift();
+    }
+    state.lingeringTrails.push({
+      pts,
+      life,
+      maxLife: life,
+      color: trailCfg.color,
+      glow: trailCfg.glow,
+      width: trailCfg.width ?? 3,
+    });
+    shot.trail = null;
+  }
+
+  /** 销毁弹实体并把曳光尾迹移交滞空池（若有）。 */
+  function removeShotAt(index) {
+    const shot = state.shots[index];
+    if (!shot) return;
+    releaseLingeringTrail(shot);
+    state.shots.splice(index, 1);
+  }
+
+  /** 推进冷却、后坐衰减、弹实体飞行、滞空尾迹与弹壳物理。 */
   function tick(dt, options = {}) {
     if (state.cooldown > 0) state.cooldown = Math.max(0, state.cooldown - dt);
 
@@ -490,16 +564,26 @@
       const step = Math.hypot(shot.vx, shot.vy) * dt;
       shot.distLeft -= step;
       shot.age += dt;
+      if (shot.trail && shot.trailMax > 0) {
+        shot.trail.unshift({ x: shot.x, y: shot.y });
+        if (shot.trail.length > shot.trailMax) shot.trail.length = shot.trailMax;
+      }
       if (shot.muzzleFlashLife > 0) {
         shot.muzzleFlashLife = Math.max(0, shot.muzzleFlashLife - dt);
       }
       if (applySurfaceImpact(shot)) {
-        state.shots.splice(i, 1);
+        removeShotAt(i);
         continue;
       }
       if (shot.distLeft <= 0 || shot.age >= shot.maxAge) {
-        state.shots.splice(i, 1);
+        removeShotAt(i);
       }
+    }
+
+    for (let i = state.lingeringTrails.length - 1; i >= 0; i -= 1) {
+      const ribbon = state.lingeringTrails[i];
+      ribbon.life -= dt;
+      if (ribbon.life <= 0) state.lingeringTrails.splice(i, 1);
     }
 
     const floorY = options.floorY;
@@ -606,20 +690,74 @@
     ctx.restore();
   }
 
-  /** 绘制离散弹头实体（非激光线）。 */
+  /**
+   * 绘制 T（曳光）绿色短拖尾：沿采样点渐隐，非激光长线。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{x:number,y:number}[]} pts
+   * @param {{color?:string,glow?:string,width?:number}} trailCfg
+   * @param {number} [alphaMul=1] 整体透明度（滞空渐隐用）
+   */
+  function drawAmmoTrail(ctx, pts, trailCfg, alphaMul = 1) {
+    if (!pts || pts.length < 2 || !trailCfg || alphaMul <= 0.001) return;
+    const width = trailCfg.width ?? 3;
+    const mul = Math.max(0, Math.min(1, alphaMul));
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      const fade = 1 - i / Math.max(1, pts.length - 1);
+      ctx.strokeStyle = trailCfg.glow || trailCfg.color;
+      ctx.globalAlpha = 0.35 * fade * mul;
+      ctx.lineWidth = width * 2.4 * fade;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.strokeStyle = trailCfg.color;
+      ctx.globalAlpha = 0.85 * fade * mul;
+      ctx.lineWidth = width * fade;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 绘制离散弹头实体（非激光线）。
+   * 武装弹种可覆写体色、尺寸倍率、弹尖高光比例，并可带拖尾；不靠 alpha「藏」弹。
+   */
   function drawProjectile(ctx, shot) {
     const style = PROJECTILE_STYLE[shot.style] || PROJECTILE_STYLE.bullet;
+    const visual = ammoVisual(shot.ammoType);
     const ang = Math.atan2(shot.dirY, shot.dirX);
-    const len = style.bodyLen;
-    const h = style.bodyH;
-    const tip = style.tipLen;
+    const bodyScale = Number(visual?.bodyScale) > 0 ? Number(visual.bodyScale) : 1;
+    const bodyHScale =
+      Number(visual?.bodyHScale) > 0 ? Number(visual.bodyHScale) : bodyScale;
+    const len = style.bodyLen * bodyScale;
+    const h = style.bodyH * bodyHScale;
+    const tip = style.tipLen * bodyScale;
+    const tipHalf =
+      h *
+      (Number(visual?.tipHighlight) > 0 ? Number(visual.tipHighlight) : 0.28);
+    const bodyColor = visual?.body || style.body;
+    const bandColor = visual?.band || style.band;
+    const tipColor = visual?.tip || style.tip;
+    const flashScale =
+      Number(visual?.flashScale) > 0 ? Number(visual.flashScale) : 1;
+
+    if (visual?.trail && shot.trail) drawAmmoTrail(ctx, shot.trail, visual.trail);
 
     ctx.save();
     ctx.translate(shot.x, shot.y);
     ctx.rotate(ang);
 
-    /* 弹体：尾在 -X，尖朝 +X */
-    ctx.fillStyle = style.body;
+    /* 弹体：尾在 -X，尖朝 +X；fill 用全不透明色 */
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
     ctx.moveTo(-len * 0.45, -h * 0.5);
     ctx.lineTo(len * 0.2, -h * 0.5);
@@ -630,15 +768,15 @@
     ctx.fill();
 
     /* 弹底 / 弹带 */
-    ctx.fillStyle = style.band;
+    ctx.fillStyle = bandColor;
     ctx.fillRect(-len * 0.45, -h * 0.5, len * 0.18, h);
 
-    /* 弹尖高光 */
-    ctx.fillStyle = style.tip;
+    /* 弹尖高光（窄带、低对比色；仍不透明） */
+    ctx.fillStyle = tipColor;
     ctx.beginPath();
-    ctx.moveTo(len * 0.12, -h * 0.28);
+    ctx.moveTo(len * 0.12, -tipHalf);
     ctx.lineTo(len * 0.2 + tip, 0);
-    ctx.lineTo(len * 0.12, h * 0.28);
+    ctx.lineTo(len * 0.12, tipHalf);
     ctx.closePath();
     ctx.fill();
 
@@ -651,15 +789,22 @@
         y: shot.originY,
         angle: ang,
         t: shot.muzzleFlashLife / maxLife,
-        lightR: style.flashLightR ?? 56,
-        flashR: style.flashR,
+        lightR: (style.flashLightR ?? 56) * flashScale,
+        flashR: style.flashR * flashScale,
         jitter: shot.muzzleJitter || 0,
       });
     }
   }
 
-  /** 在世界坐标层绘制弹实体与地上弹壳。 */
+  /** 在世界坐标层绘制滞空曳光、弹实体与地上弹壳。 */
   function draw(ctx) {
+    for (const ribbon of state.lingeringTrails) {
+      const t = ribbon.maxLife > 0 ? ribbon.life / ribbon.maxLife : 0;
+      /* 前半段保持较亮，后半段加速淡出。 */
+      const alphaMul = Math.pow(Math.max(0, t), 0.65);
+      drawAmmoTrail(ctx, ribbon.pts, ribbon, alphaMul);
+    }
+
     for (const shot of state.shots) {
       drawProjectile(ctx, shot);
     }
