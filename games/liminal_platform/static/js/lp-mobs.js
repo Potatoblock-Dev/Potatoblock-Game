@@ -1,14 +1,17 @@
 /**
- * 小怪占位（圆形）：地面沿轨跑到车头/车尾再跳入车厢，空中经连接处进入后在舱内漂浮；本地 AI，触碰击飞由宿主处理。
- * 视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路，不改绘轨层序。
- * 命中半径即 profile.radius（弹道 / 玩家碰撞随放大同步）。
+ * 小怪：地面「保龄球」沿轨跑到车头/车尾再跳入车厢；空中「气球」经连接处进入后在舱内漂浮。
+ * 封闭图形填充经 LpMobBubbleFill；视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路。
+ * 命中半径即 profile.radius（弹道 / 玩家碰撞随放大同步）。kind 仍为 ground|air（战斗/传感）。
  */
 (() => {
+  /** 地面保龄球：战斗角色 ground；显示名 / 物种 id 供雷达与调试。 */
   const GROUND = {
     kind: 'ground',
-    radius: 24,
-    color: '#c45c26',
-    stroke: '#7a3010',
+    species: 'bowling',
+    label: '保龄球',
+    radius: 26,
+    color: '#2c2438',
+    stroke: '#120e18',
     speed: 95,
     /** 轨面起跳 → 舱内落地的时长（秒）。 */
     jumpDuration: 0.58,
@@ -18,17 +21,38 @@
     damage: 12,
     knock: 420,
   };
+  /** 空中气球：战斗角色 air（kind 稳定；species/label 供显示）。 */
   const AIR = {
     kind: 'air',
-    radius: 17,
-    color: '#5b8def',
-    stroke: '#1e3a8a',
+    species: 'balloon',
+    label: '气球',
+    radius: 18,
+    color: '#1a2a4a',
+    stroke: '#0c1528',
     speed: 120,
     diveSpeed: 95,
     hp: 10,
     damage: 8,
     knock: 360,
   };
+
+  /** 保龄球 / 气球泡泡色板（偏暖 vs 偏冷；RGB 供 LpMobBubbleFill）。 */
+  const BOWLING_PALETTE = [
+    [255, 107, 157],
+    [255, 209, 102],
+    [255, 159, 28],
+    [199, 125, 255],
+    [6, 214, 160],
+    [247, 37, 133],
+  ];
+  const BALLOON_PALETTE = [
+    [76, 201, 240],
+    [128, 237, 153],
+    [199, 125, 255],
+    [144, 224, 239],
+    [247, 37, 133],
+    [255, 209, 102],
+  ];
 
   /**
    * 波次导演：密集产出一段时间，再平静一段时间，循环。
@@ -103,6 +127,9 @@
       bottom: (viewH - view.offsetY) / z,
     };
   }
+
+  /** 最近一帧 dt（供 draw → bubble fill beginFrame）。 */
+  let lastDt = 1 / 60;
 
   /**
    * 记住宿主传入的视野，供地面/空中刷怪使用。
@@ -196,11 +223,14 @@
     };
   }
 
-  /** 创建一只小怪实体。 */
+  /** 创建一只小怪实体（含显示名 / 物种；种籽供泡泡 VFX 稳定）。 */
   function createMob(profile, x, y, extra = {}) {
+    const uid = nextId++;
     return {
-      id: `mob-${nextId++}`,
+      id: `mob-${uid}`,
       kind: profile.kind,
+      species: profile.species || profile.kind,
+      label: profile.label || profile.kind,
       x,
       y,
       radius: profile.radius,
@@ -220,6 +250,8 @@
       hitCd: 0,
       hitFlash: 0,
       bob: Math.random() * Math.PI * 2,
+      /** 泡泡填充确定性种籽。 */
+      vfxSeed: uid * 17.13 + Math.random() * 8,
       alive: true,
       /** 本帧世界速度（px/s）；供炮塔提前量。 */
       vx: 0,
@@ -228,6 +260,28 @@
       armor: 0,
       ...extra,
     };
+  }
+
+  /**
+   * 保龄球轨面/舱内地心 Y：脚球贴地，主体略抬高（相对命中圆心）。
+   * @param {number} floorOrRailY
+   * @param {number} radius
+   */
+  function bowlingCenterY(floorOrRailY, radius) {
+    return floorOrRailY - radius * 0.42;
+  }
+
+  /**
+   * 侧视朝向：优先水平速度，否则朝目标点。
+   * @param {ReturnType<typeof createMob>} m
+   * @returns {1|-1}
+   */
+  function facingSign(m) {
+    if (Math.abs(m.vx) > 12) return m.vx > 0 ? 1 : -1;
+    if (m.targetX != null && Math.abs(m.targetX - m.x) > 4) {
+      return m.targetX > m.x ? 1 : -1;
+    }
+    return 1;
   }
 
   /**
@@ -296,7 +350,7 @@
         ? Math.min(x, rect.left - margin)
         : Math.max(x, rect.right + margin);
     }
-    const y = railY(S);
+    const y = bowlingCenterY(railY(S), GROUND.radius);
     return createMob(GROUND, x, y, {
       phase: 'rail',
       targetX: entry.jumpX,
@@ -415,7 +469,7 @@
    * @param {object} S
    */
   function beginGroundJump(m, S) {
-    const landY = m.floorY - m.radius * 0.15;
+    const landY = bowlingCenterY(m.floorY, m.radius);
     m.phase = 'jump';
     m.jumpT = 0;
     m.jumpFromX = m.x;
@@ -450,7 +504,7 @@
     const car = S.carriageById?.(m.carId) || S.CARRIAGES[0];
     m.targetX =
       car.worldX + S.WALK_LEFT + Math.random() * (S.WALK_RIGHT - S.WALK_LEFT);
-    m.targetY = S.FLOOR_Y - m.radius * 0.15;
+    m.targetY = bowlingCenterY(S.FLOOR_Y, m.radius);
     return true;
   }
 
@@ -459,7 +513,7 @@
    * @param {ReturnType<typeof createMob>} m
    */
   function tickGround(m, S, dt) {
-    const ry = railY(S);
+    const ry = bowlingCenterY(railY(S), m.radius);
     if (m.phase === 'rail') {
       m.y = ry;
       if (moveToward(m, m.jumpX, ry, m.speed, dt)) {
@@ -473,7 +527,7 @@
     }
     /* inside：在走道内左右爬 */
     m.bob += dt * 6;
-    const bobY = S.FLOOR_Y - m.radius * 0.15 + Math.sin(m.bob) * 1.5;
+    const bobY = bowlingCenterY(S.FLOOR_Y, m.radius) + Math.sin(m.bob) * 1.5;
     if (moveToward(m, m.targetX, bobY, m.speed * 0.85, dt)) {
       const car = S.carriageById?.(m.carId) || S.CARRIAGES[0];
       m.targetX =
@@ -577,6 +631,7 @@
   function tick(dt, ctx = {}) {
     const S = spec();
     if (!S?.CARRIAGES?.length) return;
+    lastDt = dt > 0 ? dt : lastDt;
     rememberView(ctx);
     purgeDeadMobs();
     tickWaveDirector(S, dt);
@@ -619,34 +674,282 @@
     ctx.fillRect(x, y, w * ratio, h);
   }
 
-  /** 绘制圆形占位怪（世界坐标；应在车厢贴图之后调用以便可见）。 */
+  /**
+   * 描边已绘制的当前 path（命中闪白叠在描边前由调用方处理）。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {ReturnType<typeof createMob>} m
+   * @param {number} lineScale
+   */
+  function strokeMobOutline(ctx, m, lineScale) {
+    ctx.lineWidth = Math.max(1.5, m.radius * lineScale);
+    ctx.strokeStyle = m.stroke;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  /**
+   * 用泡泡填充圆并描边；无 Bub 时纯色填充。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {object | null | undefined} Bub
+   * @param {number} x
+   * @param {number} y
+   * @param {number} rad
+   * @param {ReturnType<typeof createMob>} m
+   * @param {string|number} seed
+   * @param {object} fillOpts
+   * @param {number} lineScale
+   */
+  function fillStrokeCircle(ctx, Bub, x, y, rad, m, seed, fillOpts, lineScale) {
+    if (Bub?.fillCircle) {
+      Bub.fillCircle(ctx, x, y, rad, seed, fillOpts);
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, Math.PI * 2);
+    strokeMobOutline(ctx, m, lineScale);
+  }
+
+  /**
+   * 侧视保龄球：驼峰主体 + 前头圆 + 双脚球 + 后钩尾；各封闭区泡泡填充。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object | null | undefined} Bub
+   */
+  function drawBowlingBall(ctx, m, Bub) {
+    const r = m.radius;
+    const f = facingSign(m);
+    const bodyRx = r * 0.72;
+    const bodyRy = r * 0.62;
+    const bodyCx = m.x - f * r * 0.06;
+    const bodyCy = m.y - r * 0.08;
+    const headR = r * 0.38;
+    const headX = m.x + f * r * 0.62;
+    const headY = m.y - r * 0.02;
+    const footR = r * 0.28;
+    const footY = m.y + r * 0.48;
+    const feet = [
+      { x: m.x + f * r * 0.18, y: footY + r * 0.02 },
+      { x: m.x - f * r * 0.38, y: footY - r * 0.02 },
+    ];
+    const sid = m.id || 'bowl';
+    const fillOpts = {
+      base: m.color,
+      palette: BOWLING_PALETTE,
+    };
+
+    const tailCx = m.x - f * r * 0.55;
+    const tailCy = m.y - r * 0.42;
+    const tailRx = r * 0.22;
+    const tailRy = r * 0.18;
+    const pathTail = (c) => {
+      c.moveTo(tailCx + f * tailRx * 0.2, tailCy + tailRy);
+      c.bezierCurveTo(
+        tailCx - f * tailRx * 1.1,
+        tailCy + tailRy * 0.4,
+        tailCx - f * tailRx * 1.2,
+        tailCy - tailRy * 0.9,
+        tailCx + f * tailRx * 0.15,
+        tailCy - tailRy * 0.35
+      );
+      c.bezierCurveTo(
+        tailCx + f * tailRx * 0.85,
+        tailCy - tailRy * 0.1,
+        tailCx + f * tailRx * 0.7,
+        tailCy + tailRy * 0.55,
+        tailCx + f * tailRx * 0.2,
+        tailCy + tailRy
+      );
+      c.closePath();
+    };
+    pathTail.bounds = () => ({
+      cx: tailCx,
+      cy: tailCy,
+      rx: tailRx * 1.15,
+      ry: tailRy * 1.1,
+    });
+
+    if (Bub?.fillPath) {
+      Bub.fillPath(ctx, pathTail, `${sid}:tail`, { ...fillOpts, count: 3 });
+    } else if (Bub?.drawBubbleFill) {
+      Bub.drawBubbleFill(ctx, pathTail, 0, `${sid}:tail`, { ...fillOpts, count: 3 });
+    } else {
+      ctx.beginPath();
+      pathTail(ctx);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    }
+    ctx.beginPath();
+    pathTail(ctx);
+    strokeMobOutline(ctx, m, 0.09);
+
+    fillStrokeCircle(
+      ctx,
+      Bub,
+      feet[1].x,
+      feet[1].y,
+      footR * 0.95,
+      m,
+      `${sid}:footR`,
+      { ...fillOpts, count: 3 },
+      0.1
+    );
+
+    if (Bub?.fillEllipse) {
+      Bub.fillEllipse(ctx, bodyCx, bodyCy, bodyRx, bodyRy, `${sid}:body`, {
+        ...fillOpts,
+        count: 8,
+      });
+    } else {
+      ctx.beginPath();
+      ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
+      ctx.fillStyle = m.color;
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
+    strokeMobOutline(ctx, m, 0.11);
+
+    fillStrokeCircle(
+      ctx,
+      Bub,
+      feet[0].x,
+      feet[0].y,
+      footR,
+      m,
+      `${sid}:footF`,
+      { ...fillOpts, count: 4 },
+      0.1
+    );
+
+    fillStrokeCircle(
+      ctx,
+      Bub,
+      headX,
+      headY,
+      headR,
+      m,
+      `${sid}:head`,
+      { ...fillOpts, count: 5 },
+      0.11
+    );
+
+    if (m.hitFlash > 0) {
+      const a = 0.45 * (m.hitFlash / HIT_FLASH_LIFE);
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.beginPath();
+      ctx.ellipse(bodyCx, bodyCy, bodyRx, bodyRy, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(headX, headY, headR, 0, Math.PI * 2);
+      ctx.fill();
+      for (const ft of feet) {
+        ctx.beginPath();
+        ctx.arc(ft.x, ft.y, footR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.beginPath();
+      pathTail(ctx);
+      ctx.fill();
+    }
+  }
+
+  /**
+   * 侧视气球：大主体圆 + 内核圆 + 左右附属球；各封闭区泡泡填充。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object | null | undefined} Bub
+   */
+  function drawBalloon(ctx, m, Bub) {
+    const r = m.radius;
+    const bob = Math.sin(m.bob || 0) * r * 0.04;
+    const bodyR = r * 0.78;
+    const coreR = r * 0.32;
+    const satR = r * 0.34;
+    const satSpread = r * 0.92;
+    const cy = m.y + bob;
+    const sats = [
+      { x: m.x - satSpread, y: cy + r * 0.02 },
+      { x: m.x + satSpread, y: cy - r * 0.02 },
+    ];
+    const sid = m.id || 'balloon';
+    const fillOpts = {
+      base: m.color,
+      palette: BALLOON_PALETTE,
+    };
+
+    for (let i = 0; i < sats.length; i += 1) {
+      const s = sats[i];
+      fillStrokeCircle(
+        ctx,
+        Bub,
+        s.x,
+        s.y,
+        satR,
+        m,
+        `${sid}:sat${i}`,
+        { ...fillOpts, count: 4 },
+        0.1
+      );
+    }
+
+    fillStrokeCircle(
+      ctx,
+      Bub,
+      m.x,
+      cy,
+      bodyR,
+      m,
+      `${sid}:body`,
+      { ...fillOpts, count: 7 },
+      0.12
+    );
+
+    fillStrokeCircle(
+      ctx,
+      Bub,
+      m.x + r * 0.06,
+      cy - r * 0.04,
+      coreR,
+      m,
+      `${sid}:core`,
+      { ...fillOpts, count: 4 },
+      0.09
+    );
+
+    if (m.hitFlash > 0) {
+      const a = 0.55 * (m.hitFlash / HIT_FLASH_LIFE);
+      ctx.fillStyle = `rgba(255,255,255,${a})`;
+      ctx.beginPath();
+      ctx.arc(m.x, cy, bodyR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(m.x + r * 0.06, cy - r * 0.04, coreR, 0, Math.PI * 2);
+      ctx.fill();
+      for (const s of sats) {
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, satR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  /** 绘制小怪（世界坐标；应在车厢贴图之后调用以便可见）。 */
   function draw(ctx) {
     if (!ctx) return;
+    const Bub = window.LpMobBubbleFill;
+    Bub?.beginFrame?.(lastDt);
     for (const m of mobs) {
       if (!isMobCombatActive(m)) continue;
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(m.x, m.y, m.radius, 0, Math.PI * 2);
-      ctx.fillStyle = m.color;
-      ctx.fill();
-      if (m.hitFlash > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${0.55 * (m.hitFlash / HIT_FLASH_LIFE)})`;
-        ctx.fill();
+      if (m.kind === 'ground' || m.species === 'bowling') {
+        drawBowlingBall(ctx, m, Bub);
+      } else {
+        drawBalloon(ctx, m, Bub);
       }
-      ctx.lineWidth = Math.max(1.5, m.radius * 0.12);
-      ctx.strokeStyle = m.stroke;
-      ctx.stroke();
-      /* 简易高光区分地面 / 空中 */
-      ctx.beginPath();
-      ctx.arc(
-        m.x - m.radius * 0.28,
-        m.y - m.radius * 0.28,
-        m.radius * 0.28,
-        0,
-        Math.PI * 2
-      );
-      ctx.fillStyle = 'rgba(255,255,255,0.28)';
-      ctx.fill();
       drawHpPip(ctx, m);
       ctx.restore();
     }
@@ -689,7 +992,7 @@
     }
   }
 
-  /** 供传感器 / 锁定 / 提前量：存活敌方摘要（含速度与护甲 stub）。 */
+  /** 供传感器 / 锁定 / 提前量：存活敌方摘要（含速度、护甲 stub、显示名）。 */
   function listHostiles() {
     return mobs
       .filter((m) => isMobCombatActive(m))
@@ -698,6 +1001,8 @@
         x: m.x,
         y: m.y,
         kind: m.kind,
+        species: m.species,
+        label: m.label,
         hp: m.hp,
         radius: m.radius,
         vx: m.vx || 0,
@@ -714,6 +1019,7 @@
    */
   function reset(ctx) {
     mobs = [];
+    window.LpMobBubbleFill?.reset?.();
     rememberView(ctx);
     enterWavePhase(WAVE.startPhase === 'calm' ? 'calm' : 'wave');
     const S = spec();

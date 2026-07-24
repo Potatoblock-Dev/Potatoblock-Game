@@ -150,8 +150,8 @@
   /** 机炮武装（guard）可选锁定分类。 */
   const TURRET_LOCK_KIND_MG = [
     { value: 'none', label: '无目标' },
-    { value: 'ground', label: '地面目标' },
-    { value: 'air', label: '空中目标' },
+    { value: 'ground', label: '保龄球' },
+    { value: 'air', label: '气球' },
   ];
 
   /** 火炮武装（artillery）可选锁定分类。 */
@@ -163,8 +163,8 @@
   /** 摘要/存档用全量锁定分类（含机炮+火炮）。 */
   const TURRET_LOCK_KIND_ALL = [
     { value: 'none', label: '无目标' },
-    { value: 'ground', label: '地面目标' },
-    { value: 'air', label: '空中目标' },
+    { value: 'ground', label: '保龄球' },
+    { value: 'air', label: '气球' },
     { value: 'large', label: '大型目标' },
   ];
 

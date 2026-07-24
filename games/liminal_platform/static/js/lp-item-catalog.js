@@ -292,20 +292,72 @@
       bagRows: 4,
     },
     /**
-     * 医疗箱：手部 3 号槽（index 2，工具槽）持有；对准自己或近距队友按开火键持续治疗。
-     * 足迹默认宽 2 × 高 1；耐久存 stack.dur。
+     * 蜂鸟护卫无人机：手部主手槽（0/1）装备即本地伴飞自动点射。
+     * 足迹高 2 × 宽 3；弹匣 stack.mag（上限 120），弹药小口径子弹。
+     * 战斗逻辑见 lp-hummingbird-drone.js（非玩家手持开火）。
+     */
+    hummingbird_drone: {
+      id: 'hummingbird_drone',
+      name: '蜂鸟护卫无人机',
+      short: '蜂鸟',
+      type: 'weapon',
+      weaponId: 'hummingbird_drone',
+      weaponClass: 'companion_drone',
+      companion: true,
+      use: '便携护卫无人机。放入手部栏即伴飞开火；选中时环绕准星优先打击准星附近的敌人，未选中时守护持有者。使用小口径子弹，弹匣 120。',
+      color: '#3f5f4a',
+      accent: '#9ec9b0',
+      maxStack: 1,
+      w: 3,
+      h: 2,
+      canHoldInHand: true,
+      icon: '/static/games/liminal-platform/img/items/hummingbird-drone-icon.png?v=1',
+      bodySprite: '/static/games/liminal-platform/img/drone/hummingbird-body.png?v=1',
+      barrelSprite: '/static/games/liminal-platform/img/drone/hummingbird-barrel.png?v=1',
+      bodyDrawW: 56,
+      bodyDrawH: 24,
+      barrelDrawW: 34,
+      barrelDrawH: 5,
+      /** 炮管挂点相对机身中心（世界像素，机身未镜像时）。 */
+      barrelMount: { x: 0, y: 9 },
+      /** 炮管贴图内枢轴（左端接收座中心；精灵默认朝右）。 */
+      barrelPivotX: 5,
+      barrelPivotY: 2.5,
+      muzzleLength: 30,
+      magazineSize: 120,
+      ammoId: 'small_caliber_ammo',
+      burstCount: 3,
+      burstShotGap: 0.075,
+      burstCooldown: 0.55,
+      hoverOffsetX: 36,
+      hoverOffsetY: -78,
+      leashRadius: 110,
+      bobAmp: 5.5,
+      bobHz: 2.2,
+      projectileStyle: 'bullet',
+      damage: 5,
+      maxRange: 1400,
+      spreadBaseDeg: 1.5,
+      spreadBloomDeg: 4,
+      fireSound: '/static/games/liminal-platform/audio/weapons/gur-65-shot.wav?v=1',
+      fireSoundVolume: 0.4,
+    },
+    /**
+     * 急救箱：手部 3 号槽（index 2，工具槽）持有；对准自己或近距队友按开火键持续治疗。
+     * 足迹宽 2 × 高 2；耐久存 stack.dur。
      */
     medkit: {
       id: 'medkit',
-      name: '医疗箱',
-      short: '医',
+      name: '急救箱',
+      short: '救',
       type: 'medical',
       use: '车厢急救标配。握在手里对准自己可缓慢包扎；对准近旁队友时效力更强——别等血见底才翻箱子。',
+      icon: '/static/games/liminal-platform/img/items/medkit-icon.png?v=2',
       color: '#7f1d1d',
       accent: '#fca5a5',
       maxStack: 1,
       w: 2,
-      h: 1,
+      h: 2,
       canHoldInHand: true,
       /** 仅手部 3 号（utility index 2）；主手 0/1 仍只收武器。 */
       handSlot: 2,
@@ -393,6 +445,17 @@
   function isWeapon(itemId) {
     const item = getItem(itemId);
     return Boolean(item && (item.type === 'weapon' || item.weaponId));
+  }
+
+  /**
+   * 是否为护卫伴飞无人机（仍占手部武器槽，但不走玩家手持 tryFire）。
+   * companion === true，或 weaponClass === 'companion_drone'。
+   */
+  function isCompanionDrone(itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    if (!item) return false;
+    if (item.companion === true) return true;
+    return item.weaponClass === 'companion_drone';
   }
 
   /**
@@ -505,6 +568,7 @@
     getBoilerFuelValue,
     listBoilerFuels,
     isWeapon,
+    isCompanionDrone,
     isEquipment,
     iconFollowsRot,
     isAmmo,

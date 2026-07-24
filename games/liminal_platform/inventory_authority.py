@@ -27,6 +27,7 @@ STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (5, {"itemId": "small_caliber_ammo", "qty": 90}),
     (6, {"itemId": "medkit", "qty": 1, "dur": 40}),
     (16, {"itemId": "gur65", "qty": 1, "mag": 27}),
+    (19, {"itemId": "hummingbird_drone", "qty": 1, "mag": 120}),
 ]
 
 # 与 lp-item-catalog.js 关键字段对齐（校验用）
@@ -48,6 +49,18 @@ ITEMS: Dict[str, Dict[str, Any]] = {
         "ammoId": "small_caliber_ammo",
         "canHold": True,
         "weaponId": "gur65",
+    },
+    "hummingbird_drone": {
+        "maxStack": 1,
+        "w": 3,
+        "h": 2,
+        "type": "weapon",
+        "magazineSize": 120,
+        "ammoId": "small_caliber_ammo",
+        "canHold": True,
+        "weaponId": "hummingbird_drone",
+        "weaponClass": "companion_drone",
+        "companion": True,
     },
     "work_cap": {"maxStack": 1, "w": 1, "h": 1, "type": "apparel", "equip": "head", "canHold": True},
     "work_vest": {"maxStack": 1, "w": 2, "h": 2, "type": "apparel", "equip": "chest", "canHold": False},
@@ -73,7 +86,7 @@ ITEMS: Dict[str, Dict[str, Any]] = {
     "medkit": {
         "maxStack": 1,
         "w": 2,
-        "h": 1,
+        "h": 2,
         "type": "medical",
         "canHold": True,
         "maxDurability": 40,

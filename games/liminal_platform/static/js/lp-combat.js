@@ -136,6 +136,8 @@
       if (hands.isCovered?.(index)) continue;
       let stack = hands.getSlot(index);
       if (!stack || !Catalog.isWeapon(stack.itemId)) continue;
+      /* 伴飞无人机不占玩家手持开火槽 */
+      if (Catalog.isCompanionDrone?.(stack.itemId)) continue;
       const item = Catalog.getItem(stack.itemId);
       if (!item) continue;
       if (item.magazineSize != null && stack.mag == null) {

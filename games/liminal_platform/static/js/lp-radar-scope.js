@@ -2,7 +2,7 @@
  * 绘轨车厢 · 雷达示波器控制台（战斗机式俯视 PPI）。
  * 搜索雷达：360° 慢速扫描；锁定扇区内另有往返扫描线（单向 ~0.5s，往返 ~1s）。
  * 目标（车厢 / 接触 / 小型集群标）仅在扫描线穿过方位时涂磷光，随后缓慢衰减。
- * 小型集群：绿方块 + 下划线=地面 / 上划线=空中；附速度矢量线（簇均速 × VECTOR_LEAD_S）。
+ * 小型集群：绿方块 + 下划线=保龄球(地面) / 上划线=气球(空中)；附速度矢量线（簇均速 × VECTOR_LEAD_S）。
  * 方位约定：画面 12 点 / 0° = 列车前进（航向朝上）；角度顺时针递增。
  * 本列编组沿前进轴画俯视矩形；世界接触按站心极坐标（距离 × 方位）落图。
  */
@@ -982,7 +982,7 @@
   }
 
   /**
-   * 绘制小型集群磷光标：绿方块 + 下划线=地面 / 上划线=空中 + 速度矢量。
+   * 绘制小型集群磷光标：绿方块 + 下划线=地面保龄球 / 上划线=空中气球 + 速度矢量 + 简称。
    * @param {object} blip
    * @param {number} cx
    * @param {number} cy
@@ -994,6 +994,7 @@
     const scr = scopeToPpi(blip.sx, blip.sy, cx, cy, scale, forwardSign);
     const half = CLUSTER_MARK_PX / 2;
     const air = blip.mobKind === 'air';
+    const label = air ? '气球' : '保龄球';
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(scr.x, scr.y);
@@ -1014,6 +1015,11 @@
     ctx.moveTo(-barHalf, barY);
     ctx.lineTo(barHalf, barY);
     ctx.stroke();
+    ctx.fillStyle = 'rgba(180, 255, 200, 0.9)';
+    ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, half + 4, 0);
     drawVelocityVector(blip.vx || 0, blip.vy || 0, scale, forwardSign);
     ctx.restore();
   }

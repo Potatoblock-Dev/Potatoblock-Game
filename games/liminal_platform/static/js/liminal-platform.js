@@ -394,9 +394,10 @@
     window.LpHudVitals?.syncHp?.(playerHp, PLAYER_MAX_HP);
   }
 
-  /** 装填手持武器弹匣。 */
+  /** 装填：优先无人机（选中时），否则手持武器。 */
   function requestReload() {
     if (isUiOpen() || window.LpGuardTurret?.isManned?.()) return;
+    if (window.LpHummingbirdDrone?.tryReloadIfSelected?.()) return;
     window.LpCombat?.tryReload?.();
   }
 
@@ -998,6 +999,7 @@
     window.LpGroundLoot?.draw?.(ctx);
     /* 小怪在车厢之上，避免被贴图完全挡住；轨面怪仍可见于底盘外 */
     window.LpMobs?.draw?.(ctx);
+    window.LpHummingbirdDrone?.draw?.(ctx);
     window.LpCombat?.draw(ctx);
     window.LpImpactFx?.draw?.(ctx);
 
@@ -1033,6 +1035,18 @@
     window.LpImpactFx?.tick?.(dt);
     window.LpReloadAction?.tick?.(dt);
     window.LpGuardTurret?.tick?.(dt);
+    if (!window.LpPlayerDeath?.isIncapacitated?.() && !window.LpGuardTurret?.isManned?.()) {
+      const aim = getAimWorld();
+      window.LpHummingbirdDrone?.tick?.(dt, {
+        playerX: local.x,
+        playerY: avatar.y,
+        aimX: aim.x,
+        aimY: aim.y,
+        facing: avatar.facing,
+      });
+    } else {
+      window.LpHummingbirdDrone?.despawn?.();
+    }
     {
       const avatarH = Entity.AVATAR_SIZE * Entity.AVATAR_DRAW_SCALE * (avatar.heightScale || 1);
       const incap = Boolean(window.LpPlayerDeath?.isIncapacitated?.());
