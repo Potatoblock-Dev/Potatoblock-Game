@@ -361,6 +361,23 @@
   }
 
   /**
+   * 是否为可装备件（有 equipSlot：头/胸/腿/配件/背包等）。
+   * 与 canEquipInSlot 同源，不依赖 type 文案。
+   */
+  function isEquipment(itemId) {
+    const item = getItem(itemId);
+    return Boolean(item?.equipSlot);
+  }
+
+  /**
+   * 背包 rot 时图标是否跟着转：仅武器与装备。
+   * 弹药/材料/燃料/工具等足迹仍可换向，贴图保持 upright。
+   */
+  function iconFollowsRot(itemId) {
+    return isWeapon(itemId) || isEquipment(itemId);
+  }
+
+  /**
    * 是否全自动（长按连发）。
    * 判定：fullAuto === true，或 fireMode === 'auto'，或 weaponClass === 'machine_gun'。
    * 半自动/单发武器不要设这些字段。
@@ -386,6 +403,24 @@
     const item = getItem(itemId);
     if (!item || !isWeapon(itemId)) return null;
     return item.weaponId || item.id;
+  }
+
+  /** 共享仓库库存 id（与 Inventory.id === 'storage' 对齐）。 */
+  const STORAGE_BAG_ID = 'storage';
+  /** 仓储可叠加物品叠加上限；背包/手部等仍用物品自身 maxStack。 */
+  const STORAGE_MAX_STACK = 9999;
+
+  /**
+   * 按库存返回叠加上限：仓储对可叠加物用 STORAGE_MAX_STACK，其它用图鉴 maxStack。
+   * @param {string|null|undefined} bagId
+   * @param {string|object|null|undefined} itemOrId
+   */
+  function maxStackIn(bagId, itemOrId) {
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    const base = Math.max(1, Number(item?.maxStack) || 1);
+    if (base <= 1) return base;
+    if (bagId === STORAGE_BAG_ID) return STORAGE_MAX_STACK;
+    return base;
   }
 
   /**
@@ -414,10 +449,13 @@
     ITEMS,
     TYPE_LABELS,
     EQUIP_SLOT_LABELS,
+    STORAGE_BAG_ID,
+    STORAGE_MAX_STACK,
     TEST_AUTO_REFILL_CONSUMABLES,
     isConsumableItem,
     getItem,
     getItemSize,
+    maxStackIn,
     canHoldInHand,
     canEquipInSlot,
     equipSlotLabel,
@@ -426,6 +464,8 @@
     getBoilerFuelValue,
     listBoilerFuels,
     isWeapon,
+    isEquipment,
+    iconFollowsRot,
     isAmmo,
     isFullAuto,
     getWeaponId,

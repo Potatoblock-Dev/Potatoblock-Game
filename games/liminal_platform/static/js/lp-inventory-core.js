@@ -19,6 +19,12 @@
   const HANDS_ROWS = 1;
   const HANDS_UTILITY_INDEX = 2;
 
+  /** 按库存身份返回有效叠加上限（委托图鉴 maxStackIn）。 */
+  function maxStackFor(invId, item) {
+    if (Catalog.maxStackIn) return Catalog.maxStackIn(invId, item);
+    return item?.maxStack ?? 1;
+  }
+
   /** 创建空槽位数组。 */
   function emptySlots(size) {
     return Array.from({ length: size }, () => null);
@@ -41,13 +47,14 @@
     return Number(rot) === 90 ? 0 : 90;
   }
 
-  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；保留 rot）。 */
-  function normalizeStack(stack) {
+  /** 规范化堆叠数据（不含占位标记；武器保留弹匣余弹；保留 rot）。bagId 决定叠加上限。 */
+  function normalizeStack(stack, bagId = null) {
     if (!stack?.itemId || !stack.qty) return null;
     if (stack.occupiedBy != null) return null;
     const item = Catalog.getItem(stack.itemId);
     if (!item) return null;
-    const qty = Math.max(1, Math.min(stack.qty, item.maxStack));
+    const cap = maxStackFor(bagId, item);
+    const qty = Math.max(1, Math.min(stack.qty, cap));
     const out = { itemId: item.id, qty };
     if (item.type === 'weapon' && item.magazineSize) {
       const magRaw = stack.mag != null ? Number(stack.mag) : item.magazineSize;
@@ -120,6 +127,13 @@
       return true;
     }
 
+    /** 该库存内物品叠加上限（仓储可叠更高）。 */
+    stackCap(itemId) {
+      const item = Catalog.getItem(itemId);
+      if (!item) return 1;
+      return maxStackFor(this.id, item);
+    }
+
     /** 行列 → 下标。 */
     indexAt(col, row) {
       if (col < 0 || row < 0 || col >= this.cols || row >= this.rows) return -1;
@@ -173,7 +187,7 @@
       const origin = this.originIndex(index);
       const raw = this.slots[origin];
       if (!raw || isOccupancyMarker(raw)) return null;
-      const normalized = normalizeStack({ ...raw, ...patch });
+      const normalized = normalizeStack({ ...raw, ...patch }, this.id);
       if (!normalized) return null;
       this.slots[origin] = normalized;
       return { ...normalized };
@@ -219,7 +233,7 @@
 
     /** 在 origin 写入堆叠并标记占位；失败返回 false。 */
     placeStack(origin, stack, ignoreOrigin = -1) {
-      const normalized = normalizeStack(stack);
+      const normalized = normalizeStack(stack, this.id);
       if (!normalized) return false;
       if (!this.canPlaceAt(origin, normalized.itemId, ignoreOrigin, stackRot(normalized))) {
         return false;
@@ -304,12 +318,13 @@
       const item = Catalog.getItem(itemId);
       if (!item || qty <= 0) return qty;
       if (!this.acceptsItem(itemId)) return qty;
+      const cap = this.stackCap(itemId);
 
       let remaining = qty;
       for (let i = 0; i < this.slots.length && remaining > 0; i += 1) {
         const raw = this.slots[i];
         if (!raw || isOccupancyMarker(raw) || raw.itemId !== itemId) continue;
-        const space = item.maxStack - raw.qty;
+        const space = cap - raw.qty;
         if (space <= 0) continue;
         const moved = Math.min(space, remaining);
         raw.qty += moved;
@@ -319,7 +334,7 @@
       while (remaining > 0) {
         const origin = this.findPlaceIndex(itemId);
         if (origin < 0) break;
-        const moved = Math.min(item.maxStack, remaining);
+        const moved = Math.min(cap, remaining);
         this.placeStack(origin, { itemId, qty: moved });
         remaining -= moved;
       }
@@ -384,7 +399,7 @@
       });
       const pending = [];
       for (let i = 0; i < (data.slots || []).length; i += 1) {
-        const stack = normalizeStack(data.slots[i]);
+        const stack = normalizeStack(data.slots[i], inv.id);
         if (stack) pending.push({ index: i, stack });
       }
       for (const entry of pending) {
@@ -454,6 +469,128 @@
       if (stack) list.push(stack);
     }
     return list;
+  }
+
+  /** 拷贝堆叠字段（qty / mag / rot），供整理合并使用。 */
+  function cloneStackFields(stack) {
+    const out = { itemId: stack.itemId, qty: stack.qty };
+    if (stack.mag != null) out.mag = stack.mag;
+    if (stackRot(stack) === 90) out.rot = 90;
+    return out;
+  }
+
+  /**
+   * 合并可叠加同类堆叠至该库存叠加上限；带 mag 或 cap≤1 的堆保持独立。
+   * @returns {object[]}
+   */
+  function mergeStacksForSort(stacks, bagId) {
+    const merged = [];
+    const openByItem = new Map();
+    for (const raw of stacks) {
+      const stack = cloneStackFields(raw);
+      const item = Catalog.getItem(stack.itemId);
+      if (!item) continue;
+      const cap = maxStackFor(bagId, item);
+      if (cap <= 1 || stack.mag != null) {
+        merged.push(stack);
+        continue;
+      }
+      let remaining = stack.qty;
+      while (remaining > 0) {
+        let idx = openByItem.get(stack.itemId);
+        if (idx == null) {
+          const next = { itemId: stack.itemId, qty: 0 };
+          if (stackRot(stack) === 90) next.rot = 90;
+          merged.push(next);
+          idx = merged.length - 1;
+          openByItem.set(stack.itemId, idx);
+        }
+        const target = merged[idx];
+        const space = cap - target.qty;
+        if (space <= 0) {
+          openByItem.delete(stack.itemId);
+          continue;
+        }
+        const take = Math.min(space, remaining);
+        target.qty += take;
+        remaining -= take;
+        if (target.qty >= cap) openByItem.delete(stack.itemId);
+      }
+    }
+    return merged.filter((s) => s.qty > 0);
+  }
+
+  /** 整理放置排序键：占格面积降序 → type → itemId → mag。 */
+  function compareStacksForSort(a, b) {
+    const itemA = Catalog.getItem(a.itemId) || {};
+    const itemB = Catalog.getItem(b.itemId) || {};
+    const sizeA = orientedSize(a.itemId, stackRot(a));
+    const sizeB = orientedSize(b.itemId, stackRot(b));
+    const areaDiff = sizeB.w * sizeB.h - sizeA.w * sizeA.h;
+    if (areaDiff !== 0) return areaDiff;
+    const typeA = String(itemA.type || '');
+    const typeB = String(itemB.type || '');
+    if (typeA !== typeB) return typeA < typeB ? -1 : 1;
+    if (a.itemId !== b.itemId) return a.itemId < b.itemId ? -1 : 1;
+    const magA = a.mag != null ? Number(a.mag) : -1;
+    const magB = b.mag != null ? Number(b.mag) : -1;
+    return magB - magA;
+  }
+
+  /**
+   * 整理放置：在当前朝向与交替朝向中选更靠左上的合法格（正方形足迹不试交替）。
+   * 两者同格时保留 preferredRot；都放不下返回 null。
+   * @returns {{ dest: number, rot: number } | null}
+   */
+  function pickSortPlacement(inventory, itemId, preferredRot) {
+    const prefer = Number(preferredRot) === 90 ? 90 : 0;
+    const destPrefer = inventory.findPlaceIndex(itemId, prefer);
+    const base = orientedSize(itemId, 0);
+    if (base.w === base.h) {
+      if (destPrefer < 0) return null;
+      return { dest: destPrefer, rot: prefer };
+    }
+    const alt = toggledRot(prefer);
+    const destAlt = inventory.findPlaceIndex(itemId, alt);
+    if (destPrefer < 0 && destAlt < 0) return null;
+    if (destPrefer < 0) return { dest: destAlt, rot: alt };
+    if (destAlt < 0) return { dest: destPrefer, rot: prefer };
+    if (destAlt < destPrefer) return { dest: destAlt, rot: alt };
+    return { dest: destPrefer, rot: prefer };
+  }
+
+  /**
+   * 自动整理：合并可叠加堆，再按足迹左上紧凑重排（可旋转 0↔90；不碰手部/装备）。
+   * 放不下时回滚并返回 false。
+   * @returns {boolean}
+   */
+  function sortInventory(inventory) {
+    if (!inventory || inventory.ignoreItemSize || inventory.slotKeys) return false;
+    if (inventory.id !== 'player' && inventory.id !== 'storage') return false;
+    const collected = collectStacks(inventory);
+    if (!collected.length) return true;
+    const merged = mergeStacksForSort(collected, inventory.id);
+    merged.sort(compareStacksForSort);
+    const snapshot = inventory.slots.map((slot) => (slot ? { ...slot } : null));
+    inventory.slots = emptySlots(inventory.size());
+    for (const stack of merged) {
+      const picked = pickSortPlacement(inventory, stack.itemId, stackRot(stack));
+      if (!picked) {
+        inventory.slots = snapshot;
+        return false;
+      }
+      let place = stack;
+      if (picked.rot !== stackRot(stack)) {
+        place = cloneStackFields(stack);
+        if (picked.rot === 90) place.rot = 90;
+        else delete place.rot;
+      }
+      if (!inventory.placeStack(picked.dest, place)) {
+        inventory.slots = snapshot;
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -785,21 +922,36 @@
 
   /** 将堆叠放入槽位，返回未能放入的部分（或交换出的堆叠）。 */
   function placeOnSlot(inventory, index, stack) {
-    const incoming = normalizeStack(stack);
-    if (!incoming) return stack;
+    // 先按目标库存校验物品/弹匣，数量暂保留至仓储绝对上限，再按目标 cap 切 leftover。
+    const probe = normalizeStack({ ...stack, qty: 1 }, inventory.id);
+    if (!probe) return stack;
+    const item = Catalog.getItem(probe.itemId);
+    if (!item) return stack;
+    const rawQty = Math.max(1, Math.floor(Number(stack?.qty) || 0));
+    const transitCap = item.maxStack > 1 ? (Catalog.STORAGE_MAX_STACK || rawQty) : 1;
+    const incoming = { ...probe, qty: Math.min(rawQty, transitCap) };
+    if (stack?.mag != null && incoming.mag == null) incoming.mag = stack.mag;
+    if (stackRot(stack) === 90) incoming.rot = 90;
+
     const origin = inventory.originIndex(index);
     if (!inventory.acceptsItem(incoming.itemId, origin)) return stack;
 
     const current = inventory.getSlot(origin);
+    const cap = maxStackFor(inventory.id, item);
 
     if (!current) {
-      if (!inventory.placeStack(origin, incoming)) return incoming;
-      return null;
+      const placeQty = Math.min(incoming.qty, cap);
+      const leftoverQty = incoming.qty - placeQty;
+      if (!inventory.placeStack(origin, { ...incoming, qty: placeQty })) return incoming;
+      if (leftoverQty <= 0) return null;
+      const leftover = { itemId: incoming.itemId, qty: leftoverQty };
+      if (incoming.mag != null) leftover.mag = incoming.mag;
+      if (stackRot(incoming) === 90) leftover.rot = 90;
+      return leftover;
     }
 
     if (current.itemId === incoming.itemId) {
-      const item = Catalog.getItem(incoming.itemId);
-      const space = item.maxStack - current.qty;
+      const space = cap - current.qty;
       if (space <= 0) return incoming;
       const moved = Math.min(space, incoming.qty);
       inventory.slots[origin].qty = current.qty + moved;
@@ -811,9 +963,9 @@
       return leftover;
     }
 
-    // 交换：先拿走目标，再尝试放入；失败则还原
+    // 交换：先拿走目标，再尝试放入；失败则还原（整堆交换，不切超量）
     const removed = inventory.takeSlot(origin);
-    if (!inventory.placeStack(origin, incoming)) {
+    if (incoming.qty > cap || !inventory.placeStack(origin, incoming)) {
       if (removed) inventory.placeStack(origin, removed);
       return incoming;
     }
@@ -849,6 +1001,8 @@
     BACKPACK_EQUIP_INDEX,
     PLAYER_BASE_COLS,
     PLAYER_BASE_ROWS,
+    STORAGE_MAX_STACK: Catalog.STORAGE_MAX_STACK,
+    maxStackFor,
     loadInventories,
     saveInventories,
     placeOnSlot,
@@ -861,6 +1015,7 @@
     syncPlayerBagToEquip,
     resizeInventory,
     collectStacks,
+    sortInventory,
     getEquippedBackpack,
     isAmmoOntoWeaponIntent,
     tryLoadAmmoOntoWeapon,

@@ -13,7 +13,11 @@ from typing import Any, Dict, List, Optional, Tuple
 TEST_AUTO_REFILL_CONSUMABLES = True
 CONSUMABLE_TYPES = frozenset({"fuel", "ammo"})
 
-# 与 create_default_storage 对齐；无限仓储按此种子补到 maxStack（或缺省 qty）。
+# 与 create_default_storage 对齐；无限仓储按此种子补到图鉴 maxStack（或缺省 qty）。
+STORAGE_BAG_ID = "storage"
+# 仓储可叠加物叠加上限；背包/手部仍用物品 maxStack（与 LpItemCatalog.maxStackIn 对齐）。
+STORAGE_MAX_STACK = 9999
+
 STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (0, {"itemId": "coal", "qty": 100}),
     (1, {"itemId": "lumber", "qty": 64}),
@@ -73,6 +77,16 @@ HANDS_UTILITY = 2
 HANDS_WEAPON_SLOTS = (0, 1)
 
 
+def max_stack_in(bag_id: Optional[str], item: Optional[Dict[str, Any]]) -> int:
+    """按库存返回叠加上限：仓储对可叠加物用 STORAGE_MAX_STACK，其它用图鉴 maxStack。"""
+    base = max(1, int((item or {}).get("maxStack") or 1))
+    if base <= 1:
+        return base
+    if bag_id == STORAGE_BAG_ID:
+        return STORAGE_MAX_STACK
+    return base
+
+
 def _is_weapon(item_id: str) -> bool:
     """与客户端 Catalog.isWeapon 对齐：type==weapon 或声明 weaponId。"""
     item = ITEMS.get(item_id) or {}
@@ -104,7 +118,10 @@ def _oriented_size(item_id: str, rot: int = 0) -> Tuple[int, int]:
     return w, h
 
 
-def _norm_stack(stack: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _norm_stack(
+    stack: Optional[Dict[str, Any]], bag_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """规范化堆叠；bag_id 为 storage 时放宽可叠加上限。"""
     if not stack or not stack.get("itemId") or not stack.get("qty"):
         return None
     if stack.get("occupiedBy") is not None:
@@ -112,7 +129,7 @@ def _norm_stack(stack: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     item = ITEMS.get(str(stack["itemId"]))
     if not item:
         return None
-    qty = max(1, min(int(stack["qty"]), int(item["maxStack"])))
+    qty = max(1, min(int(stack["qty"]), max_stack_in(bag_id, item)))
     out: Dict[str, Any] = {"itemId": str(stack["itemId"]), "qty": qty}
     mag_size = item.get("magazineSize")
     if mag_size:
@@ -246,7 +263,8 @@ class Inventory:
             self.slots[idx] = None
 
     def place_stack(self, origin: int, stack: Dict[str, Any], ignore_origin: int = -1) -> bool:
-        normalized = _norm_stack(stack)
+        """在 origin 写入堆叠并标记占位；失败返回 False。"""
+        normalized = _norm_stack(stack, self.id)
         if not normalized:
             return False
         if not self.can_place_at(
@@ -298,11 +316,13 @@ class Inventory:
         return -1
 
     def add_item(self, item_id: str, qty: int) -> int:
+        """合并同类堆叠，返回剩余数量（仓储可叠加上限见 max_stack_in）。"""
         item = ITEMS.get(item_id)
         if not item or qty <= 0:
             return qty
         if not self.accepts(item_id):
             return qty
+        cap = max_stack_in(self.id, item)
         remaining = qty
         for i in range(self.size()):
             if remaining <= 0:
@@ -310,7 +330,7 @@ class Inventory:
             raw = self.slots[i]
             if not raw or raw.get("occupiedBy") is not None or raw.get("itemId") != item_id:
                 continue
-            space = int(item["maxStack"]) - int(raw["qty"])
+            space = cap - int(raw["qty"])
             if space <= 0:
                 continue
             moved = min(space, remaining)
@@ -320,7 +340,7 @@ class Inventory:
             origin = self.find_place_index(item_id)
             if origin < 0:
                 break
-            moved = min(int(item["maxStack"]), remaining)
+            moved = min(cap, remaining)
             self.place_stack(origin, {"itemId": item_id, "qty": moved})
             remaining -= moved
         return remaining
@@ -355,13 +375,14 @@ class Inventory:
         return total
 
     def update_slot(self, index: int, patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """就地更新原点堆叠字段（如 mag），并经 _norm_stack 约束。"""
         origin = self.origin_index(index)
         raw = self.slots[origin]
         if not raw or raw.get("occupiedBy") is not None:
             return None
         merged = dict(raw)
         merged.update(patch)
-        normalized = _norm_stack(merged)
+        normalized = _norm_stack(merged, self.id)
         if not normalized:
             return None
         self.slots[origin] = normalized
@@ -403,7 +424,7 @@ class Inventory:
         )
         pending = []
         for i, stack in enumerate(data.get("slots") or []):
-            normalized = _norm_stack(stack)
+            normalized = _norm_stack(stack, inv.id)
             if normalized:
                 pending.append((i, normalized))
         for index, stack in pending:
@@ -413,21 +434,51 @@ class Inventory:
 
 
 def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """放入槽位，返回剩余/换出堆叠。"""
-    incoming = _norm_stack(stack)
-    if not incoming:
+    """放入槽位，返回剩余/换出堆叠。
+
+    数量先按仓储绝对上限保留，再按目标库存 max_stack_in 切 leftover，
+    避免大仓储堆放入背包时被 _norm_stack 提前截断丢数量。
+    """
+    probe = _norm_stack({**stack, "qty": 1}, inventory.id)
+    if not probe:
         return stack
+    item = ITEMS.get(probe["itemId"])
+    if not item:
+        return stack
+    try:
+        raw_qty = max(1, int(stack.get("qty") or 0))
+    except (TypeError, ValueError):
+        return stack
+    transit_cap = STORAGE_MAX_STACK if int(item.get("maxStack") or 1) > 1 else 1
+    incoming = dict(probe)
+    incoming["qty"] = min(raw_qty, transit_cap)
+    if stack.get("mag") is not None and "mag" not in incoming:
+        incoming["mag"] = stack["mag"]
+    if _stack_rot(stack) == 90:
+        incoming["rot"] = 90
+
     origin = inventory.origin_index(index)
     if not inventory.accepts(incoming["itemId"], origin):
         return stack
     current = inventory.get_slot(origin)
+    cap = max_stack_in(inventory.id, item)
     if not current:
-        if not inventory.place_stack(origin, incoming):
+        place_qty = min(int(incoming["qty"]), cap)
+        leftover_qty = int(incoming["qty"]) - place_qty
+        placed = dict(incoming)
+        placed["qty"] = place_qty
+        if not inventory.place_stack(origin, placed):
             return incoming
-        return None
+        if leftover_qty <= 0:
+            return None
+        left: Dict[str, Any] = {"itemId": incoming["itemId"], "qty": leftover_qty}
+        if incoming.get("mag") is not None:
+            left["mag"] = incoming["mag"]
+        if _stack_rot(incoming) == 90:
+            left["rot"] = 90
+        return left
     if current["itemId"] == incoming["itemId"]:
-        item = ITEMS[incoming["itemId"]]
-        space = int(item["maxStack"]) - int(current["qty"])
+        space = cap - int(current["qty"])
         if space <= 0:
             return incoming
         moved = min(space, incoming["qty"])
@@ -435,14 +486,14 @@ def place_on_slot(inventory: Inventory, index: int, stack: Dict[str, Any]) -> Op
         leftover = incoming["qty"] - moved
         if leftover <= 0:
             return None
-        left: Dict[str, Any] = {"itemId": incoming["itemId"], "qty": leftover}
+        left = {"itemId": incoming["itemId"], "qty": leftover}
         if incoming.get("mag") is not None:
             left["mag"] = incoming["mag"]
         if _stack_rot(incoming) == 90:
             left["rot"] = 90
         return left
     removed = inventory.take_slot(origin)
-    if not inventory.place_stack(origin, incoming):
+    if int(incoming["qty"]) > cap or not inventory.place_stack(origin, incoming):
         if removed:
             inventory.place_stack(origin, removed)
         return incoming
@@ -534,6 +585,134 @@ def quick_transfer(source: Inventory, source_index: int, target: Inventory) -> b
         source.take_slot(origin)
     else:
         source.slots[origin]["qty"] = leftover
+    return True
+
+
+def _clone_stack_fields(stack: Dict[str, Any]) -> Dict[str, Any]:
+    """拷贝堆叠字段（qty / mag / rot），供整理合并使用。"""
+    out: Dict[str, Any] = {"itemId": stack["itemId"], "qty": int(stack["qty"])}
+    if stack.get("mag") is not None:
+        out["mag"] = stack["mag"]
+    if _stack_rot(stack) == 90:
+        out["rot"] = 90
+    return out
+
+
+def _collect_stacks(inventory: Inventory) -> List[Dict[str, Any]]:
+    """收集库存中全部逻辑堆叠（保留弹匣）。"""
+    list_out: List[Dict[str, Any]] = []
+    for i in range(inventory.size()):
+        if inventory.is_covered(i):
+            continue
+        stack = inventory.get_slot(i)
+        if stack:
+            list_out.append(stack)
+    return list_out
+
+
+def _merge_stacks_for_sort(stacks: List[Dict[str, Any]], bag_id: str) -> List[Dict[str, Any]]:
+    """合并可叠加同类堆叠至该库存叠加上限；带 mag 或 cap≤1 的堆保持独立。"""
+    merged: List[Dict[str, Any]] = []
+    open_by_item: Dict[str, int] = {}
+    for raw in stacks:
+        stack = _clone_stack_fields(raw)
+        item = ITEMS.get(str(stack["itemId"]))
+        if not item:
+            continue
+        cap = max_stack_in(bag_id, item)
+        if cap <= 1 or stack.get("mag") is not None:
+            merged.append(stack)
+            continue
+        remaining = int(stack["qty"])
+        while remaining > 0:
+            idx = open_by_item.get(str(stack["itemId"]))
+            if idx is None:
+                next_stack: Dict[str, Any] = {"itemId": stack["itemId"], "qty": 0}
+                if _stack_rot(stack) == 90:
+                    next_stack["rot"] = 90
+                merged.append(next_stack)
+                idx = len(merged) - 1
+                open_by_item[str(stack["itemId"])] = idx
+            target = merged[idx]
+            space = cap - int(target["qty"])
+            if space <= 0:
+                open_by_item.pop(str(stack["itemId"]), None)
+                continue
+            take = min(space, remaining)
+            target["qty"] = int(target["qty"]) + take
+            remaining -= take
+            if int(target["qty"]) >= cap:
+                open_by_item.pop(str(stack["itemId"]), None)
+    return [s for s in merged if int(s["qty"]) > 0]
+
+
+def _sort_key_for_stack(stack: Dict[str, Any]) -> Tuple[Any, ...]:
+    """整理放置排序键：占格面积降序 → type → itemId → mag。"""
+    item = ITEMS.get(str(stack["itemId"])) or {}
+    w, h = _oriented_size(str(stack["itemId"]), _stack_rot(stack))
+    mag = int(stack["mag"]) if stack.get("mag") is not None else -1
+    return (-(w * h), str(item.get("type") or ""), str(stack["itemId"]), -mag)
+
+
+def _pick_sort_placement(
+    inventory: Inventory, item_id: str, preferred_rot: int
+) -> Optional[Tuple[int, int]]:
+    """整理放置：在当前朝向与交替朝向中选更靠左上的合法格（正方形足迹不试交替）。
+
+    返回 (dest, rot)；两者同格时保留 preferred_rot；都放不下返回 None。
+    """
+    prefer = 90 if int(preferred_rot) == 90 else 0
+    dest_prefer = inventory.find_place_index(item_id, prefer)
+    base_w, base_h = _oriented_size(item_id, 0)
+    if base_w == base_h:
+        if dest_prefer < 0:
+            return None
+        return dest_prefer, prefer
+    alt = _toggled_rot(prefer)
+    dest_alt = inventory.find_place_index(item_id, alt)
+    if dest_prefer < 0 and dest_alt < 0:
+        return None
+    if dest_prefer < 0:
+        return dest_alt, alt
+    if dest_alt < 0:
+        return dest_prefer, prefer
+    if dest_alt < dest_prefer:
+        return dest_alt, alt
+    return dest_prefer, prefer
+
+
+def sort_inventory(inventory: Inventory) -> bool:
+    """自动整理：合并可叠加堆，再按足迹左上紧凑重排（可旋转 0↔90；仅 player/storage）。
+
+    放不下时回滚并返回 False。
+    """
+    if inventory is None or inventory.ignore_item_size or inventory.slot_keys:
+        return False
+    if inventory.id not in ("player", "storage"):
+        return False
+    collected = _collect_stacks(inventory)
+    if not collected:
+        return True
+    merged = _merge_stacks_for_sort(collected, inventory.id)
+    merged.sort(key=_sort_key_for_stack)
+    snapshot = [dict(s) if s else None for s in inventory.slots]
+    inventory.slots = [None] * inventory.size()
+    for stack in merged:
+        picked = _pick_sort_placement(inventory, str(stack["itemId"]), _stack_rot(stack))
+        if picked is None:
+            inventory.slots = snapshot
+            return False
+        dest, rot = picked
+        place = stack
+        if rot != _stack_rot(stack):
+            place = _clone_stack_fields(stack)
+            if rot == 90:
+                place["rot"] = 90
+            else:
+                place.pop("rot", None)
+        if not inventory.place_stack(dest, place):
+            inventory.slots = snapshot
+            return False
     return True
 
 

@@ -1,10 +1,19 @@
 /**
  * 武装车厢弹种 / 弹链：共享目录、车厢能力、循环开火游标、底部 HUD、弹药箱弹链编辑、详情浮层。
  *
+ * 弹链仅本机：编辑与激活组存在 localStorage（STORAGE_KEY），每位操作者各自一套；
+ * 不进服务端权威、不与其它玩家同步。远端开火仍靠子弹上的 ammoType 表现弹种。
+ *
  * 开火规则（连发 + supportsBelts）：当前激活弹链按 slots 顺序循环打出；每组弹链自有 cursor，
  * 切组后再切回从该组上次位置继续。火炮类（supportsBelts:false）仅单选弹种，无弹链。
+ *
+ * 枢机自动化：`applyAmmoSelection` 写入内存 autoByCar（自动装载），不改写本机弹药箱弹链。
+ * peek / advance 优先用 autoByCar；玩家手动切组/弹种时清除该车自动装载。
+ *
+ * 损坏存档：缺失 / 未知 / 不在 allowedTypes 的槽位一律改为 ap，并写回 localStorage。
  */
 (() => {
+  /** 本机弹链存档键（不进联机库存权威）。 */
   const STORAGE_KEY = 'lp-armed-belts-v1';
 
   /**
@@ -62,9 +71,19 @@
       /** 可用弹种顺序（单弹种模式 HUD；亦为弹链槽位可选集合）。 */
       allowedTypes: ['ap', 't'],
       supportsBelts: true,
-      maxBelts: 2,
+      maxBelts: 4,
       slotsPerBelt: 3,
+      /** 手动「添加一组」时的默认槽位。 */
       defaultSlots: ['ap', 'ap', 'ap'],
+      /**
+       * 首次获得 / 存档无弹链时灌入的默认组（留 1 组空位给玩家加）。
+       * 组1 T/T/AP · 组2 T/T/T · 组3 AP/AP/AP；激活组 1，游标全 0。
+       */
+      defaultBelts: [
+        ['t', 't', 'ap'],
+        ['t', 't', 't'],
+        ['ap', 'ap', 'ap'],
+      ],
     },
     /* 示例（未启用）：火炮类仅选弹种
     artillery: {
@@ -93,6 +112,11 @@
      * @type {Record<string, { belts: string[][], cursors: number[], activeBeltIndex: number }>}
      */
     byCarriage: {},
+    /**
+     * 枢机自动装载（内存，不进 localStorage）：覆盖开火 peek/advance，不碰本机弹链。
+     * @type {Record<string, { kind: 'type', ammo: string } | { kind: 'belt', slots: string[], cursor: number }>}
+     */
+    autoByCar: {},
   };
 
   let root = null;
@@ -106,6 +130,14 @@
   /** @type {HTMLElement | null} */
   let crateBottomHost = null;
   let hideDetailTimer = 0;
+  /** @type {HTMLElement | null} */
+  let slotChooser = null;
+  let hideChooserTimer = 0;
+  /**
+   * 当前展开的弹链槽位选择器上下文。
+   * @type {{ carriageId: string, beltIndex: number, slotIndex: number, chip: HTMLElement } | null}
+   */
+  let openChooserRef = null;
 
   /** 取弹种定义；未知 id 回退 AP。 */
   function getType(id) {
@@ -123,57 +155,135 @@
     return Boolean(getCarriage(carriageId)?.supportsBelts);
   }
 
-  /** 当前车厢可用弹种 id 列表。 */
-  function getLoadout() {
-    const cfg = getCarriage();
+  /**
+   * 可用弹种 id 列表。
+   * @param {string} [carriageId] 省略则用当前激活车厢
+   */
+  function getLoadout(carriageId) {
+    const cfg = getCarriage(carriageId);
     return cfg ? cfg.allowedTypes.slice() : [];
   }
 
-  /** 规范化槽位：长度固定、仅 allowed 内类型。 */
-  function normalizeSlots(raw, cfg) {
+  /** 车厢允许集合内的 AP id；allowed 无 ap 时退回首项（卫士恒有 ap）。 */
+  function coerceAmmoId(rawId, cfg) {
     const allowed = cfg.allowedTypes;
-    const n = cfg.slotsPerBelt || 3;
-    const fallback = cfg.defaultSlots || allowed.map(() => allowed[0]);
-    const out = [];
-    for (let i = 0; i < n; i += 1) {
-      const id = String(raw?.[i] || fallback[i] || allowed[0]).toLowerCase();
-      out.push(allowed.includes(id) ? id : allowed[0]);
-    }
-    return out;
+    const apId = allowed.includes('ap') ? 'ap' : allowed[0];
+    if (rawId == null || rawId === '') return apId;
+    const id = String(rawId).toLowerCase();
+    return allowed.includes(id) ? id : apId;
   }
 
-  /** 读取或初始化某车厢弹链存档（无弹链能力时返回 null）。 */
-  function beltStore(carriageId) {
+  /**
+   * 规范化槽位：长度固定；缺失 / 未知 / 非 allowed → ap。
+   * @returns {{ slots: string[], changed: boolean }}
+   */
+  function normalizeSlots(raw, cfg) {
+    const n = cfg.slotsPerBelt || 3;
+    const slots = [];
+    let changed = false;
+    for (let i = 0; i < n; i += 1) {
+      const before = raw?.[i];
+      const id = coerceAmmoId(before, cfg);
+      if (String(before ?? '').toLowerCase() !== id) changed = true;
+      slots.push(id);
+    }
+    if (!Array.isArray(raw) || raw.length !== n) changed = true;
+    return { slots, changed };
+  }
+
+  /**
+   * 首次初始化弹链：用 defaultBelts（若有），否则单组 defaultSlots。
+   * 仅在存档缺失或 belts 为空时调用，不覆盖玩家已编辑数据。
+   */
+  function seedDefaultBelts(cfg) {
+    const max = cfg.maxBelts || 4;
+    const raw =
+      Array.isArray(cfg.defaultBelts) && cfg.defaultBelts.length > 0
+        ? cfg.defaultBelts.slice(0, max)
+        : [cfg.defaultSlots];
+    const belts = raw.map((slots) => normalizeSlots(slots, cfg).slots);
+    return {
+      belts,
+      cursors: belts.map(() => 0),
+      activeBeltIndex: 0,
+    };
+  }
+
+  /** 序列化对比用：判断消毒是否改写了存档。 */
+  function beltStoreFingerprint(store) {
+    return JSON.stringify({
+      belts: store?.belts,
+      cursors: store?.cursors,
+      activeBeltIndex: store?.activeBeltIndex,
+    });
+  }
+
+  /**
+   * 读取或初始化某车厢弹链存档（无弹链能力时返回 null）。
+   * 消毒未知弹种为 ap；空 belts 灌入 defaultBelts。
+   * @returns {{ store: object | null, changed: boolean }}
+   */
+  function ensureBeltStore(carriageId) {
     const cfg = getCarriage(carriageId);
-    if (!cfg?.supportsBelts) return null;
+    if (!cfg?.supportsBelts) return { store: null, changed: false };
     const id = cfg.id;
+    let changed = false;
     if (!state.byCarriage[id]) {
-      state.byCarriage[id] = {
-        belts: [normalizeSlots(cfg.defaultSlots, cfg)],
-        cursors: [0],
-        activeBeltIndex: 0,
-      };
+      state.byCarriage[id] = seedDefaultBelts(cfg);
+      changed = true;
     }
     const store = state.byCarriage[id];
-    store.belts = store.belts
-      .slice(0, cfg.maxBelts)
-      .map((slots) => normalizeSlots(slots, cfg));
-    if (store.belts.length === 0) {
-      store.belts = [normalizeSlots(cfg.defaultSlots, cfg)];
+    const before = beltStoreFingerprint(store);
+    const nextBelts = [];
+    for (const slots of (store.belts || []).slice(0, cfg.maxBelts)) {
+      const norm = normalizeSlots(slots, cfg);
+      nextBelts.push(norm.slots);
+      if (norm.changed) changed = true;
     }
-    while (store.cursors.length < store.belts.length) store.cursors.push(0);
+    store.belts = nextBelts;
+    if (store.belts.length === 0) {
+      const seeded = seedDefaultBelts(cfg);
+      store.belts = seeded.belts;
+      store.cursors = seeded.cursors;
+      store.activeBeltIndex = seeded.activeBeltIndex;
+      changed = true;
+    }
+    while (store.cursors.length < store.belts.length) {
+      store.cursors.push(0);
+      changed = true;
+    }
     store.cursors = store.cursors.slice(0, store.belts.length).map((c, i) => {
       const n = store.belts[i].length;
       return ((Number(c) || 0) % n + n) % n;
     });
     if (store.activeBeltIndex < 0 || store.activeBeltIndex >= store.belts.length) {
       store.activeBeltIndex = 0;
+      changed = true;
     }
-    return store;
+    if (beltStoreFingerprint(store) !== before) changed = true;
+    return { store, changed };
   }
 
-  /** 从 localStorage 加载弹链。 */
+  /** 读取或初始化弹链存档（兼容旧调用，忽略 changed）。 */
+  function beltStore(carriageId) {
+    return ensureBeltStore(carriageId).store;
+  }
+
+  /** 是否已有非空弹链数据（不触发首次 seed）。 */
+  function hasBeltData(carriageId) {
+    const id = String(carriageId || '').trim();
+    const belts = state.byCarriage[id]?.belts;
+    return Array.isArray(belts) && belts.length > 0;
+  }
+
+  /** 消毒后若有改写则写回本机存档。 */
+  function persistIfChanged(changed) {
+    if (changed) savePersisted();
+  }
+
+  /** 从 localStorage 加载弹链；损坏槽位改为 ap 并写回。 */
   function loadPersisted() {
+    let dirty = false;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
@@ -186,20 +296,23 @@
           cursors: Array.isArray(data.cursors) ? data.cursors : [],
           activeBeltIndex: Number(data.activeBeltIndex) || 0,
         };
-        beltStore(id);
+        if (ensureBeltStore(id).changed) dirty = true;
       }
     } catch (_) {
-      /* ignore corrupt */
+      /* ignore corrupt JSON; 下次 seed / 编辑会重建 */
     }
+    persistIfChanged(dirty);
   }
 
-  /** 持久化弹链（离线）；联机权威后续可接同一 toJSON。 */
+  /**
+   * 持久化弹链到本机 localStorage（始终写入；联机也不走服务端权威）。
+   * 只写已有 byCarriage 条目，避免 save 时给未获得的车厢灌默认。
+   */
   function savePersisted() {
-    if (window.LpInventoryNet?.isActive?.()) return;
     const out = {};
-    for (const id of Object.keys(CARRIAGES)) {
-      if (!CARRIAGES[id].supportsBelts) continue;
-      const store = beltStore(id);
+    for (const id of Object.keys(state.byCarriage)) {
+      if (!CARRIAGES[id]?.supportsBelts) continue;
+      const { store } = ensureBeltStore(id);
       if (!store) continue;
       out[id] = {
         belts: store.belts.map((s) => s.slice()),
@@ -210,7 +323,7 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
   }
 
-  /** 导出弹链 JSON（供弹药箱快照 / 联机后续）。 */
+  /** 导出弹链 JSON（本机弹药箱副本；非联机权威）。 */
   function beltsToJSON(carriageId) {
     const store = beltStore(carriageId || state.carriageId);
     if (!store) return null;
@@ -221,7 +334,10 @@
     };
   }
 
-  /** 用快照覆盖弹链。 */
+  /**
+   * 用本机快照覆盖弹链并消毒写回。
+   * 仅应来自本机 crate / 迁移；勿接服务端权威 belts。
+   */
   function applyBeltsFromSnapshot(carriageId, data) {
     const cfg = getCarriage(carriageId);
     if (!cfg?.supportsBelts || !data) return;
@@ -230,7 +346,9 @@
       cursors: Array.isArray(data.cursors) ? data.cursors : [],
       activeBeltIndex: Number(data.activeBeltIndex) || 0,
     };
-    beltStore(cfg.id);
+    ensureBeltStore(cfg.id);
+    // 快照可能含损坏槽位：消毒后一律写回本机文件。
+    savePersisted();
     if (state.carriageId === cfg.id) {
       state.activeBeltIndex = state.byCarriage[cfg.id].activeBeltIndex;
     }
@@ -251,30 +369,79 @@
   }
 
   /**
-   * 窥视下一发弹种 id（不推进游标）。
-   * 弹链模式：该组 cursor 指向的槽；单弹种模式：当前选中类型。
+   * 清除某车厢的枢机自动装载（玩家手动切弹时调用）。
+   * @param {string} [carriageId]
    */
-  function peekFireTypeId() {
-    const cfg = getCarriage();
+  function clearAutoLoadout(carriageId) {
+    const id = carriageId || state.carriageId;
+    if (!id || !state.autoByCar[id]) return;
+    delete state.autoByCar[id];
+  }
+
+  /**
+   * 读取自动装载（副本）；无则 null。
+   * @param {string} [carriageId]
+   */
+  function getAutoLoadout(carriageId) {
+    const id = carriageId || state.carriageId;
+    if (!id) return null;
+    const auto = state.autoByCar[id];
+    if (!auto) return null;
+    if (auto.kind === 'type') return { kind: 'type', ammo: auto.ammo };
+    return {
+      kind: 'belt',
+      slots: (auto.slots || []).slice(),
+      cursor: auto.cursor || 0,
+    };
+  }
+
+  /**
+   * 窥视下一发弹种 id（不推进游标）。
+   * 优先枢机 autoByCar；否则弹链组 cursor / 单弹种 typeIndex。
+   * @param {string} [carriageId] 省略则用当前激活车厢
+   */
+  function peekFireTypeId(carriageId) {
+    const id = carriageId || state.carriageId;
+    const cfg = getCarriage(id);
     if (!cfg) return 'ap';
+    const auto = id ? state.autoByCar[id] : null;
+    if (auto?.kind === 'type') {
+      return coerceAmmoId(auto.ammo, cfg);
+    }
+    if (auto?.kind === 'belt' && auto.slots?.length) {
+      return auto.slots[(auto.cursor || 0) % auto.slots.length];
+    }
     if (cfg.supportsBelts) {
-      const store = beltStore();
+      const store = beltStore(id);
       const slots = store?.belts[store.activeBeltIndex];
       if (!slots?.length) return cfg.allowedTypes[0] || 'ap';
       const cursor = store.cursors[store.activeBeltIndex] || 0;
       return slots[cursor % slots.length];
     }
-    return cfg.allowedTypes[state.typeIndex] || cfg.allowedTypes[0] || 'ap';
+    if (id && state.carriageId === id) {
+      return cfg.allowedTypes[state.typeIndex] || cfg.allowedTypes[0] || 'ap';
+    }
+    return cfg.allowedTypes[0] || 'ap';
   }
 
   /**
-   * 成功开火后推进：弹链组内 cursor+1 取模；单弹种模式无操作。
+   * 成功开火后推进：自动装载弹链 cursor+1；否则本机弹链组内 cursor+1。
    * 须在确认本触发已耗弹并发射后调用一次（双联同发仍只推进 1 次）。
+   * @param {string} [carriageId]
    */
-  function advanceFireCursor() {
-    const cfg = getCarriage();
-    if (!cfg?.supportsBelts) return;
-    const store = beltStore();
+  function advanceFireCursor(carriageId) {
+    const id = carriageId || state.carriageId;
+    const cfg = getCarriage(id);
+    if (!cfg) return;
+    const auto = id ? state.autoByCar[id] : null;
+    if (auto?.kind === 'belt' && auto.slots?.length) {
+      auto.cursor = ((auto.cursor || 0) + 1) % auto.slots.length;
+      render();
+      return;
+    }
+    if (auto?.kind === 'type') return;
+    if (!cfg.supportsBelts) return;
+    const store = beltStore(id);
     if (!store) return;
     const i = store.activeBeltIndex;
     const n = store.belts[i]?.length || 1;
@@ -324,33 +491,39 @@
     ensureDetailDom();
   }
 
-  /** 确保详情浮层（复用物品栏 .lp-inventory-detail 样式类）。 */
+  /**
+   * 确保弹种/弹链详情浮层存在，并挂到 document.body。
+   * 必须离开 .lp-stage-ui（z-index:3）等低层叠上下文，否则会被弹药箱(23)等盖住。
+   */
   function ensureDetailDom() {
-    if (detailPanel) return;
-    detailPanel = document.getElementById('lpArmedAmmoDetail');
     if (!detailPanel) {
-      detailPanel = document.createElement('aside');
-      detailPanel.id = 'lpArmedAmmoDetail';
-      detailPanel.className = 'lp-inventory-detail lp-armed-ammo-detail';
-      detailPanel.hidden = true;
-      detailPanel.setAttribute('aria-live', 'polite');
-      detailPanel.innerHTML =
-        '<div class="lp-inventory-detail-body">' +
-        '<div class="lp-inventory-detail-icon-wrap">' +
-        '<span class="lp-inventory-item-icon lp-armed-ammo-detail-icon"></span>' +
-        '</div>' +
-        '<h3 class="lp-inventory-detail-name"></h3>' +
-        '<dl class="lp-inventory-detail-meta"></dl>' +
-        '<p class="lp-inventory-detail-use-label">作用</p>' +
-        '<p class="lp-inventory-detail-use"></p>' +
-        '</div>';
+      detailPanel = document.getElementById('lpArmedAmmoDetail');
+      if (!detailPanel) {
+        detailPanel = document.createElement('aside');
+        detailPanel.id = 'lpArmedAmmoDetail';
+        detailPanel.className = 'lp-inventory-detail lp-armed-ammo-detail';
+        detailPanel.hidden = true;
+        detailPanel.setAttribute('aria-live', 'polite');
+        detailPanel.innerHTML =
+          '<div class="lp-inventory-detail-body">' +
+          '<div class="lp-inventory-detail-icon-wrap">' +
+          '<span class="lp-inventory-item-icon lp-armed-ammo-detail-icon"></span>' +
+          '</div>' +
+          '<h3 class="lp-inventory-detail-name"></h3>' +
+          '<dl class="lp-inventory-detail-meta"></dl>' +
+          '<p class="lp-inventory-detail-use-label">作用</p>' +
+          '<p class="lp-inventory-detail-use"></p>' +
+          '</div>';
+      }
+      detailBody = detailPanel.querySelector('.lp-inventory-detail-body');
+      detailIcon = detailPanel.querySelector('.lp-inventory-item-icon');
+      detailName = detailPanel.querySelector('.lp-inventory-detail-name');
+      detailMeta = detailPanel.querySelector('.lp-inventory-detail-meta');
+      detailUse = detailPanel.querySelector('.lp-inventory-detail-use');
+    }
+    if (detailPanel.parentNode !== document.body) {
       document.body.appendChild(detailPanel);
     }
-    detailBody = detailPanel.querySelector('.lp-inventory-detail-body');
-    detailIcon = detailPanel.querySelector('.lp-inventory-item-icon');
-    detailName = detailPanel.querySelector('.lp-inventory-detail-name');
-    detailMeta = detailPanel.querySelector('.lp-inventory-detail-meta');
-    detailUse = detailPanel.querySelector('.lp-inventory-detail-use');
   }
 
   /** 定位详情浮层到指针旁（与物品栏同策略）。 */
@@ -478,6 +651,210 @@
     });
   }
 
+  /** 是否粗指针（触控优先），槽位用点击展开选择器。 */
+  function isCoarsePointer() {
+    return Boolean(window.matchMedia?.('(pointer: coarse)')?.matches);
+  }
+
+  /** 确保弹链槽位弹种选择浮层（挂 body，避免底栏裁切、压过弹药箱）。 */
+  function ensureSlotChooserDom() {
+    if (slotChooser) return;
+    slotChooser = document.getElementById('lpGuardBeltChooser');
+    if (!slotChooser) {
+      slotChooser = document.createElement('div');
+      slotChooser.id = 'lpGuardBeltChooser';
+      slotChooser.className = 'lp-guard-belt-chooser';
+      slotChooser.hidden = true;
+      slotChooser.setAttribute('role', 'listbox');
+      slotChooser.setAttribute('aria-label', '可选弹种');
+      document.body.appendChild(slotChooser);
+    }
+    slotChooser.addEventListener('pointerenter', () => {
+      if (hideChooserTimer) {
+        window.clearTimeout(hideChooserTimer);
+        hideChooserTimer = 0;
+      }
+    });
+    slotChooser.addEventListener('pointerleave', () => {
+      scheduleHideSlotChooser();
+    });
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (!slotChooser || slotChooser.hidden) return;
+        const t = event.target;
+        if (!(t instanceof Node)) return;
+        if (slotChooser.contains(t)) return;
+        if (openChooserRef?.chip?.contains(t)) return;
+        hideSlotChooser();
+        hideDetail();
+      },
+      true
+    );
+  }
+
+  /** 延迟收起弹种选择器，便于指针从槽位移入浮层。 */
+  function scheduleHideSlotChooser(ms = 180) {
+    if (hideChooserTimer) window.clearTimeout(hideChooserTimer);
+    hideChooserTimer = window.setTimeout(() => {
+      hideChooserTimer = 0;
+      hideSlotChooser();
+      hideDetail();
+    }, ms);
+  }
+
+  /** 关闭弹链槽位弹种选择器。 */
+  function hideSlotChooser() {
+    if (hideChooserTimer) {
+      window.clearTimeout(hideChooserTimer);
+      hideChooserTimer = 0;
+    }
+    if (openChooserRef?.chip) {
+      openChooserRef.chip.classList.remove('is-chooser-open');
+      openChooserRef.chip.setAttribute('aria-expanded', 'false');
+    }
+    openChooserRef = null;
+    if (!slotChooser) return;
+    slotChooser.hidden = true;
+    slotChooser.replaceChildren();
+  }
+
+  /**
+   * 将选择器定位到槽位 chip 旁（优先上方，空间不足则下方）。
+   * @param {HTMLElement} anchorEl
+   */
+  function positionSlotChooser(anchorEl) {
+    if (!slotChooser || slotChooser.hidden || !anchorEl) return;
+    const pad = 8;
+    const gap = 4;
+    const rect = anchorEl.getBoundingClientRect();
+    const chooserRect = slotChooser.getBoundingClientRect();
+    let left = rect.left + rect.width / 2 - chooserRect.width / 2;
+    left = Math.max(pad, Math.min(left, window.innerWidth - chooserRect.width - pad));
+    let top = rect.top - chooserRect.height - gap;
+    if (top < pad) {
+      top = rect.bottom + gap;
+    }
+    if (top + chooserRect.height > window.innerHeight - pad) {
+      top = Math.max(pad, window.innerHeight - chooserRect.height - pad);
+    }
+    slotChooser.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  }
+
+  /**
+   * 展开槽位可选弹种浮层（来自车厢 allowedTypes）。
+   * @param {string} carriageId
+   * @param {number} beltIndex
+   * @param {number} slotIndex
+   * @param {HTMLElement} chip
+   */
+  function showSlotChooser(carriageId, beltIndex, slotIndex, chip) {
+    const cfg = getCarriage(carriageId);
+    if (!cfg?.supportsBelts || !chip) return;
+    ensureSlotChooserDom();
+    if (hideChooserTimer) {
+      window.clearTimeout(hideChooserTimer);
+      hideChooserTimer = 0;
+    }
+    if (
+      openChooserRef &&
+      openChooserRef.carriageId === carriageId &&
+      openChooserRef.beltIndex === beltIndex &&
+      openChooserRef.slotIndex === slotIndex &&
+      slotChooser &&
+      !slotChooser.hidden
+    ) {
+      positionSlotChooser(chip);
+      return;
+    }
+    if (openChooserRef?.chip && openChooserRef.chip !== chip) {
+      openChooserRef.chip.classList.remove('is-chooser-open');
+      openChooserRef.chip.setAttribute('aria-expanded', 'false');
+    }
+    hideDetail();
+    openChooserRef = { carriageId, beltIndex, slotIndex, chip };
+    chip.classList.add('is-chooser-open');
+    chip.setAttribute('aria-expanded', 'true');
+
+    const store = beltStore(carriageId);
+    const current = store?.belts[beltIndex]?.[slotIndex];
+    const frag = document.createDocumentFragment();
+    cfg.allowedTypes.forEach((id) => {
+      const def = getType(id);
+      const opt = document.createElement('button');
+      opt.type = 'button';
+      opt.className = 'lp-guard-belt-chooser-opt';
+      opt.dataset.ammoId = def.id;
+      opt.setAttribute('role', 'option');
+      opt.setAttribute('aria-selected', id === current ? 'true' : 'false');
+      opt.classList.toggle('is-current', id === current);
+      opt.innerHTML =
+        `<span class="lp-guard-belt-chooser-tag">${def.tag}</span>` +
+        `<span class="lp-guard-belt-chooser-name">${def.subtitle}</span>`;
+      opt.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const ok = setBeltSlot(carriageId, beltIndex, slotIndex, id);
+        if (ok) {
+          window.LiminalInteract?.showToast?.(
+            `弹链 ${beltIndex + 1} 槽 ${slotIndex + 1} → 「${def.tag} ${def.subtitle}」`
+          );
+        }
+        hideSlotChooser();
+        hideDetail();
+      });
+      bindHoverDetail(opt, (ev) =>
+        showTypeDetail(def.id, { clientX: ev.clientX, clientY: ev.clientY })
+      );
+      frag.appendChild(opt);
+    });
+    slotChooser.replaceChildren(frag);
+    slotChooser.hidden = false;
+    slotChooser.style.transform = 'translate(-9999px, -9999px)';
+    requestAnimationFrame(() => positionSlotChooser(chip));
+  }
+
+  /**
+   * 绑定槽位：悬停展开弹种列表；粗指针点击展开；细指针点击仍可循环切换。
+   * @param {HTMLElement} chip
+   * @param {string} carriageId
+   * @param {number} beltIndex
+   * @param {number} slotIndex
+   */
+  function bindSlotTypeChooser(chip, carriageId, beltIndex, slotIndex) {
+    chip.setAttribute('aria-haspopup', 'listbox');
+    chip.setAttribute('aria-expanded', 'false');
+    chip.addEventListener('pointerenter', (event) => {
+      if (isCoarsePointer() || event.pointerType === 'touch') return;
+      showSlotChooser(carriageId, beltIndex, slotIndex, chip);
+    });
+    chip.addEventListener('pointerleave', () => {
+      if (isCoarsePointer()) return;
+      scheduleHideSlotChooser();
+    });
+    chip.addEventListener('click', () => {
+      if (isCoarsePointer()) {
+        if (
+          openChooserRef?.chip === chip &&
+          slotChooser &&
+          !slotChooser.hidden
+        ) {
+          hideSlotChooser();
+          hideDetail();
+          return;
+        }
+        showSlotChooser(carriageId, beltIndex, slotIndex, chip);
+        return;
+      }
+      cycleBeltSlot(carriageId, beltIndex, slotIndex);
+      const store = beltStore(carriageId);
+      const next = getType(store?.belts[beltIndex]?.[slotIndex]);
+      window.LiminalInteract?.showToast?.(
+        `弹链 ${beltIndex + 1} 槽 ${slotIndex + 1} → 「${next.tag} ${next.subtitle}」`
+      );
+    });
+  }
+
   /** 刷新底部 HUD（弹链模式列组；单弹种模式列类型）。 */
   function render() {
     ensureDom();
@@ -558,6 +935,7 @@
 
   /**
    * 进入武装操控：启用该车厢能力并显示底栏。
+   * 首次无存档时 seed 默认弹链；损坏槽位改为 ap 并写回本机。
    * @param {string} carriageId
    */
   function activate(carriageId) {
@@ -566,8 +944,9 @@
     state.carriageId = id;
     const cfg = CARRIAGES[id];
     if (cfg.supportsBelts) {
-      const store = beltStore(id);
+      const { store, changed } = ensureBeltStore(id);
       state.activeBeltIndex = store.activeBeltIndex;
+      persistIfChanged(changed);
     } else if (state.typeIndex < 0 || state.typeIndex >= cfg.allowedTypes.length) {
       state.typeIndex = 0;
     }
@@ -581,11 +960,12 @@
     render();
   }
 
-  /** 选中弹链组（0-based）；保留各组 cursor。 */
+  /** 选中弹链组（0-based）；保留各组 cursor；清除该车自动装载。 */
   function selectBeltIndex(index, opts = {}) {
     const cid = opts.carriageId || state.carriageId;
     const store = beltStore(cid);
     if (!store || index < 0 || index >= store.belts.length) return false;
+    clearAutoLoadout(cid);
     store.activeBeltIndex = index;
     if (!state.carriageId || state.carriageId === (getCarriage(cid)?.id || cid)) {
       state.activeBeltIndex = index;
@@ -600,17 +980,134 @@
     return true;
   }
 
-  /** 单弹种模式：按 allowedTypes 下标选中。 */
+  /**
+   * 单弹种模式：按 allowedTypes 下标选中；清除该车自动装载。
+   * @param {number} index
+   * @param {{ toast?: boolean, carriageId?: string }} [opts]
+   */
   function selectTypeIndex(index, opts = {}) {
-    const loadout = getLoadout();
+    const cid = opts.carriageId || state.carriageId;
+    const loadout = getLoadout(cid);
     if (!loadout.length || index < 0 || index >= loadout.length) return false;
-    state.typeIndex = index;
+    clearAutoLoadout(cid);
+    if (!state.carriageId || state.carriageId === (getCarriage(cid)?.id || cid)) {
+      state.typeIndex = index;
+    }
     render();
     if (opts.toast) {
       const def = getType(loadout[index]);
       window.LiminalInteract?.showToast?.(`选中 「${def.tag} ${def.subtitle}」`);
     }
     return true;
+  }
+
+  /**
+   * 按弹种 id 选中（火炮类）；未知或不在 allowed 则失败。
+   * @param {string} carriageId
+   * @param {string} ammoId
+   * @param {{ toast?: boolean }} [opts]
+   */
+  function selectTypeById(carriageId, ammoId, opts = {}) {
+    const loadout = getLoadout(carriageId);
+    const id = String(ammoId || '').toLowerCase();
+    const index = loadout.indexOf(id);
+    if (index < 0) return false;
+    return selectTypeIndex(index, { ...opts, carriageId });
+  }
+
+  /**
+   * 将给定 slots 写入本机弹链并激活：已有相同序列则切组；否则在上限内追加；已满则覆盖当前激活组。
+   * 供枢机「选择弹种/弹链」运行时写入本地弹链权威。
+   * @param {string} carriageId
+   * @param {string[]} rawSlots
+   * @param {{ toast?: boolean, label?: string }} [opts]
+   */
+  function activateOrInsertBelt(carriageId, rawSlots, opts = {}) {
+    const cfg = getCarriage(carriageId);
+    if (!cfg?.supportsBelts) return false;
+    const store = beltStore(carriageId);
+    if (!store) return false;
+    const { slots } = normalizeSlots(rawSlots, cfg);
+    const key = slots.join('/');
+    let index = store.belts.findIndex((b) => (b || []).join('/') === key);
+    if (index < 0) {
+      if (store.belts.length < (cfg.maxBelts || 4)) {
+        store.belts.push(slots.slice());
+        store.cursors.push(0);
+        index = store.belts.length - 1;
+      } else {
+        index = store.activeBeltIndex;
+        if (index < 0 || index >= store.belts.length) index = 0;
+        store.belts[index] = slots.slice();
+        store.cursors[index] = 0;
+      }
+      savePersisted();
+    }
+    return selectBeltIndex(index, {
+      toast: opts.toast,
+      carriageId,
+    });
+  }
+
+  /**
+   * 枢机自动化选弹：写入 autoByCar（不改本机弹药箱弹链）。
+   * 弹种：火炮 → type；连发车 → 全同型 slots 弹链装载。弹链：消毒 slots 后装载。
+   * 同一 pattern 重复写入时保留 cursor（持续规则每帧调用不重置循环）。
+   * @param {string} carriageId
+   * @param {{ kind: 'type'|'belt', ammo?: string, slots?: string[] }} selection
+   * @param {{ toast?: boolean }} [opts]
+   */
+  function applyAmmoSelection(carriageId, selection, opts = {}) {
+    const cfg = getCarriage(carriageId);
+    if (!cfg || !selection || !carriageId) return false;
+    const prev = state.autoByCar[carriageId];
+
+    if (selection.kind === 'type') {
+      const ammo = coerceAmmoId(selection.ammo, cfg);
+      if (!cfg.supportsBelts) {
+        if (prev?.kind === 'type' && prev.ammo === ammo) return true;
+        state.autoByCar[carriageId] = { kind: 'type', ammo };
+        if (opts.toast) {
+          const def = getType(ammo);
+          window.LiminalInteract?.showToast?.(
+            `自动装载 「${def.tag} ${def.subtitle}」`
+          );
+        }
+        render();
+        return true;
+      }
+      const slots = Array(cfg.slotsPerBelt || 3).fill(ammo);
+      const key = slots.join('/');
+      if (prev?.kind === 'belt' && (prev.slots || []).join('/') === key) {
+        return true;
+      }
+      state.autoByCar[carriageId] = { kind: 'belt', slots, cursor: 0 };
+      if (opts.toast) {
+        window.LiminalInteract?.showToast?.(
+          `自动装载 「${formatBeltPattern(slots)}」`
+        );
+      }
+      render();
+      return true;
+    }
+
+    if (selection.kind === 'belt') {
+      if (!cfg.supportsBelts) return false;
+      const { slots } = normalizeSlots(selection.slots || [], cfg);
+      const key = slots.join('/');
+      if (prev?.kind === 'belt' && (prev.slots || []).join('/') === key) {
+        return true;
+      }
+      state.autoByCar[carriageId] = { kind: 'belt', slots, cursor: 0 };
+      if (opts.toast) {
+        window.LiminalInteract?.showToast?.(
+          `自动装载 「${formatBeltPattern(slots)}」`
+        );
+      }
+      render();
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -656,7 +1153,7 @@
     const cfg = getCarriage(carriageId);
     const store = beltStore(carriageId);
     if (!cfg || !store || store.belts.length >= cfg.maxBelts) return false;
-    store.belts.push(normalizeSlots(cfg.defaultSlots, cfg));
+    store.belts.push(normalizeSlots(cfg.defaultSlots, cfg).slots);
     store.cursors.push(0);
     savePersisted();
     render();
@@ -708,6 +1205,7 @@
 
   /** 渲染弹药箱底栏：弹链编辑 或 弹种介绍（按 supportsBelts）。 */
   function renderCrateBottom() {
+    hideSlotChooser();
     if (!crateBottomHost) return;
     const carriageId = crateBottomHost.dataset.carriageId || 'guard';
     const cfg = getCarriage(carriageId);
@@ -850,17 +1348,8 @@
         chip.className = 'lp-guard-belt-chip';
         chip.dataset.ammoId = def.id;
         chip.textContent = def.tag;
-        chip.title = `切换 · ${def.tag} ${def.subtitle}`;
-        chip.addEventListener('click', () => {
-          cycleBeltSlot(carriageId, bi, si);
-          const next = getType(store.belts[bi][si]);
-          window.LiminalInteract?.showToast?.(
-            `弹链 ${bi + 1} 槽 ${si + 1} → 「${next.tag} ${next.subtitle}」`
-          );
-        });
-        bindHoverDetail(chip, (e) =>
-          showTypeDetail(def.id, { clientX: e.clientX, clientY: e.clientY })
-        );
+        chip.title = `悬停选择弹种 · 点击循环 · ${def.tag} ${def.subtitle}`;
+        bindSlotTypeChooser(chip, carriageId, bi, si);
         slotsEl.appendChild(chip);
         if (si < slots.length - 1) {
           const sep = document.createElement('span');
@@ -889,7 +1378,7 @@
 
     const hint = document.createElement('p');
     hint.className = 'lp-guard-belt-hint';
-    hint.textContent = `连发按组内顺序循环（如 T/AP/AP）。最多 ${cfg.maxBelts} 组 · 每组 ${cfg.slotsPerBelt} 槽。`;
+    hint.textContent = `悬停槽位展开可选弹种（如 AP / T）。连发按组内顺序循环。最多 ${cfg.maxBelts} 组 · 每组 ${cfg.slotsPerBelt} 槽。弹链仅保存在本机，每位操作者各自独立。`;
     host.appendChild(hint);
   }
 
@@ -913,6 +1402,7 @@
 
   /** 卸下弹药箱底栏。 */
   function unmountCrateBottom() {
+    hideSlotChooser();
     if (crateBottomHost) {
       crateBottomHost.replaceChildren();
       crateBottomHost.hidden = true;
@@ -940,9 +1430,10 @@
       label: cfg.label || key,
       allowedTypes: (cfg.allowedTypes || cfg.loadout || ['ap']).slice(),
       supportsBelts: Boolean(cfg.supportsBelts),
-      maxBelts: cfg.maxBelts ?? 2,
+      maxBelts: cfg.maxBelts ?? 4,
       slotsPerBelt: cfg.slotsPerBelt ?? 3,
       defaultSlots: cfg.defaultSlots || null,
+      defaultBelts: Array.isArray(cfg.defaultBelts) ? cfg.defaultBelts.map((b) => b.slice()) : null,
     };
     LOADOUTS[key] = CARRIAGES[key].allowedTypes.slice();
     if (!CARRIAGES[key].defaultSlots) {
@@ -976,22 +1467,28 @@
     getSelectedId,
     peekFireTypeId,
     advanceFireCursor,
+    clearAutoLoadout,
+    getAutoLoadout,
     formatBeltPattern,
     getActiveBeltSlots,
     beltsToJSON,
     applyBeltsFromSnapshot,
+    hasBeltData,
     isActive,
     activate,
     deactivate,
     selectIndex,
     selectBeltIndex,
     selectTypeIndex,
+    selectTypeById,
     selectByNumber,
     cycle,
     addBelt,
     removeBelt,
     setBeltSlot,
     cycleBeltSlot,
+    activateOrInsertBelt,
+    applyAmmoSelection,
     mountBeltEditor,
     unmountBeltEditor,
     mountCrateBottom,

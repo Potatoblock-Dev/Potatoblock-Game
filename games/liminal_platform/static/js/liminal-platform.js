@@ -743,6 +743,7 @@
     window.LpReloadAction?.tick?.(dt);
     window.LpGuardTurret?.tick?.(dt);
     window.LpAutoSensors?.tick?.(dt);
+    window.LpAutoExecutors?.tick?.(dt);
     stepCamera(dt);
     syncAimCursor();
     updateLocalHeadLook(dt);

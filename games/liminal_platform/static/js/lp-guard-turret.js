@@ -139,7 +139,7 @@
     recycleInv: null,
   };
 
-  /** 读取或新建弹药箱 / 回收箱库存；若本地存档含 belts 则灌入 LpArmedAmmo。 */
+  /** 读取或新建弹药箱 / 回收箱库存；本机 crate 若含 belts 且 LpArmedAmmo 尚无数据则迁移灌入。 */
   function ensureInventories() {
     if (state.ammoInv && state.recycleInv) return;
     const raw = localStorage.getItem('lp-guard-crates-v1');
@@ -148,7 +148,8 @@
         const parsed = JSON.parse(raw);
         state.ammoInv = Core.Inventory.fromJSON(parsed.ammo);
         state.recycleInv = Core.Inventory.fromJSON(parsed.recycle);
-        if (parsed.belts) {
+        // 弹链仅本机：优先 lp-armed-belts-v1；仅当尚无数据时用本地 crate 副本迁移。
+        if (parsed.belts && !window.LpArmedAmmo?.hasBeltData?.('guard')) {
           window.LpArmedAmmo?.applyBeltsFromSnapshot?.('guard', parsed.belts);
         }
         return;
@@ -162,7 +163,10 @@
     state.recycleInv = new Core.Inventory('guard-recycle', 3, 2, []);
   }
 
-  /** 持久化弹药箱与回收箱（弹链由 LpArmedAmmo 自管；此处附带副本便于日后联机同快照）。 */
+  /**
+   * 持久化弹药箱与回收箱。
+   * 弹链权威在 LpArmedAmmo（localStorage lp-armed-belts-v1）；此处仅附带本机副本，不进服务端。
+   */
   function saveCrates() {
     if (window.LpInventoryNet?.isActive?.()) return;
     ensureInventories();
@@ -177,7 +181,7 @@
     );
   }
 
-  /** 用服务端快照覆盖弹药箱/回收箱（若含 belts 则同步弹链）。 */
+  /** 用服务端快照覆盖弹药箱/回收箱。弹链仅本机——忽略 crates.belts，避免覆盖各操作者配置。 */
   function applyCratesFromSnapshot(crates) {
     ensureInventories();
     if (crates?.ammo) {
@@ -185,9 +189,6 @@
     }
     if (crates?.recycle) {
       state.recycleInv = Core.Inventory.fromJSON(crates.recycle);
-    }
-    if (crates?.belts) {
-      window.LpArmedAmmo?.applyBeltsFromSnapshot?.('guard', crates.belts);
     }
     window.LpGuardCrateUi?.refresh?.();
   }
@@ -740,7 +741,7 @@
   function spawnTurretTracer(muzzle, ammoType) {
     const typeId =
       ammoType ||
-      window.LpArmedAmmo?.peekFireTypeId?.() ||
+      window.LpArmedAmmo?.peekFireTypeId?.('guard') ||
       window.LpArmedAmmo?.getSelectedId?.() ||
       'ap';
     window.LpCombat?.spawnProjectile?.({
@@ -873,7 +874,7 @@
 
     /* 弹链循环：本触发 peek 一次类型；双联多枪口共用该类型，成功后再 advance 一次游标。 */
     const ammoType =
-      window.LpArmedAmmo?.peekFireTypeId?.() ||
+      window.LpArmedAmmo?.peekFireTypeId?.('guard') ||
       window.LpArmedAmmo?.getSelectedId?.() ||
       'ap';
 
@@ -899,7 +900,7 @@
       spawnMuzzleFlash(fired);
     }
     if (muzzles.length === 0) return null;
-    window.LpArmedAmmo?.advanceFireCursor?.();
+    window.LpArmedAmmo?.advanceFireCursor?.('guard');
     /* 一发弹药 → 回收箱 +1 shell_casing；无抛壳特效。联机由服务端权威写入。 */
     if (!online) depositCasing();
     window.LpCombat?.syncCrosshairBloom?.();

@@ -705,7 +705,7 @@ class LiminalLobbyManager:
         await room.broadcast(fired, exclude_id=user_id)
 
     async def handle_inv(self, user_id: str, payload: Dict[str, Any]) -> None:
-        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop / rotate。"""
+        """处理库存意图：transfer / quick_transfer / consume / reload / crate / drop / rotate / sort。"""
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
@@ -730,6 +730,8 @@ class LiminalLobbyManager:
             room_changed = self._inv_drop(room, player, payload)
         elif action == "rotate":
             room_changed = self._inv_rotate(room, player, payload)
+        elif action == "sort":
+            room_changed = self._inv_sort(room, player, payload)
         else:
             return
         overflow = Inv.sync_player_to_equip(player.inventories.player, player.inventories.equip)
@@ -847,7 +849,7 @@ class LiminalLobbyManager:
     def _inv_transfer(
         self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
     ) -> bool:
-        """整格/部分数量从 from 移到 to。"""
+        """整格/部分数量从 from 移到 to；可选 rot（0/90）覆盖移动堆叠朝向。"""
         src_ref = payload.get("from")
         dst_ref = payload.get("to")
         src = self._resolve_bag(room, player, src_ref)
@@ -890,6 +892,17 @@ class LiminalLobbyManager:
             if not taken:
                 return False
             moving = taken
+        # 可选：客户端拖拽中源格足迹冲突时带最终朝向（0 / 90）
+        rot_raw = payload.get("rot")
+        if rot_raw is not None and isinstance(moving, dict):
+            try:
+                rot_v = int(rot_raw)
+            except (TypeError, ValueError):
+                rot_v = None
+            if rot_v == 90:
+                moving["rot"] = 90
+            elif rot_v == 0:
+                moving.pop("rot", None)
         leftover = Inv.place_on_slot(dst, dst_index, moving)
         if leftover:
             if not src.place_stack(origin, leftover) and leftover.get("qty"):
@@ -1030,6 +1043,23 @@ class LiminalLobbyManager:
         if not inv.toggle_rotation(origin):
             return False
         return self._bag_is_room(bag_ref)
+
+    def _inv_sort(
+        self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]
+    ) -> bool:
+        """整理 player / storage 网格：合并可叠加堆并左上紧凑重排。"""
+        bag_ref = payload.get("bag") or payload.get("from")
+        if not isinstance(bag_ref, dict):
+            return False
+        name = str(bag_ref.get("bag") or bag_ref.get("inv") or "").strip()
+        if name not in ("player", "storage"):
+            return False
+        inv = self._resolve_bag(room, player, bag_ref)
+        if inv is None:
+            return False
+        if not Inv.sort_inventory(inv):
+            return False
+        return name in ROOM_BAGS
 
     def _inv_crate(
         self, room: LiminalRoom, player: LiminalPlayer, payload: Dict[str, Any]

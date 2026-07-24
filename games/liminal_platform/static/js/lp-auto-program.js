@@ -1,7 +1,7 @@
 /**
  * 枢机自动化程序状态：按车厢存 rulesByCar（仍为一数组，trigger 区分类型）。
  * 持续判定（while）段内上→下 = 优先级；瞬时触发（edge）段内顺序仅美观、无优先级。
- * 变量分全局 vars 与车厢局部 varsByCar；持久化 localStorage；可导出/导入纯文本 JSON。
+ * 变量分全局 vars 与车厢局部 varsByCar；程序弹链 beltsByCar；持久化 localStorage。
  * 分享两种 kind：整份程序 liminal-auto-program（覆盖）；单条规则 liminal-auto-rule（追加）。
  */
 (() => {
@@ -9,15 +9,15 @@
   const SHARE_KIND = 'liminal-auto-program';
   /** 单条规则剪贴板 kind（导入时追加到当前车厢对应段，不覆盖整份程序）。 */
   const SHARE_RULE_KIND = 'liminal-auto-rule';
-  /** v2：vars=全局，varsByCar=车厢局部；仍接受 v1 扁平 vars。 */
-  const SHARE_VERSION = 2;
+  /** v3：+beltsByCar 程序弹链；仍接受 v2。 */
+  const SHARE_VERSION = 3;
   /** 单条规则分享包版本。 */
   const SHARE_RULE_VERSION = 1;
   const Catalog = () => window.LpAutoProgramCatalog;
 
   /**
    * 覆盖导入前的程序快照（仅内存）；用于「撤销导入」。
-   * @type {null | { vars: object, varsByCar: object, rulesByCar: object, at: number }}
+   * @type {null | { vars: object, varsByCar: object, rulesByCar: object, beltsByCar: object, at: number }}
    */
   let undoSnapshot = null;
 
@@ -35,7 +35,8 @@
    * @type {{
    *   vars: Record<string, number>,
    *   varsByCar: Record<string, Record<string, number>>,
-   *   rulesByCar: Record<string, Array<object>>
+   *   rulesByCar: Record<string, Array<object>>,
+   *   beltsByCar: Record<string, Array<{ id: string, slots: string[] }>>
    * }}
    */
   let state = load();
@@ -64,6 +65,7 @@
       vars: { ...(Cat?.defaultGlobalVars?.() || {}) },
       varsByCar: {},
       rulesByCar,
+      beltsByCar: {},
     };
   }
 
@@ -75,6 +77,7 @@
           vars: state.vars,
           varsByCar: state.varsByCar,
           rulesByCar: state.rulesByCar,
+          beltsByCar: state.beltsByCar,
         })
       );
     } catch {
@@ -84,6 +87,11 @@
 
   function uid() {
     return `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  /** 程序弹链稳定 id。 */
+  function beltUid() {
+    return `pb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   }
 
   /** 把数值表收成已知键（丢弃已退役名与非数字）。 */
@@ -99,13 +107,13 @@
     return out;
   }
 
-  /** 已知车厢 id（编组 + 传入的规则/局部变量键）。 */
+  /** 已知车厢 id（编组 + 传入的规则/局部变量/弹链键）。 */
   function knownCarIds(extra) {
     const ids = new Set();
     for (const c of window.LiminalCarriageSpec?.CARRIAGES || []) {
       if (c?.id) ids.add(c.id);
     }
-    for (const map of [extra?.rulesByCar, extra?.varsByCar]) {
+    for (const map of [extra?.rulesByCar, extra?.varsByCar, extra?.beltsByCar]) {
       if (!map || typeof map !== 'object') continue;
       for (const id of Object.keys(map)) ids.add(id);
     }
@@ -142,8 +150,8 @@
     return joinRulesByTrigger(continuous, edge);
   }
 
-  /** 迁移旧 lock_* 行为、比较条件缺省 op，并浅拷贝规则结构。 */
-  function migrateRule(rule) {
+  /** 迁移旧 lock_* / turret_ammo 行为、比较条件缺省 op，并浅拷贝规则结构。 */
+  function migrateRule(rule, carId, belts) {
     if (!rule || typeof rule !== 'object') return null;
     const Cat = Catalog();
     const migratedCond = Cat?.migrateConditionParams
@@ -152,14 +160,18 @@
           id: rule.condition?.id || 'always',
           params: { ...(rule.condition?.params || {}) },
         };
+    let action = {
+      id: rule.action?.id || 'noop',
+      params: { ...(rule.action?.params || {}) },
+    };
+    if (Cat?.migrateAction) {
+      action = Cat.migrateAction(action, { carId, belts });
+    }
     const next = {
       id: typeof rule.id === 'string' && rule.id ? rule.id : uid(),
       trigger: rule.trigger === 'edge' ? 'edge' : 'while',
       condition: migratedCond,
-      action: {
-        id: rule.action?.id || 'noop',
-        params: { ...(rule.action?.params || {}) },
-      },
+      action,
       note: typeof rule.note === 'string' ? rule.note : '',
     };
     const legacyTarget = LEGACY_LOCK[next.action.id];
@@ -170,7 +182,40 @@
   }
 
   /**
-   * 规范化整份程序：拆分全局/局部变量、剥离退役炮塔瞄准参数、迁移旧行为。
+   * 消毒单车程序弹链：长度=车厢 slotsPerBelt，槽位落在 allowedTypes，组数≤maxBelts。
+   * @param {string} carId
+   * @param {unknown} list
+   * @returns {Array<{ id: string, slots: string[] }>}
+   */
+  function normalizeBeltsForCar(carId, list) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    if (!cfg?.supportsBelts) return [];
+    const max = cfg.maxBelts || 4;
+    const n = cfg.slotsPerBelt || 3;
+    const allowed = new Set(cfg.allowedTypes || ['ap']);
+    const fallback = allowed.has('ap') ? 'ap' : [...allowed][0] || 'ap';
+    const out = [];
+    const seen = new Set();
+    if (!Array.isArray(list)) return out;
+    for (const raw of list.slice(0, max)) {
+      if (!raw || typeof raw !== 'object') continue;
+      let id = typeof raw.id === 'string' && raw.id ? raw.id : beltUid();
+      if (seen.has(id)) id = beltUid();
+      seen.add(id);
+      const slots = [];
+      const src = Array.isArray(raw.slots) ? raw.slots : [];
+      for (let i = 0; i < n; i += 1) {
+        const idSlot = String(src[i] || '').toLowerCase();
+        slots.push(allowed.has(idSlot) ? idSlot : fallback);
+      }
+      out.push({ id, slots });
+    }
+    return out;
+  }
+
+  /**
+   * 规范化整份程序：拆分全局/局部变量、剥离退役炮塔瞄准参数、迁移旧行为、消毒程序弹链。
    * 旧扁平 vars 中的局部键会作为种子写入各车厢（无 varsByCar 时）。
    * 各车只保留该车可用的局部键（含武装车传感器键）。
    * 各已知车厢若缺少库存「着火→警报」规则则补上（不覆盖已有自定义规则）。
@@ -191,21 +236,26 @@
     };
 
     const legacyCarSeed = pickNumberMap(flat, unionCarKeys);
-    const varsByCar = {};
     const rawByCar =
       data?.varsByCar && typeof data.varsByCar === 'object' && !Array.isArray(data.varsByCar)
         ? data.varsByCar
         : null;
 
-    const rulesByCar = {};
-    const srcRules =
+    const rawRules =
       data?.rulesByCar && typeof data.rulesByCar === 'object' ? data.rulesByCar : {};
-    for (const [carId, list] of Object.entries(srcRules)) {
-      if (!Array.isArray(list)) continue;
-      rulesByCar[carId] = normalizeRulesOrder(list.map(migrateRule).filter(Boolean));
-    }
+    const rawBelts =
+      data?.beltsByCar && typeof data.beltsByCar === 'object' && !Array.isArray(data.beltsByCar)
+        ? data.beltsByCar
+        : {};
 
-    const carIds = knownCarIds({ rulesByCar, varsByCar: rawByCar || {} });
+    const carIds = knownCarIds({
+      rulesByCar: rawRules,
+      varsByCar: rawByCar || {},
+      beltsByCar: rawBelts,
+    });
+    const varsByCar = {};
+    const rulesByCar = {};
+    const beltsByCar = {};
     for (const carId of carIds) {
       const carDefaults = Cat?.defaultCarVars?.(carId) || unionCarDefaults;
       const carKeys = Object.keys(carDefaults);
@@ -218,14 +268,21 @@
         ...carDefaults,
         ...seeded,
       };
-      const existing = rulesByCar[carId];
+      const belts = normalizeBeltsForCar(carId, rawBelts[carId]);
+      beltsByCar[carId] = belts;
+      const srcList = Array.isArray(rawRules[carId]) ? rawRules[carId] : [];
+      const migrated = srcList
+        .map((r) => migrateRule(r, carId, belts))
+        .filter(Boolean);
       const withStock = Cat?.ensureStockRules
-        ? Cat.ensureStockRules(carId, existing)
-        : existing || [];
-      rulesByCar[carId] = normalizeRulesOrder(withStock.map(migrateRule).filter(Boolean));
+        ? Cat.ensureStockRules(carId, migrated)
+        : migrated;
+      rulesByCar[carId] = normalizeRulesOrder(
+        withStock.map((r) => migrateRule(r, carId, belts)).filter(Boolean)
+      );
     }
 
-    return { vars, varsByCar, rulesByCar };
+    return { vars, varsByCar, rulesByCar, beltsByCar };
   }
 
   /** 浅拷贝单条规则（含 condition/action.params）。 */
@@ -470,6 +527,7 @@
       vars: JSON.parse(JSON.stringify(src.vars || {})),
       varsByCar: JSON.parse(JSON.stringify(src.varsByCar || {})),
       rulesByCar: JSON.parse(JSON.stringify(src.rulesByCar || {})),
+      beltsByCar: JSON.parse(JSON.stringify(src.beltsByCar || {})),
     };
   }
 
@@ -492,7 +550,7 @@
   }
 
   /**
-   * 撤销最近一次整份程序覆盖导入，恢复快照中的 vars / varsByCar / rulesByCar。
+   * 撤销最近一次整份程序覆盖导入，恢复快照中的 vars / varsByCar / rulesByCar / beltsByCar。
    * @returns {{ ok: true } | { ok: false, error: string }}
    */
   function undoLastImport() {
@@ -505,15 +563,107 @@
     return { ok: true };
   }
 
+  /**
+   * 某车厢程序弹链副本（仅 supportsBelts 车厢有数据）。
+   * @param {string} carId
+   * @returns {Array<{ id: string, slots: string[] }>}
+   */
+  function getBelts(carId) {
+    if (!carId) return [];
+    const list = state.beltsByCar[carId];
+    return Array.isArray(list)
+      ? list.map((b) => ({ id: b.id, slots: (b.slots || []).slice() }))
+      : [];
+  }
+
+  /**
+   * 覆盖某车厢程序弹链并持久化（按车厢能力消毒）。
+   * @param {string} carId
+   * @param {Array<{ id?: string, slots?: string[] }>} belts
+   */
+  function setBelts(carId, belts) {
+    if (!carId) return;
+    if (!state.beltsByCar) state.beltsByCar = {};
+    state.beltsByCar[carId] = normalizeBeltsForCar(carId, belts);
+    save();
+  }
+
+  /**
+   * 按 id 取一条程序弹链；不存在返回 null。
+   * @param {string} carId
+   * @param {string} beltId
+   */
+  function getBelt(carId, beltId) {
+    return getBelts(carId).find((b) => b.id === beltId) || null;
+  }
+
+  /**
+   * 添加一组程序弹链（不超过车厢 maxBelts）；返回新组或 null。
+   * @param {string} carId
+   */
+  function addBelt(carId) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    if (!cfg?.supportsBelts) return null;
+    const list = getBelts(carId);
+    if (list.length >= (cfg.maxBelts || 4)) return null;
+    const t0 = (cfg.allowedTypes && cfg.allowedTypes[0]) || 'ap';
+    const slots = (cfg.defaultSlots || Array(cfg.slotsPerBelt || 3).fill(t0)).slice(
+      0,
+      cfg.slotsPerBelt || 3
+    );
+    while (slots.length < (cfg.slotsPerBelt || 3)) slots.push(t0);
+    const next = { id: beltUid(), slots };
+    list.push(next);
+    setBelts(carId, list);
+    return next;
+  }
+
+  /**
+   * 删除一组程序弹链（可删至 0 组）。
+   * @param {string} carId
+   * @param {string} beltId
+   */
+  function removeBelt(carId, beltId) {
+    setBelts(
+      carId,
+      getBelts(carId).filter((b) => b.id !== beltId)
+    );
+    return true;
+  }
+
+  /**
+   * 设置程序弹链某槽弹种。
+   * @param {string} carId
+   * @param {string} beltId
+   * @param {number} slotIndex
+   * @param {string} ammoId
+   */
+  function setBeltSlot(carId, beltId, slotIndex, ammoId) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    if (!cfg?.supportsBelts) return false;
+    const list = getBelts(carId);
+    const belt = list.find((b) => b.id === beltId);
+    if (!belt) return false;
+    if (slotIndex < 0 || slotIndex >= (cfg.slotsPerBelt || 3)) return false;
+    const id = String(ammoId || '').toLowerCase();
+    if (!(cfg.allowedTypes || []).includes(id)) return false;
+    belt.slots[slotIndex] = id;
+    setBelts(carId, list);
+    return true;
+  }
+
   /** 导出整份程序对象（分享 / 备份）。 */
   function exportJson() {
     return {
       kind: SHARE_KIND,
       version: SHARE_VERSION,
       _comment:
-        '枢机自动化：vars=全局；varsByCar=车厢局部；rulesByCar 仍为一数组（while 段在前、edge 段在后）。while 段内上→下=优先级；edge 段内顺序仅美观、运行时无优先级。trigger=while|edge。炮塔瞄准提前为内置行为，不在 vars 中。单条规则请用 kind=liminal-auto-rule。',
+        '枢机自动化 v3：vars=全局；varsByCar=车厢局部；beltsByCar=可选遗留程序弹链库；rulesByCar 仍为一数组（while→edge）。select_ammo：params.target=type:ap|belt，弹链模式另带 params.slots[]（嵌入规则，无需手输 belt id）。旧 belt:pb_… / turret_ammo 导入时自动迁移。',
       vars: getGlobalVars(),
       varsByCar: { ...state.varsByCar },
+      beltsByCar: { ...(state.beltsByCar || {}) },
       rulesByCar: { ...state.rulesByCar },
     };
   }
@@ -529,7 +679,8 @@
    * @param {object} rule
    */
   function exportRuleJson(carId, rule) {
-    const migrated = migrateRule(rule);
+    const belts = getBelts(carId);
+    const migrated = migrateRule(rule, carId, belts);
     return {
       kind: SHARE_RULE_KIND,
       version: SHARE_RULE_VERSION,
@@ -598,8 +749,19 @@
     ) {
       return { ok: false, error: '格式错误：rulesByCar 必须是对象。' };
     }
-    if (data.vars == null && data.varsByCar == null && data.rulesByCar == null) {
-      return { ok: false, error: '缺少 vars / varsByCar / rulesByCar，无法导入。' };
+    if (
+      data.beltsByCar != null &&
+      (typeof data.beltsByCar !== 'object' || Array.isArray(data.beltsByCar))
+    ) {
+      return { ok: false, error: '格式错误：beltsByCar 必须是对象。' };
+    }
+    if (
+      data.vars == null &&
+      data.varsByCar == null &&
+      data.rulesByCar == null &&
+      data.beltsByCar == null
+    ) {
+      return { ok: false, error: '缺少 vars / varsByCar / rulesByCar / beltsByCar，无法导入。' };
     }
     for (const [carId, list] of Object.entries(data.rulesByCar || {})) {
       if (!Array.isArray(list)) {
@@ -621,6 +783,11 @@
     for (const [carId, map] of Object.entries(data.varsByCar || {})) {
       if (!map || typeof map !== 'object' || Array.isArray(map)) {
         return { ok: false, error: `车厢「${carId}」的局部变量必须是对象。` };
+      }
+    }
+    for (const [carId, list] of Object.entries(data.beltsByCar || {})) {
+      if (!Array.isArray(list)) {
+        return { ok: false, error: `车厢「${carId}」的程序弹链必须是数组。` };
       }
     }
     return { ok: true, data };
@@ -701,7 +868,7 @@
     if (!carId) {
       return { ok: false, error: '无法追加规则：未指定车厢。请先在控制台选中一节车厢。' };
     }
-    const next = migrateRule(checked.data.rule);
+    const next = migrateRule(checked.data.rule, carId, getBelts(carId));
     next.id = uid();
     upsertRule(carId, next, 'add');
     return { ok: true, mode: 'append', carId, ruleId: next.id };
@@ -736,6 +903,12 @@
     removeRule,
     splitRulesByTrigger,
     normalizeRulesOrder,
+    getBelts,
+    setBelts,
+    getBelt,
+    addBelt,
+    removeBelt,
+    setBeltSlot,
     getVars,
     setVars,
     getGlobalVars,

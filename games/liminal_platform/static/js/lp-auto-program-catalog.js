@@ -19,15 +19,16 @@
 
   /**
    * 比较符选项（条件共用）：eq/neq/gt/lt/gte/lte。
-   * @type {Array<{ value:string, label:string }>}
+   * UI 用 Python 风格符号；title 为中文名（悬浮延迟提示）。
+   * @type {Array<{ value:string, label:string, title:string }>}
    */
   const COMPARE_OPS = [
-    { value: 'eq', label: '等于' },
-    { value: 'neq', label: '不等于' },
-    { value: 'gt', label: '大于' },
-    { value: 'lt', label: '小于' },
-    { value: 'gte', label: '大于等于' },
-    { value: 'lte', label: '小于等于' },
+    { value: 'eq', label: '=', title: '等于' },
+    { value: 'neq', label: '!=', title: '不等于' },
+    { value: 'gt', label: '>', title: '大于' },
+    { value: 'lt', label: '<', title: '小于' },
+    { value: 'gte', label: '>=', title: '大于等于' },
+    { value: 'lte', label: '<=', title: '小于等于' },
   ];
 
   /**
@@ -218,20 +219,17 @@
       ],
     },
     {
-      id: 'turret_ammo',
-      label: '炮塔切换弹种',
+      id: 'select_ammo',
+      label: '选择弹种/弹链',
+      hint:
+        '在参数区选弹种，或（连发车）直接编辑弹链槽位；写入 params.target + 可选 params.slots，无需手输 id',
       cars: ['guard'],
       params: [
         {
-          key: 'ammo',
-          label: '弹种',
-          type: 'select',
-          options: [
-            { value: 'he', label: '高爆弹' },
-            { value: 'ap', label: '碎甲弹' },
-            { value: 'sap', label: '半穿甲' },
-          ],
-          default: 'ap',
+          key: 'target',
+          label: '弹种/弹链',
+          type: 'ammoTarget',
+          default: 'type:ap',
         },
       ],
     },
@@ -437,28 +435,173 @@
     return TRIGGERS.find((t) => t.id === id) || TRIGGERS[0];
   }
 
-  /** 生成可读摘要行。 */
-  function summarizeRule(rule) {
+  /**
+   * 解析 select_ammo 的 target：`type:ap` / `belt`（内嵌 slots）/ 旧 `belt:pb_…`；裸 id 视为弹种。
+   * @param {unknown} raw
+   * @returns {{ kind: 'type', ammo: string } | { kind: 'belt', beltId: string }}
+   */
+  function parseAmmoTarget(raw) {
+    const s = String(raw ?? '').trim();
+    if (s === 'belt' || s.startsWith('belt:')) {
+      return { kind: 'belt', beltId: s === 'belt' ? '' : s.slice(5) };
+    }
+    if (s.startsWith('type:')) {
+      return { kind: 'type', ammo: s.slice(5).toLowerCase() || 'ap' };
+    }
+    return { kind: 'type', ammo: (s || 'ap').toLowerCase() };
+  }
+
+  /**
+   * 按车厢配置消毒弹链槽位数组（长度=slotsPerBelt，落在 allowedTypes）。
+   * @param {string} carId
+   * @param {unknown} slots
+   * @returns {string[]}
+   */
+  function normalizeAmmoSlots(carId, slots) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    const n = cfg?.slotsPerBelt || 3;
+    const allowed = new Set(cfg?.allowedTypes?.length ? cfg.allowedTypes : ['ap']);
+    const fallback = allowed.has('ap') ? 'ap' : [...allowed][0] || 'ap';
+    const src = Array.isArray(slots) ? slots : cfg?.defaultSlots || [];
+    const out = [];
+    for (let i = 0; i < n; i += 1) {
+      const id = String(src[i] || '').toLowerCase();
+      out.push(allowed.has(id) ? id : fallback);
+    }
+    return out;
+  }
+
+  /**
+   * 弹种选项（内联 chips / 摘要）：车厢 allowedTypes。
+   * @param {string} carId
+   * @returns {Array<{ value: string, label: string, tag: string }>}
+   */
+  function ammoTypeOptionsForCar(carId) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    const types = cfg?.allowedTypes?.length ? cfg.allowedTypes : ['ap'];
+    return types.map((id) => {
+      const def = Ammo?.getType?.(id) || { tag: String(id).toUpperCase(), subtitle: id };
+      return {
+        value: `type:${id}`,
+        label: `${def.subtitle} ${def.tag}`,
+        tag: def.tag,
+        ammo: id,
+      };
+    });
+  }
+
+  /**
+   * 向导兼容：弹种 +（旧）程序弹链选项；新 UI 用 ammoTypeOptions + 内嵌 slots。
+   * @param {string} carId
+   * @returns {Array<{ value: string, label: string }>}
+   */
+  function ammoTargetOptionsForCar(carId) {
+    const opts = ammoTypeOptionsForCar(carId).map((o) => ({
+      value: o.value,
+      label: o.label,
+    }));
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    if (cfg?.supportsBelts) {
+      const belts = window.LpAutoProgram?.getBelts?.(carId) || [];
+      belts.forEach((belt, i) => {
+        const pattern =
+          Ammo?.formatBeltPattern?.(belt.slots) ||
+          (belt.slots || []).join('/');
+        opts.push({
+          value: `belt:${belt.id}`,
+          label: `程序弹链 ${i + 1}（${pattern}）`,
+        });
+      });
+    }
+    return opts.length ? opts : [{ value: 'type:ap', label: '穿甲 AP' }];
+  }
+
+  /**
+   * 迁移行为：旧 turret_ammo → select_ammo；`belt:id` 展开为 target=belt + slots。
+   * @param {{ id?: string, params?: Record<string, unknown> }} action
+   * @param {{ carId?: string, belts?: Array<{ id: string, slots: string[] }> }} [ctx]
+   */
+  function migrateAction(action, ctx) {
+    if (!action || typeof action !== 'object') {
+      return { id: 'noop', params: {} };
+    }
+    const params = { ...(action.params || {}) };
+    if (action.id === 'turret_ammo') {
+      let ammo = String(params.ammo ?? params.target ?? 'ap')
+        .replace(/^type:/i, '')
+        .toLowerCase();
+      const legacyMap = { he: 'ap', sap: 'ap', ap: 'ap', t: 't' };
+      ammo = legacyMap[ammo] || (ammo === 'ap' || ammo === 't' ? ammo : 'ap');
+      return { id: 'select_ammo', params: { target: `type:${ammo}` } };
+    }
+    if (action.id === 'select_ammo') {
+      if (params.target == null || params.target === '') {
+        const ammo = String(params.ammo || 'ap')
+          .replace(/^type:/i, '')
+          .toLowerCase();
+        return { id: 'select_ammo', params: { target: `type:${ammo || 'ap'}` } };
+      }
+      const parsed = parseAmmoTarget(params.target);
+      if (parsed.kind === 'type') {
+        return { id: 'select_ammo', params: { target: `type:${parsed.ammo}` } };
+      }
+      const carId = ctx?.carId || '';
+      let slots = Array.isArray(params.slots) ? params.slots : null;
+      if (!slots?.length && parsed.beltId) {
+        const found = (ctx?.belts || []).find((b) => b.id === parsed.beltId);
+        if (found?.slots) slots = found.slots;
+        else {
+          const live = window.LpAutoProgram?.getBelt?.(carId, parsed.beltId);
+          if (live?.slots) slots = live.slots;
+        }
+      }
+      if (!slots?.length) {
+        slots = normalizeAmmoSlots(carId, null);
+      } else {
+        slots = normalizeAmmoSlots(carId, slots);
+      }
+      return { id: 'select_ammo', params: { target: 'belt', slots } };
+    }
+    return { id: action.id || 'noop', params };
+  }
+
+  /** 生成可读摘要行（carId 用于 ammoTarget 选项文案）。 */
+  function summarizeRule(rule, carId) {
     const trig = triggerById(rule.trigger)?.label || rule.trigger;
     const cond = conditionById(rule.condition?.id);
-    const act = actionById(rule.action?.id);
+    const migratedAct = migrateAction(rule.action || {});
+    const act = actionById(migratedAct.id);
     const cp = rule.condition?.params || {};
-    const ap = rule.action?.params || {};
+    const ap = migratedAct.params || {};
     const condTxt = cond
-      ? `${cond.label}${formatParams(cond.params, cp)}`
+      ? `${cond.label}${formatParams(cond.params, cp, carId)}`
       : '(无条件)';
     const actTxt = act
-      ? `${act.label}${formatParams(act.params, ap)}`
+      ? `${act.label}${formatParams(act.params, ap, carId)}`
       : '(无行为)';
     return `[${trig}] 若 ${condTxt} → ${actTxt}`;
   }
 
-  /** 把参数值格式化为摘要文案（select 显示选项中文）。 */
-  function formatParams(schema, values) {
+  /** 把参数值格式化为摘要文案（select / ammoTarget 显示选项中文或弹链图案）。 */
+  function formatParams(schema, values, carId) {
     if (!schema?.length) return '';
     const parts = schema.map((p) => {
       const v = values[p.key];
       if (v === undefined || v === '') return null;
+      if (p.type === 'ammoTarget') {
+        const parsed = parseAmmoTarget(v);
+        if (parsed.kind === 'belt') {
+          const slots = normalizeAmmoSlots(carId, values.slots);
+          const pattern =
+            window.LpArmedAmmo?.formatBeltPattern?.(slots) || slots.join('/');
+          return `弹链 ${pattern}`;
+        }
+        const opt = ammoTypeOptionsForCar(carId).find((o) => o.value === `type:${parsed.ammo}`);
+        return opt?.label || String(v);
+      }
       if (p.type === 'select' && Array.isArray(p.options)) {
         const opt = p.options.find((o) => o.value === v);
         return opt?.label || String(v);
@@ -556,6 +699,11 @@
     compare,
     compareOpParam,
     migrateConditionParams,
+    migrateAction,
+    parseAmmoTarget,
+    normalizeAmmoSlots,
+    ammoTypeOptionsForCar,
+    ammoTargetOptionsForCar,
     defaultGlobalVars,
     defaultCarVars,
     defaultRulesForCar,
@@ -578,6 +726,7 @@
     actionById,
     triggerById,
     summarizeRule,
+    formatParams,
     defaultParams,
   };
 })();

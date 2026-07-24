@@ -57,6 +57,8 @@
     editor = null;
     hidePasteDialog();
     hideUndoBanner({ clearSnapshot: false });
+    window.LpAutoProgramBelts?.unmount?.();
+    window.LpAutoProgramBelts?.unmountInline?.();
     root.hidden = true;
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-auto-console-open');
@@ -179,7 +181,7 @@
     parent.appendChild(block);
   }
 
-  /** 刷新左侧全局 / 车厢局部两块变量；换车厢时随 renderAll 更新局部值。 */
+  /** 刷新左侧全局 / 车厢局部两块变量；换车厢时随 renderAll 更新局部值与程序弹链。 */
   function renderVars() {
     if (!varsBox) return;
     varsBox.innerHTML = '';
@@ -187,13 +189,13 @@
     appendVarBlock(varsBox, '全局变量', 'global', globalVars);
 
     const car = (Spec()?.CARRIAGES || []).find((c) => c.id === selectedCarId);
-    const carTitle = car
+    const carTitleText = car
       ? `车厢局部变量 · ${car.map?.shortLabel || car.label || car.id}`
       : '车厢局部变量';
     const carVars = selectedCarId
       ? Prog().getCarVars?.(selectedCarId) || {}
       : {};
-    appendVarBlock(varsBox, carTitle, 'car', carVars);
+    appendVarBlock(varsBox, carTitleText, 'car', carVars);
 
     varsBox.querySelectorAll('input[data-var]:not([readonly])').forEach((input) => {
       input.addEventListener('change', () => {
@@ -215,6 +217,9 @@
         discardImportUndo();
       });
     });
+
+    /* 程序弹链已并入「选择弹种/弹链」行为参数行，不再挂侧栏编辑器。 */
+    window.LpAutoProgramBelts?.unmount?.();
   }
 
   /**
@@ -271,7 +276,7 @@
     const row = document.createElement('div');
     row.className = `lp-auto-rule-row${priority ? '' : ' is-edge'}`;
     row.dataset.ruleId = rule.id;
-    const summary = Cat().summarizeRule(rule);
+    const summary = Cat().summarizeRule(rule, selectedCarId);
     const prioTitle = priority ? '优先级（数字越小越高）' : '显示序号（无优先级）';
     const prioHtml = priority
       ? `<span class="lp-auto-prio" title="${prioTitle}">#${index + 1}</span>`
@@ -513,7 +518,65 @@
   }
 
   /**
-   * 在选项行右侧渲染该条目的全部参数控件（select / var / number / text）。
+   * 渲染 select_ammo 的 ammoTarget 内联参数：弹种/弹链模式切换 + chips 或弹链槽位。
+   * @param {Record<string, unknown>} values
+   */
+  function renderAmmoTargetControl(values) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(selectedCarId);
+    const supportsBelt = Boolean(cfg?.supportsBelts);
+    const parsed = Cat()?.parseAmmoTarget?.(values?.target) || {
+      kind: 'type',
+      ammo: 'ap',
+    };
+    let kind = parsed.kind === 'belt' && supportsBelt ? 'belt' : 'type';
+    const ammo =
+      kind === 'type'
+        ? parsed.ammo || 'ap'
+        : String(
+            (cfg?.allowedTypes || ['ap']).includes(parsed.ammo) ? parsed.ammo : 'ap'
+          );
+    const targetVal = kind === 'belt' ? 'belt' : `type:${ammo}`;
+    if (values) {
+      values.target = targetVal;
+      if (kind === 'belt') {
+        values.slots = Cat()?.normalizeAmmoSlots?.(selectedCarId, values.slots) ||
+          Cat()?.normalizeAmmoSlots?.(selectedCarId, null) ||
+          ['ap', 'ap', 'ap'];
+      } else {
+        delete values.slots;
+      }
+    }
+    const typeOpts = Cat()?.ammoTypeOptionsForCar?.(selectedCarId) || [
+      { value: 'type:ap', label: '穿甲 AP', tag: 'AP', ammo: 'ap' },
+    ];
+    const modeHtml = supportsBelt
+      ? `<span class="lp-auto-ammo-mode" role="group" aria-label="选择弹种或弹链">
+          <button type="button" class="lp-auto-ammo-mode-btn${kind === 'type' ? ' is-on' : ''}" data-ammo-mode="type">弹种</button>
+          <button type="button" class="lp-auto-ammo-mode-btn${kind === 'belt' ? ' is-on' : ''}" data-ammo-mode="belt">弹链</button>
+        </span>`
+      : '';
+    const typeChips = typeOpts
+      .map((o) => {
+        const on = kind === 'type' && o.value === targetVal;
+        return `<button type="button" class="lp-auto-ammo-type-chip${on ? ' is-on' : ''}" data-ammo-type="${escapeHtml(o.ammo || o.value.replace(/^type:/, ''))}" ${kind === 'belt' ? 'hidden' : ''}>${escapeHtml(o.tag || String(o.ammo || '').toUpperCase())}</button>`;
+      })
+      .join('');
+    const slotsJson =
+      kind === 'belt' && Array.isArray(values?.slots)
+        ? escapeHtml(JSON.stringify(values.slots))
+        : '';
+    return `<span class="lp-auto-choice-inline lp-auto-ammo-target" data-ammo-target data-ammo-kind="${kind}">
+      <input type="hidden" data-pkey="target" value="${escapeHtml(targetVal)}">
+      <input type="hidden" data-pkey="slots" data-slots-json value="${slotsJson}" ${kind === 'belt' ? '' : 'disabled'}>
+      ${modeHtml}
+      <span class="lp-auto-ammo-type-chips" ${kind === 'belt' ? 'hidden' : ''}>${typeChips}</span>
+      <span class="lp-auto-ammo-belt-host" data-ammo-belt-host ${kind === 'type' ? 'hidden' : ''}></span>
+    </span>`;
+  }
+
+  /**
+   * 在选项行右侧渲染该条目的全部参数控件（select / ammoTarget / var / number / text）。
    * @param {Array<object>|undefined} schema
    * @param {Record<string, unknown>} values
    * @param {string} prefix
@@ -522,11 +585,16 @@
     if (!schema?.length) return '';
     const parts = schema.map((p) => {
       const v = values?.[p.key] ?? p.default ?? '';
+      if (p.type === 'ammoTarget') {
+        return renderAmmoTargetControl(values || {});
+      }
       if (p.type === 'select') {
+        const options = p.options || [];
+        let current = v;
         return `<span class="lp-auto-choice-inline">${renderSelectControl(
           p.key,
-          v,
-          p.options || []
+          current,
+          options
         )}</span>`;
       }
       if (p.type === 'var') {
@@ -543,7 +611,8 @@
       }
       return `<input type="text" class="lp-auto-choice-text-input" data-pkey="${escapeHtml(p.key)}" value="${escapeHtml(v)}" placeholder="${escapeHtml(p.placeholder || '')}" aria-label="${escapeHtml(p.label || '文本')}">`;
     });
-    return `<span class="lp-auto-choice-params">${parts.join('')}</span>`;
+    const hasAmmo = schema.some((p) => p.type === 'ammoTarget');
+    return `<span class="lp-auto-choice-params${hasAmmo ? ' is-ammo-target' : ''}">${parts.join('')}</span>`;
   }
 
   /**
@@ -574,18 +643,149 @@
       </label>`;
   }
 
-  /** 把选项行内全部 data-pkey 控件写入 params。 */
+  /** 把选项行内全部 data-pkey 控件写入 params（含 ammoTarget 的 slots JSON）。 */
   function syncInlineParamsFromRow(row, params) {
     if (!row || !params) return;
     row.querySelectorAll('[data-pkey]').forEach((el) => {
       const key = el.getAttribute('data-pkey');
-      if (!key) return;
+      if (!key || el.disabled) {
+        if (key === 'slots' && el.disabled) delete params.slots;
+        return;
+      }
+      if (el.getAttribute('data-slots-json') != null) {
+        try {
+          const parsed = JSON.parse(el.value || '[]');
+          params.slots = Array.isArray(parsed)
+            ? Cat()?.normalizeAmmoSlots?.(selectedCarId, parsed) || parsed
+            : Cat()?.normalizeAmmoSlots?.(selectedCarId, null);
+        } catch {
+          params.slots = Cat()?.normalizeAmmoSlots?.(selectedCarId, null);
+        }
+        return;
+      }
       if (el.type === 'number') {
         const n = Number(el.value);
         params[key] = Number.isFinite(n) ? n : 0;
       } else {
         params[key] = el.value;
       }
+    });
+    const targetEl = row.querySelector('[data-pkey="target"]');
+    if (targetEl && String(targetEl.value).startsWith('type:')) {
+      delete params.slots;
+    }
+  }
+
+  /**
+   * 挂载/绑定 ammoTarget 内联控件（模式切换、弹种 chip、弹链槽位编辑器）。
+   * @param {HTMLElement} body
+   * @param {string} radioName
+   * @param {() => object} getParams
+   * @param {(id: string, row: HTMLElement) => void} selectRow
+   */
+  function bindAmmoTargetControls(body, radioName, getParams, selectRow) {
+    /** 将 wrap 所在行选中并同步 params。 */
+    const ensureSelected = (wrap) => {
+      const row = wrap.closest('.lp-auto-choice');
+      const radio = row?.querySelector(`input[name="${radioName}"]`);
+      if (!radio || !row) return null;
+      if (!radio.checked) {
+        radio.checked = true;
+        selectRow(radio.value, row);
+      }
+      return row;
+    };
+
+    /** 按模式刷新 wrap 内控件可见性并写回 hidden。 */
+    const applyMode = (wrap, kind, ammoId) => {
+      const supportsBelt = Boolean(window.LpArmedAmmo?.supportsBelts?.(selectedCarId));
+      const nextKind = kind === 'belt' && supportsBelt ? 'belt' : 'type';
+      wrap.dataset.ammoKind = nextKind;
+      const targetInput = wrap.querySelector('[data-pkey="target"]');
+      const slotsInput = wrap.querySelector('[data-pkey="slots"]');
+      const typeChips = wrap.querySelector('.lp-auto-ammo-type-chips');
+      const beltHost = wrap.querySelector('[data-ammo-belt-host]');
+      wrap.querySelectorAll('[data-ammo-mode]').forEach((btn) => {
+        btn.classList.toggle('is-on', btn.getAttribute('data-ammo-mode') === nextKind);
+      });
+      if (nextKind === 'type') {
+        const ammo =
+          ammoId ||
+          String(targetInput?.value || 'type:ap').replace(/^type:/, '') ||
+          'ap';
+        if (targetInput) targetInput.value = `type:${ammo}`;
+        if (slotsInput) {
+          slotsInput.value = '';
+          slotsInput.disabled = true;
+        }
+        if (typeChips) typeChips.hidden = false;
+        wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
+          chip.hidden = false;
+          chip.classList.toggle('is-on', chip.getAttribute('data-ammo-type') === ammo);
+        });
+        if (beltHost) {
+          window.LpAutoProgramBelts?.unmountInline?.(beltHost);
+          beltHost.hidden = true;
+          beltHost.replaceChildren();
+        }
+      } else {
+        const slots =
+          Cat()?.normalizeAmmoSlots?.(
+            selectedCarId,
+            (() => {
+              try {
+                return JSON.parse(slotsInput?.value || '[]');
+              } catch {
+                return null;
+              }
+            })()
+          ) || Cat()?.normalizeAmmoSlots?.(selectedCarId, null);
+        if (targetInput) targetInput.value = 'belt';
+        if (slotsInput) {
+          slotsInput.disabled = false;
+          slotsInput.value = JSON.stringify(slots);
+        }
+        if (typeChips) typeChips.hidden = true;
+        wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
+          chip.hidden = true;
+        });
+        if (beltHost) {
+          beltHost.hidden = false;
+          window.LpAutoProgramBelts?.mountInline?.(beltHost, selectedCarId, slots, {
+            onChange: (nextSlots) => {
+              if (slotsInput) {
+                slotsInput.disabled = false;
+                slotsInput.value = JSON.stringify(nextSlots);
+              }
+              const row = ensureSelected(wrap);
+              if (row) syncInlineParamsFromRow(row, getParams());
+            },
+          });
+        }
+      }
+      const row = ensureSelected(wrap);
+      if (row) syncInlineParamsFromRow(row, getParams());
+    };
+
+    body.querySelectorAll('[data-ammo-target]').forEach((wrap) => {
+      wrap.querySelectorAll('[data-ammo-mode]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          applyMode(wrap, btn.getAttribute('data-ammo-mode') || 'type');
+        });
+        btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      });
+      wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
+        chip.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          applyMode(wrap, 'type', chip.getAttribute('data-ammo-type') || 'ap');
+        });
+        chip.addEventListener('pointerdown', (e) => e.stopPropagation());
+      });
+      const kind = wrap.dataset.ammoKind || 'type';
+      if (kind === 'belt') applyMode(wrap, 'belt');
     });
   }
 
@@ -617,33 +817,40 @@
       syncInlineParamsFromRow(row, getParams());
     };
     body.querySelectorAll('.lp-auto-choice [data-pkey]').forEach((el) => {
+      if (el.closest('[data-ammo-target]')) return;
       el.addEventListener('input', () => applyFrom(el));
       el.addEventListener('change', () => applyFrom(el));
       el.addEventListener('pointerdown', (e) => e.stopPropagation());
     });
     bindCustomSelects(body);
+    bindAmmoTargetControls(body, radioName, getParams, selectRow);
   }
 
   /**
    * 渲染内置下拉（替代原生 select），选项 value 仍为 catalog id。
    * @param {string} pkey
    * @param {string} value
-   * @param {{ value: string, label: string }[]} options
+   * @param {{ value: string, label: string, title?: string }[]} options
    */
   function renderSelectControl(pkey, value, options) {
     const list = options || [];
     const current = list.find((o) => o.value === value) || list[0];
     const currentValue = current ? current.value : value;
     const currentLabel = current ? current.label : String(value || '');
+    const currentTitle = current?.title ? String(current.title) : '';
+    const triggerTitle = currentTitle
+      ? ` title="${escapeHtml(currentTitle)}"`
+      : '';
     const items = list
       .map((o) => {
         const selected = o.value === currentValue;
-        return `<li class="lp-auto-select-option${selected ? ' is-selected' : ''}" role="option" data-value="${escapeHtml(o.value)}" aria-selected="${selected ? 'true' : 'false'}">${escapeHtml(o.label)}</li>`;
+        const titleAttr = o.title ? ` title="${escapeHtml(o.title)}"` : '';
+        return `<li class="lp-auto-select-option${selected ? ' is-selected' : ''}" role="option" data-value="${escapeHtml(o.value)}" aria-selected="${selected ? 'true' : 'false'}"${titleAttr}>${escapeHtml(o.label)}</li>`;
       })
       .join('');
     return `
       <div class="lp-auto-select" data-lp-select>
-        <button type="button" class="lp-auto-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+        <button type="button" class="lp-auto-select-trigger" aria-haspopup="listbox" aria-expanded="false"${triggerTitle}>
           <span class="lp-auto-select-label">${escapeHtml(currentLabel)}</span>
           <span class="lp-auto-select-chevron" aria-hidden="true"></span>
         </button>
@@ -697,6 +904,9 @@
           const next = opt.getAttribute('data-value') || '';
           hidden.value = next;
           if (labelEl) labelEl.textContent = opt.textContent || next;
+          const tip = opt.getAttribute('title') || '';
+          if (tip) trigger.setAttribute('title', tip);
+          else trigger.removeAttribute('title');
           menu.querySelectorAll('.lp-auto-select-option').forEach((o) => {
             const on = o === opt;
             o.classList.toggle('is-selected', on);
@@ -742,8 +952,12 @@
     return schema
       .map((p) => {
         const v = values[p.key] ?? p.default ?? '';
-        if (p.type === 'select') {
-          return `<div class="lp-auto-param"><span>${escapeHtml(p.label)}</span>${renderSelectControl(p.key, v, p.options || [])}</div>`;
+        if (p.type === 'select' || p.type === 'ammoTarget') {
+          const options =
+            p.type === 'ammoTarget'
+              ? Cat()?.ammoTargetOptionsForCar?.(selectedCarId) || []
+              : p.options || [];
+          return `<div class="lp-auto-param"><span>${escapeHtml(p.label)}</span>${renderSelectControl(p.key, v, options)}</div>`;
         }
         if (p.type === 'var') {
           const writableOnly = prefix === 'act';

@@ -107,7 +107,10 @@
       icon.style.backgroundImage = '';
       icon.textContent = item.short;
     }
-    icon.classList.toggle('is-rotated', Number(stack.rot) === 90);
+    icon.classList.toggle(
+      'is-rotated',
+      Number(stack.rot) === 90 && Catalog.iconFollowsRot(stack.itemId),
+    );
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;
     } else {

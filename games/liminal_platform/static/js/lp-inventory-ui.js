@@ -20,6 +20,8 @@
   const cursorEl = document.getElementById('lpInventoryCursor');
   const settingsPanel = document.getElementById('lpInventorySettings');
   const closeButton = document.getElementById('lpInventoryClose');
+  const sortPlayerBagButton = document.getElementById('lpSortPlayerBag');
+  const sortStorageBagButton = document.getElementById('lpSortStorageBag');
   const settingsToggle = document.getElementById('lpInventorySettingsToggle');
   const tabsNav = document.getElementById('lpInventoryTabs');
   const detailPanel = document.getElementById('lpInventoryDetail');
@@ -34,8 +36,10 @@
   const detailUse = document.getElementById('lpInventoryDetailUse');
   const equipPreview = document.getElementById('lpEquipPreview');
   const hintEl = document.getElementById('lpInventoryHint');
+  const playerPanelTitle = document.getElementById('lpPlayerPanelTitle');
   const inventoryShell = root?.querySelector('.lp-inventory-shell') || null;
   const inventoryFooter = inventoryShell?.querySelector('.lp-inventory-footer') || null;
+  const PLAYER_PANEL_FALLBACK = '旅人';
 
   const EQUIP_HOSTS = [
     document.getElementById('lpEquipSlot0'),
@@ -94,10 +98,30 @@
     ? Entity.createAvatarEntity({ nickname: '' })
     : null;
 
-  /** 给图标节点打上/去掉 90° 旋转样式。 */
+  /** 武器/装备在 rot=90 时给图标加 is-rotated；其它类型仅足迹旋转、贴图 upright。 */
   function applyIconRotation(iconEl, stack) {
     if (!iconEl) return;
-    iconEl.classList.toggle('is-rotated', Core.stackRot(stack) === 90);
+    const rotate =
+      Core.stackRot(stack) === 90 && Catalog.iconFollowsRot(stack?.itemId);
+    iconEl.classList.toggle('is-rotated', Boolean(rotate));
+  }
+
+  /**
+   * 解析装备栏标题用的玩家昵称：本地皮套 → body data-nickname；空则「旅人」。
+   * @returns {string}
+   */
+  function resolvePlayerPanelTitle() {
+    const fromAvatar = String(window.LpGame?.getLocalAvatar?.()?.nickname || '').trim();
+    if (fromAvatar) return fromAvatar;
+    const fromBody = String(document.body?.dataset?.nickname || '').trim();
+    if (fromBody) return fromBody;
+    return PLAYER_PANEL_FALLBACK;
+  }
+
+  /** 把装备栏左侧标题同步为当前昵称（无则「旅人」）。 */
+  function syncPlayerPanelTitle() {
+    if (!playerPanelTitle) return;
+    playerPanelTitle.textContent = resolvePlayerPanelTitle();
   }
 
   /** 从场上角色同步皮套到装备预览实体（站立 idle）。 */
@@ -337,6 +361,30 @@
     }
   }
 
+  /**
+   * 自动整理背包或仓库网格；联机发 sort 意图并由权威快照对齐。
+   * @param {'player'|'storage'} bagName
+   */
+  function sortBagGrid(bagName) {
+    const inventory = bagName === 'storage' ? storage : player;
+    if (!inventory) return;
+    if (state.cursor || state.dragSource) {
+      window.LiminalInteract?.showToast?.('请先放下手中物品再整理');
+      return;
+    }
+    if (window.LpInventoryNet?.isActive?.()) {
+      netSend({ action: 'sort', bag: { bag: bagName } });
+      Core.sortInventory?.(inventory);
+      persistAndRender();
+      return;
+    }
+    if (!Core.sortInventory?.(inventory)) {
+      window.LiminalInteract?.showToast?.('整理失败，空间不足');
+      return;
+    }
+    persistAndRender();
+  }
+
   /** 权威快照到达后仅刷新 UI（不写盘、不改容量）。 */
   function renderAfterAuthority() {
     if (state.open) {
@@ -460,6 +508,21 @@
     }
   }
 
+  /**
+   * 槽位保持为 button（点击/拖拽语义），但禁止键盘焦点与蓝框选中。
+   * R/Shift 走 window 级监听，不依赖格子 focus。
+   */
+  function makeSlotUnfocusable(button) {
+    button.tabIndex = -1;
+    button.addEventListener('mousedown', (event) => {
+      // 阻止 pointer 按下时浏览器给 button 抢焦点（拖拽空格也会出蓝环）
+      event.preventDefault();
+    });
+    button.addEventListener('focus', () => {
+      button.blur();
+    });
+  }
+
   /** 创建单个槽位 DOM。 */
   function createSlotElement(inventory, index) {
     const button = document.createElement('button');
@@ -467,6 +530,7 @@
     button.className = 'lp-inventory-slot';
     button.dataset.inventoryId = inventory.id;
     button.dataset.slotIndex = String(index);
+    makeSlotUnfocusable(button);
     button.addEventListener('click', (event) => handleSlotClick(event, inventory, index));
     button.addEventListener('contextmenu', (event) => {
       event.preventDefault();
@@ -597,19 +661,52 @@
     return [];
   }
 
+  /** 就地写入堆叠朝向（0 删 rot，90 写 rot=90）。 */
+  function writeStackRot(stack, rot) {
+    if (!stack) return;
+    if (Number(rot) === 90) stack.rot = 90;
+    else delete stack.rot;
+  }
+
+  /**
+   * 拖拽中用于幽灵/占地预览的堆叠。
+   * 源仓拥挤时 toggleRotation 会失败，此时用 dragSource.pendingRot 覆盖朝向。
+   */
+  function effectiveDragStack() {
+    if (!state.dragSource || !state.dragMoved) return null;
+    const stack = state.dragSource.inventory.getSlot(state.dragSource.index);
+    if (!stack) return null;
+    if (state.dragSource.pendingRot == null) return stack;
+    const out = { ...stack };
+    writeStackRot(out, state.dragSource.pendingRot);
+    return out;
+  }
+
   /** 当前用于占地预览的手持堆叠（光标或拖拽中）。 */
   function heldStackForPreview() {
     if (state.cursor) return state.cursor;
-    if (state.dragSource && state.dragMoved) {
-      return state.dragSource.inventory.getSlot(state.dragSource.index);
-    }
-    return null;
+    return effectiveDragStack();
   }
 
   /** 放置预览时忽略的原点（同网格拖拽源）。 */
   function ignoreOriginFor(inventory) {
     if (!state.dragSource || state.dragSource.inventory !== inventory) return -1;
     return state.dragSource.index;
+  }
+
+  /**
+   * 指针悬停格 → 放置/预览原点，与 Core.placeOnSlot 对齐。
+   * 空位（含拖拽腾空的源足迹）用悬停格本身；其它占用格归并到该堆叠原点。
+   */
+  function placeOriginFromHover(inventory, hoverIndex) {
+    if (!inventory || hoverIndex == null || hoverIndex < 0) return -1;
+    const origin = inventory.originIndex(hoverIndex);
+    const ignoreOrigin = ignoreOriginFor(inventory);
+    // 源足迹仍在数据里但已腾空显示：当作空位，悬停哪格就以哪格为左上角
+    if (ignoreOrigin >= 0 && origin === ignoreOrigin) return hoverIndex;
+    const existing = inventory.getSlot(origin);
+    if (existing && ignoreOrigin !== origin) return origin;
+    return hoverIndex;
   }
 
   /** 清除占地预览高亮。 */
@@ -692,6 +789,7 @@
       return;
     }
 
+    const placeOrigin = placeOriginFromHover(inventory, hoverIndex);
     const originOfHover = inventory.originIndex(hoverIndex);
     const existing = inventory.getSlot(originOfHover);
     const hoveringOccupied =
@@ -719,11 +817,12 @@
       return;
     }
 
-    const cells = inventory.footprint(hoverIndex, held.itemId, heldRot);
+    // 空位放置：足迹原点与 placeOnSlot / finishDrag 同一套 placeOriginFromHover
+    const cells = inventory.footprint(placeOrigin, held.itemId, heldRot);
     const ok =
-      Boolean(cells) && inventory.canPlaceAt(hoverIndex, held.itemId, ignoreOrigin, heldRot);
+      Boolean(cells) && inventory.canPlaceAt(placeOrigin, held.itemId, ignoreOrigin, heldRot);
     if (!cells) {
-      const { col, row } = inventory.coordsOf(hoverIndex);
+      const { col, row } = inventory.coordsOf(placeOrigin);
       const clipped = [];
       for (let dy = 0; dy < size.h; dy += 1) {
         for (let dx = 0; dx < size.w; dx += 1) {
@@ -746,8 +845,10 @@
     }
     const target = document.elementFromPoint(clientX, clientY)?.closest?.('.lp-inventory-slot');
     if (!target || !root.contains(target)) {
+      const hadHover = state.hoverSlot;
       clearPlacePreview();
       state.hoverSlot = null;
+      if (hadHover) renderCursor();
       return;
     }
     const inv = inventoryById(target.dataset.inventoryId);
@@ -757,7 +858,10 @@
       state.hoverSlot = null;
       return;
     }
+    const prevInv = state.hoverSlot?.inventory;
     state.hoverSlot = { inventory: inv, index };
+    // 换网格时按新格宽重算幽灵，避免仓库/背包比例不一致
+    if (prevInv !== inv) renderCursor();
     applyPlacePreview(inv, index);
   }
 
@@ -818,7 +922,7 @@
   function updateInventoryHint() {
     if (!hintEl) return;
     if (!isCoarse()) {
-      hintEl.textContent = '拖拽移动 · R 旋转 · Shift+点击快速转移 · Tab 关闭';
+      hintEl.textContent = '拖拽移动 · R 旋转 · Shift+点击快速转移 · 整理 · Tab 关闭';
       return;
     }
     if (state.cursor) {
@@ -839,7 +943,7 @@
   }
 
   /**
-   * 桌面：详情挂在 inventory root（避开 shell 层叠/overflow）；
+   * 桌面：详情挂到 document.body，用高 z-index 盖过弹药箱/燃料/HUD 等游戏内 UI；
    * 移动端：挂回 shell（footer 前）以保持底部停靠布局。
    */
   function mountDetailHost() {
@@ -852,10 +956,8 @@
       }
       return;
     }
-    if (cursorEl) {
-      root.insertBefore(detailPanel, cursorEl);
-    } else {
-      root.appendChild(detailPanel);
+    if (detailPanel.parentNode !== document.body) {
+      document.body.appendChild(detailPanel);
     }
   }
 
@@ -896,25 +998,83 @@
   }
 
   /**
-   * 拖拽/持物幽灵边长：固定紧凑方块（约装备格 78%），不随足迹 w×h 放大。
-   * 网格上的占位预览仍由 place-* 高亮负责，与幽灵尺寸无关。
+   * 取某库存网格里可见槽，用于测实格边长（背包/仓库/地面格子可能不等宽）。
+   * @param {object|null|undefined} inventory
+   * @returns {HTMLElement|null}
    */
-  function cursorGhostPx() {
+  function visibleSlotProbeFor(inventory) {
+    if (!inventory) return null;
+    if (inventory === player) {
+      return playerGrid?.querySelector('.lp-inventory-slot:not([hidden])') || null;
+    }
+    if (inventory === storage) {
+      return storageGrid?.querySelector('.lp-inventory-slot:not([hidden])') || null;
+    }
+    if (inventory === state.groundInv && groundGrid) {
+      return groundGrid.querySelector('.lp-inventory-slot:not([hidden])');
+    }
+    return null;
+  }
+
+  /**
+   * 探测库存格边长（px）：约实格 78%，作幽灵单格单位。
+   * 优先当前悬停网格，避免仓库与背包格宽不同时幽灵比例跑偏。
+   * 网格 place-* 高亮仍按实格，与幽灵缩放无关。
+   */
+  function cursorGhostCellPx() {
     const probe =
+      visibleSlotProbeFor(state.hoverSlot?.inventory) ||
       root?.querySelector('.lp-equip-slot-host .lp-inventory-slot') ||
       playerGrid?.querySelector('.lp-inventory-slot:not([hidden])');
     const w = probe?.getBoundingClientRect?.().width;
-    const equip = w > 8 ? w : 48;
-    return Math.max(28, Math.round(equip * 0.78));
+    const cell = w > 8 ? w : 48;
+    return Math.max(24, Math.round(cell * 0.78));
   }
 
-  /** 光标幽灵用的堆叠：点击持物或拖拽中。 */
+  /**
+   * 按朝向足迹 w×h 算幽灵宽高；长边封顶 maxCells 格，避免巨型物品撑满指针。
+   * @param {{ w: number, h: number }} size orientedSize 结果
+   * @returns {{ w: number, h: number }}
+   */
+  function cursorGhostSizePx(size) {
+    const cell = cursorGhostCellPx();
+    const fw = Math.max(1, Number(size?.w) || 1);
+    const fh = Math.max(1, Number(size?.h) || 1);
+    let gw = cell * fw;
+    let gh = cell * fh;
+    const maxSide = cell * 3;
+    const longest = Math.max(gw, gh);
+    if (longest > maxSide) {
+      const scale = maxSide / longest;
+      gw *= scale;
+      gh *= scale;
+    }
+    return {
+      w: Math.max(24, Math.round(gw)),
+      h: Math.max(24, Math.round(gh)),
+    };
+  }
+
+  /**
+   * 幽灵锚点：指针落在足迹「左上角格」中心（非整块中心）。
+   * 与占地预览 / placeOnSlot 以悬停格为 origin 的约定对齐。
+   * @param {{ w: number, h: number }} ghostPx cursorGhostSizePx 结果
+   * @param {{ w: number, h: number }} size orientedSize 结果
+   * @returns {{ x: number, y: number }} 负 margin 用的锚点偏移
+   */
+  function cursorGhostTopLeftCellAnchor(ghostPx, size) {
+    const fw = Math.max(1, Number(size?.w) || 1);
+    const fh = Math.max(1, Number(size?.h) || 1);
+    return {
+      x: ghostPx.w / fw / 2,
+      y: ghostPx.h / fh / 2,
+    };
+  }
+
+  /** 光标幽灵用的堆叠：点击持物或拖拽中（含 pendingRot）。 */
   function heldGhostStack() {
     if (state.cursor) return state.cursor;
-    if (state.dragSource && state.dragMoved) {
-      return state.dragSource.inventory.getSlot(state.dragSource.index);
-    }
-    return null;
+    return effectiveDragStack();
   }
 
   /** 拖拽提起/结束后重绘网格，使源足迹显示为空或恢复占用。 */
@@ -922,7 +1082,7 @@
     renderGrids();
   }
 
-  /** 渲染鼠标持物 / 拖拽幽灵（统一紧凑方块，多格仅用 is-span 边框提示）。 */
+  /** 渲染鼠标持物 / 拖拽幽灵：外形按朝向足迹比例，锚在左上角格以对齐放置预览。 */
   function renderCursor() {
     const stack = heldGhostStack();
     if (!stack) {
@@ -942,14 +1102,16 @@
       return;
     }
     const size = Core.orientedSize(item.id, Core.stackRot(stack));
-    const ghost = cursorGhostPx();
+    const ghost = cursorGhostSizePx(size);
+    const anchor = cursorGhostTopLeftCellAnchor(ghost, size);
     cursorEl.hidden = false;
     // 移动端持物时可点幽灵双击旋转
     cursorEl.style.pointerEvents = isCoarse() && state.cursor ? 'auto' : 'none';
     cursorEl.classList.toggle('is-span', size.w > 1 || size.h > 1);
-    cursorEl.style.width = `${ghost}px`;
-    cursorEl.style.height = `${ghost}px`;
-    cursorEl.style.margin = `${-ghost / 2}px 0 0 ${-ghost / 2}px`;
+    cursorEl.style.width = `${ghost.w}px`;
+    cursorEl.style.height = `${ghost.h}px`;
+    // 勿用整块中心锚：多格时会相对 place-*（悬停格=足迹左上）整体偏右/下
+    cursorEl.style.margin = `${-anchor.y}px 0 0 ${-anchor.x}px`;
     cursorEl.replaceChildren();
     const icon = document.createElement('span');
     icon.className = 'lp-inventory-item-icon';
@@ -1076,7 +1238,7 @@
       return;
     }
 
-    const placeIndex = inventory.originIndex(index);
+    const placeIndex = placeOriginFromHover(inventory, index);
     const to = bagRef(inventory, placeIndex);
     const from = cursorSource;
 
@@ -1109,12 +1271,21 @@
       }
     }
 
-    const returned = Core.placeOnSlot(inventory, index, state.cursor);
+    // 联机：光标持物尚未从权威 take；须带 qty（右键分堆后不能整格搬走）与 rot
+    // （源格足迹冲突时 rotate 可能失败，与 drag pendingRot 同理）。
+    const holdRot = Core.stackRot(state.cursor);
+    const movingQty = Math.max(1, Number(state.cursor.qty) || 1);
+    const returned = Core.placeOnSlot(inventory, placeIndex, state.cursor);
     state.cursor = returned;
     persistAndRender();
     if (from && to) {
-      netSend({ action: 'transfer', from, to });
-      cursorSource = returned ? { ...to } : null;
+      const placedQty = returned ? movingQty - Math.max(0, Number(returned.qty) || 0) : movingQty;
+      if (placedQty > 0) {
+        const payload = { action: 'transfer', from, to, qty: placedQty };
+        payload.rot = holdRot === 90 ? 90 : 0;
+        netSend(payload);
+      }
+      cursorSource = returned ? { ...from } : null;
     }
     if (returned) {
       showDetail(returned, {
@@ -1126,7 +1297,7 @@
     else clearDetail();
   }
 
-  /** 右键分堆：拾起一半或放置一个（不交换异类）。 */
+  /** 右键分堆：拾起一半或放置一个（不交换异类）；联机带 qty/rot 的 transfer。 */
   function handleSlotRightClick(inventory, index) {
     if (state.dragSource) return;
     const origin = inventory.originIndex(index);
@@ -1144,6 +1315,7 @@
         if (Core.stackRot(stack) === 90) halfStack.rot = 90;
         state.cursor = halfStack;
       }
+      if (state.cursor) cursorSource = bagRef(inventory, origin);
       persistAndRender();
       return;
     }
@@ -1151,6 +1323,9 @@
     const current = inventory.getSlot(origin);
     if (current && current.itemId !== state.cursor.itemId) return;
 
+    const from = cursorSource;
+    const to = bagRef(inventory, origin);
+    const holdRot = Core.stackRot(state.cursor);
     const returned = Core.placeOnSlot(inventory, origin, {
       itemId: state.cursor.itemId,
       qty: 1,
@@ -1167,6 +1342,12 @@
       if (state.cursor.qty <= 0) state.cursor = null;
     }
     persistAndRender();
+    if (from && to && returned === null) {
+      const payload = { action: 'transfer', from, to, qty: 1 };
+      payload.rot = holdRot === 90 ? 90 : 0;
+      netSend(payload);
+      if (!state.cursor) cursorSource = null;
+    }
   }
 
   /** 开始拖拽槽位（有位移才真正转移，避免与 click 冲突）。 */
@@ -1263,6 +1444,23 @@
     if (!state.dragSource) return;
     const source = state.dragSource;
     const didMove = state.dragMoved;
+
+    // 先解析落点原点（仍持有 dragSource，腾空足迹才能按悬停格而非源原点算）
+    let targetInventory = null;
+    let hoverIndex = -1;
+    let dropOrigin = -1;
+    if (didMove) {
+      const target = document.elementFromPoint(event.clientX, event.clientY)
+        ?.closest?.('.lp-inventory-slot');
+      if (target && root.contains(target)) {
+        targetInventory = inventoryById(target.dataset.inventoryId);
+        hoverIndex = Number(target.dataset.slotIndex);
+        if (targetInventory && !Number.isNaN(hoverIndex)) {
+          dropOrigin = placeOriginFromHover(targetInventory, hoverIndex);
+        }
+      }
+    }
+
     state.dragSource = null;
     state.pointerId = null;
     syncDragSourceVisual();
@@ -1272,17 +1470,11 @@
     if (!didMove) return;
 
     state.suppressClick = true;
-    const target = document.elementFromPoint(event.clientX, event.clientY)
-      ?.closest?.('.lp-inventory-slot');
-    if (!target) return;
-
-    const targetInventory = inventoryById(target.dataset.inventoryId);
-    if (!targetInventory) return;
-    const targetIndex = Number(target.dataset.slotIndex);
-    if (targetInventory === source.inventory && targetIndex === source.index) return;
+    if (!targetInventory || dropOrigin < 0) return;
+    if (targetInventory === source.inventory && dropOrigin === source.index) return;
 
     const ammoPeek = source.inventory.getSlot(source.index);
-    const weaponPeek = targetInventory.getSlot(targetInventory.originIndex(targetIndex));
+    const weaponPeek = targetInventory.getSlot(targetInventory.originIndex(hoverIndex));
     if (Core.isAmmoOntoWeaponIntent(ammoPeek, weaponPeek)) {
       const moving = source.inventory.takeSlot(source.index);
       if (!moving) return;
@@ -1291,7 +1483,7 @@
         ammoIndex: source.index,
         ammoRef: bagRef(source.inventory, source.index),
         weaponInv: targetInventory,
-        weaponIndex: targetIndex,
+        weaponIndex: dropOrigin,
         ammoStack: moving,
       });
       if (outcome.status === 'rejected') {
@@ -1303,15 +1495,19 @@
 
     const moving = source.inventory.takeSlot(source.index);
     if (!moving) return;
+    if (source.pendingRot != null) writeStackRot(moving, source.pendingRot);
     const from = bagRef(source.inventory, source.index);
-    const to = bagRef(targetInventory, targetInventory.originIndex(targetIndex));
-    const returned = Core.placeOnSlot(targetInventory, targetIndex, moving);
+    const to = bagRef(targetInventory, dropOrigin);
+    const returned = Core.placeOnSlot(targetInventory, dropOrigin, moving);
     if (returned) {
       source.inventory.placeStack(source.index, returned);
     }
     persistAndRender();
     if (from && to) {
-      netSend({ action: 'transfer', from, to });
+      const payload = { action: 'transfer', from, to };
+      // 源格足迹冲突时 rotate 可能未进权威；放下时带上最终朝向
+      if (source.pendingRot != null) payload.rot = source.pendingRot;
+      netSend(payload);
     }
   }
 
@@ -1370,7 +1566,10 @@
     return true;
   }
 
-  /** 切换光标持物朝向（联机同步源格，因服务端尚未 take）。 */
+  /**
+   * 切换光标持物朝向。
+   * 联机先尝试 rotate 源格（权威尚未 take）；足迹冲突失败时放下 transfer 仍带 rot。
+   */
   function rotateCursorStack() {
     if (!state.cursor) return false;
     const next = Core.toggledRot(Core.stackRot(state.cursor));
@@ -1384,17 +1583,47 @@
     return true;
   }
 
-  /** 拖拽中切换源堆叠朝向，并刷新幽灵足迹。 */
-  function rotateDragStack() {
-    if (!state.dragSource) return false;
-    const { inventory, index } = state.dragSource;
-    if (!inventory.toggleRotation(index)) return false;
-    const ref = bagRef(inventory, index);
-    if (ref) netSend({ action: 'rotate', bag: ref });
-    persistAndRender();
+  /** 拖拽旋转后刷新幽灵与悬停占地预览（不依赖格子 focus）。 */
+  function refreshDragRotateVisual() {
+    renderCursor();
     if (state.hoverSlot) {
       applyPlacePreview(state.hoverSlot.inventory, state.hoverSlot.index);
     }
+  }
+
+  /**
+   * 拖拽中切换朝向并刷新幽灵足迹。
+   * 优先原地 toggleRotation；源仓拥挤失败时用 pendingRot（仓储拖出常见），
+   * 不要求槽位键盘焦点；放下时把 pendingRot 写进堆叠 / transfer。
+   */
+  function rotateDragStack() {
+    if (!state.dragSource) return false;
+    const { inventory, index } = state.dragSource;
+
+    if (state.dragSource.pendingRot != null) {
+      state.dragSource.pendingRot = Core.toggledRot(state.dragSource.pendingRot);
+      refreshDragRotateVisual();
+      return true;
+    }
+
+    if (inventory.toggleRotation(index)) {
+      const ref = bagRef(inventory, index);
+      if (ref) netSend({ action: 'rotate', bag: ref });
+      persistAndRender();
+      if (state.hoverSlot) {
+        applyPlacePreview(state.hoverSlot.inventory, state.hoverSlot.index);
+      }
+      return true;
+    }
+
+    // 已提起：源足迹放不下新朝向时仍旋转幽灵（与光标持物一致）
+    if (!state.dragMoved) return false;
+    const stack = inventory.getSlot(index);
+    if (!stack) return false;
+    state.dragSource.pendingRot = Core.toggledRot(Core.stackRot(stack));
+    const ref = bagRef(inventory, index);
+    if (ref) netSend({ action: 'rotate', bag: ref });
+    refreshDragRotateVisual();
     return true;
   }
 
@@ -1410,7 +1639,10 @@
     return rotateStackInPlace(inv, inv.originIndex(index));
   }
 
-  /** 桌面：物品栏打开时 R 优先旋转（盖过世界装填）。 */
+  /**
+   * 桌面：物品栏打开时 R 优先旋转（盖过世界装填）。
+   * 持物/拖拽中不依赖槽位 focus（格子 tabindex=-1）。
+   */
   function onInventoryKeyDown(event) {
     if (!state.open || event.repeat) return;
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
@@ -1422,10 +1654,17 @@
       event.key === 'r' ||
       event.key === 'R';
     if (!isRotateKey) return;
-    if (!state.cursor && !state.dragSource) {
-      const inspecting = root.querySelector('.lp-inventory-slot.is-inspecting');
-      if (!inspecting && !heldStackForPreview()) return;
+
+    if (state.cursor || state.dragSource) {
+      if (rotateHeldOrSelected()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
     }
+
+    const inspecting = root.querySelector('.lp-inventory-slot.is-inspecting');
+    if (!inspecting && !heldStackForPreview()) return;
     if (rotateHeldOrSelected()) {
       event.preventDefault();
       event.stopPropagation();
@@ -1451,6 +1690,7 @@
     state.openWorldX = worldX;
     state.inStorageCar = isInStorageCar(worldX);
     state.open = true;
+    syncPlayerPanelTitle();
     syncGroundPanel(worldX);
     state.mobileTab = hasSideLoot() ? 'nearby' : 'bag';
     root.hidden = false;
@@ -1576,6 +1816,8 @@
   }
 
   closeButton?.addEventListener('click', close);
+  sortPlayerBagButton?.addEventListener('click', () => sortBagGrid('player'));
+  sortStorageBagButton?.addEventListener('click', () => sortBagGrid('storage'));
   root.querySelector('.lp-inventory-backdrop')?.addEventListener('click', close);
   settingsToggle?.addEventListener('click', () => {
     const nextHidden = !settingsPanel.hidden;
@@ -1599,6 +1841,14 @@
   cursorEl.addEventListener('click', onCursorGhostClick);
   window.addEventListener('lp:bindings-changed', () => Bindings.renderBindings?.());
 
+  if (typeof MutationObserver === 'function' && document.body) {
+    const nickObserver = new MutationObserver(() => syncPlayerPanelTitle());
+    nickObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['data-nickname'],
+    });
+  }
+
   window.LpInventory = {
     open,
     close,
@@ -1614,8 +1864,10 @@
     renderAfterAuthority,
     clearCursorAfterAuthority,
     bagRef,
+    syncPlayerPanelTitle,
   };
 
+  syncPlayerPanelTitle();
   renderGrids();
   mountDetailHost();
   window.LpInputBindings?.renderBindings?.();

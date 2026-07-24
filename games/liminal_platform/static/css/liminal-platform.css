@@ -363,9 +363,9 @@ body.lp-crate-feed-open {
 }
 
 .lp-fuel-drag-ghost .lp-fuel-item-icon {
-  width: 48px;
-  height: 40px;
-  font-size: 14px;
+  width: 100%;
+  height: 100%;
+  font-size: clamp(10px, 42%, 14px);
 }
 
 .lp-fuel-item-qty,
@@ -385,12 +385,13 @@ body.lp-crate-feed-open {
   left: 0;
   top: 0;
   z-index: 30;
-  width: 64px;
-  height: 64px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
   pointer-events: none;
   filter: drop-shadow(0 6px 10px rgb(0 0 0 / 0.45));
+  /* JS 可按足迹覆盖 width/height；图标填满父盒 */
 }
 
 .lp-fuel-drag-ghost[hidden] {
@@ -444,7 +445,7 @@ body.lp-crate-feed-open {
   display: none !important;
 }
 
-.lp-guard-crate-root:not(.has-ammo-bottom) .lp-guard-ammo-bottom,
+/* 仅 layout 上挂 has-ammo-bottom（弹药模式）；勿用 root:not 与 layout:not 逗号 OR——否则 root 未挂 class 时底栏永远 display:none */
 .lp-guard-crate-layout:not(.has-ammo-bottom) .lp-guard-ammo-bottom {
   display: none !important;
 }
@@ -497,7 +498,22 @@ body.lp-crate-feed-open {
 
 .lp-guard-crate-rack {
   min-width: 0;
+  width: 100%;
+  height: 100%;
   align-items: center;
+  justify-content: flex-start;
+  padding: 12px 14px 14px;
+  border: 3px solid #4d7c0f;
+  background:
+    radial-gradient(circle at 50% 70%, rgb(132 204 22 / 0.18), transparent 62%),
+    linear-gradient(180deg, #1a2412, #0c1208);
+  color: #d9f99d;
+  pointer-events: auto;
+}
+
+.lp-guard-crate-root .lp-guard-crate-rack .lp-fuel-rack-title {
+  margin: 0 0 8px;
+  color: inherit;
 }
 
 .lp-guard-crate-rack.is-hot,
@@ -2063,10 +2079,7 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   color: #737373;
 }
 
-/* 弹种/弹链详情：复用 .lp-inventory-detail；挂 body 时需高于弹药箱/底栏 */
-.lp-armed-ammo-detail {
-  z-index: 60;
-}
+/* 弹种/弹链详情：类名 .lp-armed-ammo-detail；层叠与挂载见 .lp-inventory-detail + ensureDetailDom */
 
 .lp-armed-ammo-detail-icon {
   display: grid;
@@ -2077,22 +2090,7 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   color: #f8fafc;
 }
 
-/* ---- 弹药箱弹链编辑（仅 supportsBelts 车厢） ---- */
-
-.lp-guard-belt-panel {
-  width: min(520px, 92vw);
-  margin: 10px auto 0;
-  padding: 10px 12px 12px;
-  border: 1px solid rgb(163 163 163 / 0.4);
-  border-radius: var(--lp-radius);
-  background: rgb(12 12 12 / 0.78);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
-  color: #e5e5e5;
-}
-
-.lp-guard-belt-panel[hidden] {
-  display: none !important;
-}
+/* ---- 弹药箱底栏：弹链编辑 / 弹种介绍 ---- */
 
 .lp-guard-belt-header {
   display: flex;
@@ -2107,6 +2105,12 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   font-weight: 700;
   letter-spacing: 0.08em;
   color: #fde68a;
+}
+
+.lp-guard-type-note {
+  font-size: 11px;
+  color: var(--lp-text-muted);
+  letter-spacing: 0.04em;
 }
 
 .lp-guard-belt-add,
@@ -2193,6 +2197,79 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   color: #cbd5e1;
 }
 
+.lp-guard-belt-chip.is-chooser-open {
+  border-color: rgb(251 191 36 / 0.95);
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.4);
+  transform: scale(1.06);
+}
+
+/* 弹链槽位弹种选择器：body 门户；低于详情(90)、高于弹药箱/HUD */
+.lp-guard-belt-chooser {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 85;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 108px;
+  padding: 6px;
+  border: 1px solid rgb(115 115 115 / 0.75);
+  background: rgb(14 14 14 / 0.98);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.55);
+  pointer-events: auto;
+}
+
+.lp-guard-belt-chooser[hidden] {
+  display: none !important;
+}
+
+.lp-guard-belt-chooser-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgb(115 115 115 / 0.55);
+  border-radius: 0;
+  background: rgb(28 28 28 / 0.96);
+  color: #e5e5e5;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lp-guard-belt-chooser-opt:hover,
+.lp-guard-belt-chooser-opt:focus-visible {
+  border-color: rgb(163 163 163 / 0.9);
+  background: rgb(38 38 38 / 0.98);
+}
+
+.lp-guard-belt-chooser-opt.is-current,
+.lp-guard-belt-chooser-opt[aria-selected='true'] {
+  border-color: rgb(251 191 36 / 0.85);
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.3);
+}
+
+.lp-guard-belt-chooser-tag {
+  min-width: 28px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.lp-guard-belt-chooser-opt[data-ammo-id='t'] .lp-guard-belt-chooser-tag {
+  color: #86efac;
+}
+
+.lp-guard-belt-chooser-opt[data-ammo-id='ap'] .lp-guard-belt-chooser-tag {
+  color: #cbd5e1;
+}
+
+.lp-guard-belt-chooser-name {
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
 .lp-guard-belt-sep {
   color: #737373;
   font-size: 12px;
@@ -2203,6 +2280,53 @@ body.lp-turret-mode .lp-crosshair-alt .lp-crosshair-arm-e {
   font-size: 11px;
   color: var(--lp-text-muted);
   letter-spacing: 0.02em;
+}
+
+.lp-guard-type-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.lp-guard-type-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgb(115 115 115 / 0.55);
+  border-radius: 0;
+  background: rgb(20 20 20 / 0.92);
+  color: #e5e5e5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lp-guard-type-card.is-active {
+  border-color: rgb(251 191 36 / 0.85);
+  box-shadow: 0 0 0 1px rgb(251 191 36 / 0.3);
+}
+
+.lp-guard-type-tag {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.lp-guard-type-card[data-ammo-id='t'] .lp-guard-type-tag {
+  color: #86efac;
+}
+
+.lp-guard-type-name {
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
+.lp-guard-type-use {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--lp-text-muted);
 }
 
 .lp-load-error {
@@ -2615,12 +2739,18 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-inventory-float-header {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid rgb(163 163 163 / 0.16);
 }
 
 .lp-inventory-float-header .lp-inventory-panel-title {
   margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .lp-inventory-float-ground .lp-inventory-panel-title {
@@ -2714,7 +2844,7 @@ body.lp-inventory-open .lp-hud-top {
 .lp-equip-slot-host .lp-inventory-slot {
   width: 48px;
   min-height: 48px;
-  border: 1px solid rgb(115 115 115 / 0.65);
+  border: 1px solid rgb(115 115 115 / 0.38);
   border-radius: 0;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.45);
 }
@@ -2774,12 +2904,12 @@ body.lp-inventory-open .lp-hud-top {
   width: 100%;
 }
 
-/* 物品详情：挂在 inventory root 下，须高于 shell(1) / 侧栏(2) / 持物幽灵(30) */
+/* 物品/弹种详情：挂 body，须高于弹药箱·燃料(23) / 物品栏(20) / HUD·持物幽灵(30) / 调试条(80) */
 .lp-inventory-detail {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: 40;
+  z-index: 90;
   width: min(260px, 72vw);
   min-width: 0;
   min-height: 0;
@@ -2950,6 +3080,47 @@ body.lp-inventory-open .lp-hud-top {
   color: #d4d4d4;
 }
 
+.lp-inventory-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgb(163 163 163 / 0.28);
+}
+
+.lp-inventory-panel-heading .lp-inventory-panel-title {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lp-inventory-sort-button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 3px 8px;
+  border-radius: var(--lp-radius);
+  border: 1px solid rgb(82 82 82 / 0.55);
+  background: rgb(38 38 38 / 0.9);
+  color: #d4d4d4;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.lp-inventory-sort-button:hover {
+  border-color: rgb(163 163 163 / 0.55);
+  color: #f5f5f5;
+}
+
+.lp-inventory-sort-button:active {
+  background: rgb(64 64 64 / 0.95);
+}
+
 .lp-hands-bar {
   margin: 0;
   padding: 10px;
@@ -3037,8 +3208,8 @@ body.lp-inventory-open .lp-hud-top {
   max-width: 100%;
   aspect-ratio: var(--cols) / var(--rows);
   gap: 0;
-  border-top: 1px solid rgb(115 115 115 / 0.65);
-  border-left: 1px solid rgb(115 115 115 / 0.65);
+  border-top: 1px solid rgb(115 115 115 / 0.38);
+  border-left: 1px solid rgb(115 115 115 / 0.38);
   box-sizing: border-box;
 }
 
@@ -3054,17 +3225,26 @@ body.lp-inventory-open .lp-hud-top {
   position: relative;
   aspect-ratio: 1;
   border: none;
-  border-right: 1px solid rgb(115 115 115 / 0.65);
-  border-bottom: 1px solid rgb(115 115 115 / 0.65);
+  border-right: 1px solid rgb(115 115 115 / 0.38);
+  border-bottom: 1px solid rgb(115 115 115 / 0.38);
   border-radius: 0;
-  background: rgb(28 28 28 / 0.35);
+  background: rgb(28 28 28 / 0.22);
   box-shadow: none;
   padding: 0;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 格子用 button，但暂不支持键盘/手柄选格：去掉焦点环 */
+.lp-inventory-slot:focus,
+.lp-inventory-slot:focus-visible,
+.lp-inventory-slot:focus-within {
+  outline: none;
+  box-shadow: none;
 }
 
 .lp-inventory-slot.has-item {
-  border-color: rgb(163 163 163 / 0.7);
+  border-color: rgb(212 212 212 / 0.88);
   background: transparent;
 }
 
@@ -3130,7 +3310,7 @@ body.lp-inventory-open .lp-hud-top {
   color: #a3a3a3;
 }
 
-/* 持物幽灵：固定紧凑方块（小于旅人装备格 48px；JS 再按装备格 ×0.78 覆盖） */
+/* 持物幽灵：默认 1×1 锚在左上角格中心；JS 按朝向足迹覆盖宽高与 margin */
 .lp-inventory-cursor-slot {
   position: fixed;
   left: 0;
@@ -3871,16 +4051,31 @@ body.lp-inventory-open .lp-hud-top {
     height: min(220px, 42vh);
   }
 
+  .lp-guard-crate-root .lp-guard-crate-layout {
+    width: min(96vw, 420px);
+    gap: 10px;
+    max-height: min(88vh, 680px);
+  }
+
+  .lp-guard-crate-root .lp-guard-crate-top {
+    gap: 10px;
+  }
+
   .lp-guard-crate-zone {
     width: auto;
     min-width: 0;
     height: auto;
-    max-width: min(92vw, 360px);
+    max-width: none;
     padding: 10px 12px 12px;
   }
 
   .lp-guard-crate-root .lp-guard-crate-grid {
     --lp-crate-cell: min(40px, 18vw);
+  }
+
+  .lp-guard-crate-root .lp-guard-ammo-bottom {
+    min-height: 120px;
+    max-height: min(36vh, 260px);
   }
 
   .lp-fuel-item-slot,
@@ -4914,6 +5109,24 @@ body.lp-inventory-open .lp-hud-top {
   font-size: 11px;
   color: #8b93a7;
   line-height: 1.4;
+}
+
+.lp-auto-program-belts {
+  margin-top: 16px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #2a2f38;
+  border-radius: 8px;
+  background: #0c0f14;
+}
+
+.lp-auto-program-belts .lp-guard-belt-hint {
+  margin-bottom: 0;
+}
+
+.lp-auto-program-belts .lp-auto-empty {
+  margin: 6px 0;
+  font-size: 11px;
 }
 
 .lp-auto-editor {

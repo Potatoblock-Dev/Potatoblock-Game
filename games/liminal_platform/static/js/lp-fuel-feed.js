@@ -3,6 +3,7 @@
  */
 (() => {
   const Catalog = window.LpItemCatalog;
+  const Core = window.LpInventoryCore;
   const root = document.getElementById('lpFuelFeedRoot');
   const closeButton = document.getElementById('lpFuelFeedClose');
   const dropZone = document.getElementById('lpFuelDropZone');
@@ -287,9 +288,26 @@
     else openPanel();
   }
 
-  /** 放置拖拽幽灵并套用当前燃料外观。 */
+  /** 放置拖拽幽灵并套用当前燃料外观（按足迹比例，煤 1×1 仍为正方）。 */
   function placeGhost(clientX, clientY, itemId) {
     const item = Catalog?.getItem?.(itemId);
+    const size = Core?.orientedSize?.(itemId, 0) || { w: 1, h: 1 };
+    const probe = sourceGrid?.querySelector('.lp-inventory-slot, .lp-fuel-slot, button');
+    const raw = probe?.getBoundingClientRect?.().width;
+    const cell = Math.max(24, Math.round((raw > 8 ? raw : 48) * 0.78));
+    const fw = Math.max(1, Number(size.w) || 1);
+    const fh = Math.max(1, Number(size.h) || 1);
+    let gw = cell * fw;
+    let gh = cell * fh;
+    const maxSide = cell * 3;
+    const longest = Math.max(gw, gh);
+    if (longest > maxSide) {
+      const scale = maxSide / longest;
+      gw *= scale;
+      gh *= scale;
+    }
+    ghost.style.width = `${Math.max(24, Math.round(gw))}px`;
+    ghost.style.height = `${Math.max(24, Math.round(gh))}px`;
     const icon = ghost.querySelector('.lp-fuel-item-icon');
     if (icon && item) {
       icon.style.setProperty('--item-color', item.color);
@@ -315,6 +333,8 @@
     if (drag?.slotEl) drag.slotEl.classList.remove('is-dragging');
     drag = null;
     ghost.hidden = true;
+    ghost.style.width = '';
+    ghost.style.height = '';
     dropZone.classList.remove('is-hot');
   }
 

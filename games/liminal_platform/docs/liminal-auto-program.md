@@ -30,14 +30,14 @@
 
 比较类条件统一带 `params.op` + 阈值（或变量名）。可选：
 
-| `op` | 文案 |
-|------|------|
-| `eq` | 等于 |
-| `neq` | 不等于 |
-| `gt` | 大于 |
-| `lt` | 小于 |
-| `gte` | 大于等于 |
-| `lte` | 小于等于 |
+| `op` | UI 显示 | 悬浮提示 |
+|------|----------|----------|
+| `eq` | `=` | 等于 |
+| `neq` | `!=` | 不等于 |
+| `gt` | `>` | 大于 |
+| `lt` | `<` | 小于 |
+| `gte` | `>=` | 大于等于 |
+| `lte` | `<=` | 小于等于 |
 
 求值：`LpAutoProgramCatalog.compare(a, op, b)`（`LpAutoSensors.evaluateCondition` 调用）。  
 旧存档/剪贴板缺 `op` 时，加载迁移补默认：`enemy_hp_below` / `ammo_below` / `fuel_below` → `lt`；`speed_above` / `var_gt` → `gt`（条件 **id 保留旧名** 兼容）。
@@ -102,7 +102,7 @@
 
 炮塔规则（建议写在「卫兵」车厢）:
   - 持续判定 / 射程内存在敌方 → 锁定单位（最近）
-  - 瞬时触发 / 敌方生命值 < 10 → 炮塔切换弹种 碎甲弹
+  - 瞬时触发 / 敌方生命值 < 10 → 选择弹种/弹链（穿甲 AP）
   - 持续判定 / 射程内存在敌方 → 设置 $锁定计数器 = $锁定计数器 + 1
   - 瞬时触发 / $锁定计数器 > 10 → 锁定单位（生命值最低）；再把计数器清零（可拆两行）
 
@@ -127,7 +127,7 @@
 | 视野内目标数（比较） | | | | ✓ | |
 | 车速绝对值 / 变量（比较） / 车厢着火 / 总是 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 锁定单位 | ✓ | | | ✓ | |
-| 炮塔切换弹种 | ✓ | | | | |
+| 选择弹种/弹链 | ✓ | | | | |
 | 车厢设置速度 | | | ✓ | | |
 | 设置变量 / 发送警报 / 无操作 | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -152,7 +152,7 @@
 ```json
 {
   "kind": "liminal-auto-program",
-  "version": 2,
+  "version": 3,
   "vars": { "撤退速度": -40, "冲锋速度": 60 },
   "varsByCar": {
     "guard": {
@@ -162,6 +162,11 @@
       "剩余弹药数": 0
     }
   },
+  "beltsByCar": {
+    "guard": [
+      { "id": "pb_…", "slots": ["t", "t", "ap"] }
+    ]
+  },
   "rulesByCar": {
     "guard": [
       {
@@ -169,6 +174,13 @@
         "trigger": "while",
         "condition": { "id": "enemy_in_range", "params": {} },
         "action": { "id": "lock_unit", "params": { "target": "nearest" } },
+        "note": ""
+      },
+      {
+        "id": "r_…",
+        "trigger": "edge",
+        "condition": { "id": "enemy_hp_below", "params": { "op": "lt", "hp": 10 } },
+        "action": { "id": "select_ammo", "params": { "target": "type:ap" } },
         "note": ""
       }
     ]
@@ -194,13 +206,15 @@
 ```
 
 - `kind`: `liminal-auto-program`（整份覆盖）或 `liminal-auto-rule`（单条追加）  
-- `version`: 程序当前为 `2`（`vars`=全局，`varsByCar`=车厢局部）；单条规则为 `1`；仍接受旧版扁平 `vars`（局部键会迁移进各车）  
+- `version`: 程序当前为 `3`（+`beltsByCar`）；仍接受 v2；单条规则为 `1`；仍接受旧版扁平 `vars`（局部键会迁移进各车）  
 - `vars`: 全局变量；`varsByCar[carId]`: 该车厢局部变量  
+- `beltsByCar[carId]`: 程序弹链数组 `{ id, slots[] }`；`slots.length` = 该车 `LpArmedAmmo.slotsPerBelt`；组数 ≤ `maxBelts`；仅 `supportsBelts` 车厢有意义  
 - `rulesByCar[carId]`: **仍为一数组**（不拆 `continuousRules` / `edgeRules`）。加载/保存时会规范为 **while 段在前、edge 段在后**；while 段内顺序 = 优先级，edge 段内顺序仅美观  
 - 单条包内 `carId` 为参考；导入时以控制台**当前选中车厢**为准，并重新分配 `rule.id`  
 - `trigger`: `while` | `edge`  
 - `action.id` = `lock_unit` 时，`params.target` 为：`nearest` | `farthest` | `highest_hp` | `lowest_hp` | `highest_armor` | `lowest_armor`  
-- 旧版 `lock_nearest` / `lock_lowest_hp` 等会在加载/导入时自动迁成 `lock_unit`  
+- `action.id` = `select_ammo` 时，`params.target` 为 `type:<ammoId>`（如 `type:ap`）或 `belt:<programBeltId>`；运行时写入 `LpArmedAmmo` 内存自动装载 `autoByCar`（不改本机弹药箱弹链）  
+- 旧版 `lock_nearest` / `lock_lowest_hp` 等会在加载/导入时自动迁成 `lock_unit`；旧 `turret_ammo` 迁成 `select_ammo`  
 - 条件/行为带 `cars: ['guard', 'huigui', …]` 时仅这些车厢在向导中可选（`null` 表示全车）  
 - 导入时丢弃已退役键：`动态提前量`、`角速度修正`  
 本地持久化键：`lp-auto-program-v1`。覆盖导入的撤销快照仅存内存，不写 localStorage。
@@ -210,8 +224,10 @@
 - 新条件/行为：改 `LpAutoProgramCatalog`。比较类条件复用 `COMPARE_OPS` / `compareOpParam` / `compare`。  
 - 向导 UI：条件/行为的**全部** params 在选项行内联（`lp-auto-console`）；不再插入独立参数步。  
 - 默认着火警报：`LpAutoProgramCatalog.defaultRulesForCar` / `ensureStockRules`；`LpAutoProgram` 在 `emptyProgram` / `normalizeProgram` 中种子与迁移。  
-- 运行时：优先用 `LpAutoProgram.rulesForRuntime(carId)` → `{ continuous, edge }`；`continuous` 按数组顺序做优先级调度，`edge` 全部边沿触发、无顺序竞争。亦可读 `getRules(carId)`（已 while→edge 规范化）。  
+- 运行时：主循环 `LpAutoSensors.tick` 后 `LpAutoExecutors.tick`；用 `rulesForRuntime` → 持续规则条件为真则执行，瞬时规则上升沿执行。控制台打开时暂停调度。  
 - 条件求值：`LpAutoSensors.evaluateCondition(cond, carId)`；比较类走 `Catalog.compare`；`car_on_fire` 经 `isCarOnFire` / `setCarOnFire` 钩子，着火系统未接入前恒为假。  
-- 传感器局部变量：主循环 `LpAutoSensors.tick` → `LpAutoProgram.applySensorVars` 写入 `范围内目标数` / `剩余弹药数`（不刷 localStorage）；敌方可 `setHostiles` 或未来 `LpCombat.listHostiles`。  
-- 加载迁移：`migrateConditionParams` 为旧比较条件补 `op`；`migrateRule` 仍迁旧 `lock_*`。  
-- API：`LpAutoConsole.open()` / `.close()`；`LpAutoProgram.toShareText()` / `.importShareText(raw, { targetCarId })` / `.toRuleShareText(carId, rule)` / `.undoLastImport()`；交互点 `openAutoConsole`。
+- `select_ammo`：`LpAutoExecutors.executeAction` → `LpArmedAmmo.applyAmmoSelection` 写入内存 `autoByCar`（自动装载；不改弹药箱本机弹链）。`peekFireTypeId` / `advanceFireCursor` 优先用自动装载；玩家手动切组/弹种会 `clearAutoLoadout`。持续规则每帧重复写入同 pattern 时保留 cursor。  
+- 程序弹链编辑：卫兵侧栏 `LpAutoProgramBelts`（UX 对齐弹药箱底栏；槽长/组数取车厢配置）。  
+- 传感器局部变量：`LpAutoSensors.tick` → `applySensorVars` 写入 `范围内目标数` / `剩余弹药数`（不刷 localStorage）。  
+- 加载迁移：`migrateConditionParams` 补 `op`；`migrateAction` 迁 `turret_ammo`；`migrateRule` 仍迁旧 `lock_*`。  
+- API：`LpAutoConsole.open()` / `.close()`；`LpAutoProgram.getBelts` / `setBelts` / `toShareText()` / `.importShareText(raw, { targetCarId })` / `.undoLastImport()`；交互点 `openAutoConsole`。

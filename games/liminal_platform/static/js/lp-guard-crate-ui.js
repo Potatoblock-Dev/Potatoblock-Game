@@ -29,9 +29,11 @@
   function syncAmmoBottom() {
     if (!ammoBottom || !window.LpArmedAmmo) return;
     if (mode === 'ammo') {
+      root.classList.add('has-ammo-bottom');
       layout?.classList.add('has-ammo-bottom');
       window.LpArmedAmmo.mountCrateBottom?.(ammoBottom, 'guard');
     } else {
+      root.classList.remove('has-ammo-bottom');
       layout?.classList.remove('has-ammo-bottom');
       window.LpArmedAmmo.unmountCrateBottom?.();
       ammoBottom.hidden = true;
@@ -60,7 +62,7 @@
   let open = false;
   /** @type {'ammo'|'recycle'|null} */
   let mode = null;
-  /** @type {{ pointerId: number, from: 'crate'|'bag', slotEl: HTMLElement } | null} */
+  /** @type {{ pointerId: number, from: 'crate'|'bag', slotEl: HTMLElement, rot: number } | null} */
   let drag = null;
   /** 背包侧展示用临时库存（与真实背包同步，仅本 UI 渲染）。 */
   let bagViewInv = null;
@@ -150,10 +152,12 @@
     return inv;
   }
 
-  /** 图标是否按 90° 旋转显示。 */
+  /** 武器/装备在 rot=90 时给图标加 is-rotated；其它类型仅足迹旋转、贴图 upright。 */
   function applyIconRotation(iconEl, stack) {
     if (!iconEl) return;
-    iconEl.classList.toggle('is-rotated', Core.stackRot(stack) === 90);
+    const rotate =
+      Core.stackRot(stack) === 90 && Catalog.iconFollowsRot(stack?.itemId);
+    iconEl.classList.toggle('is-rotated', Boolean(rotate));
   }
 
   /**
@@ -216,6 +220,19 @@
     button.append(icon, qty);
   }
 
+  /**
+   * 弹药箱格禁止键盘焦点（与主物品栏一致；R 旋转不依赖格子 focus）。
+   */
+  function makeSlotUnfocusable(button) {
+    button.tabIndex = -1;
+    button.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+    });
+    button.addEventListener('focus', () => {
+      button.blur();
+    });
+  }
+
   /** 创建或复用一格按钮。 */
   function ensureSlotButton(container, inventory, index, side) {
     let button = container.children[index];
@@ -225,6 +242,7 @@
       button.className = 'lp-inventory-slot';
       button.dataset.crateSide = side;
       button.dataset.slotIndex = String(index);
+      makeSlotUnfocusable(button);
       button.addEventListener('pointerdown', (event) => {
         if (event.button != null && event.button !== 0) return;
         if (!button.classList.contains('has-item')) return;
@@ -234,6 +252,7 @@
     } else {
       button.dataset.crateSide = side;
       button.dataset.slotIndex = String(index);
+      button.tabIndex = -1;
     }
     paintSlot(button, inventory, index);
   }
@@ -336,6 +355,7 @@
     bagViewInv = null;
     window.LpArmedAmmo?.unmountCrateBottom?.();
     if (ammoBottom) ammoBottom.hidden = true;
+    root.classList.remove('has-ammo-bottom');
     layout?.classList.remove('has-ammo-bottom');
     root.hidden = true;
     root.setAttribute('aria-hidden', 'true');
@@ -343,10 +363,41 @@
     window.LpTouchControls?.setEnabled(true);
   }
 
-  /** 放置拖拽幽灵（紧凑方块，不按占地拉伸）。 */
+  /**
+   * 按朝向足迹算箱拖拽幽灵宽高（与主栏 cursorGhost 同式：cell×w/h，长边≤3 格）。
+   * @param {string} itemId
+   * @param {number} rot
+   * @returns {{ w: number, h: number }}
+   */
+  function crateGhostSizePx(itemId, rot = 0) {
+    const size = Core.orientedSize(itemId, rot);
+    const probe =
+      crateGrid?.querySelector('.lp-inventory-slot:not([hidden])') ||
+      bagGrid?.querySelector('.lp-inventory-slot:not([hidden])');
+    const raw = probe?.getBoundingClientRect?.().width;
+    const cell = Math.max(24, Math.round((raw > 8 ? raw : 48) * 0.78));
+    const fw = Math.max(1, Number(size?.w) || 1);
+    const fh = Math.max(1, Number(size?.h) || 1);
+    let gw = cell * fw;
+    let gh = cell * fh;
+    const maxSide = cell * 3;
+    const longest = Math.max(gw, gh);
+    if (longest > maxSide) {
+      const scale = maxSide / longest;
+      gw *= scale;
+      gh *= scale;
+    }
+    return { w: Math.max(24, Math.round(gw)), h: Math.max(24, Math.round(gh)) };
+  }
+
+  /** 放置拖拽幽灵：外形跟足迹比例；弹药/弹壳图标 upright（iconFollowsRot=false）。 */
   function placeGhost(clientX, clientY) {
     const c = cfg();
     const item = Catalog?.getItem?.(c?.itemId);
+    const rot = drag?.rot ?? 0;
+    const dims = c ? crateGhostSizePx(c.itemId, rot) : { w: 38, h: 38 };
+    ghost.style.width = `${dims.w}px`;
+    ghost.style.height = `${dims.h}px`;
     const icon = ghost.querySelector('.lp-fuel-item-icon');
     if (icon && item) {
       icon.style.setProperty('--item-color', item.color);
@@ -362,16 +413,19 @@
         icon.style.backgroundImage = '';
         icon.textContent = item.short;
       }
+      applyIconRotation(icon, { itemId: item.id, rot });
     }
     ghost.hidden = false;
     ghost.style.transform = `translate(${clientX}px, ${clientY}px) translate(-50%, -50%)`;
   }
 
-  /** 结束拖拽。 */
+  /** 结束拖拽并清幽灵尺寸。 */
   function endDrag() {
     if (drag?.slotEl) drag.slotEl.classList.remove('is-dragging');
     drag = null;
     ghost.hidden = true;
+    ghost.style.width = '';
+    ghost.style.height = '';
     crateZone.classList.remove('is-hot');
     bagRack?.classList.remove('is-hot');
     bagGrid.classList.remove('is-hot');
@@ -389,13 +443,17 @@
     );
   }
 
-  /** 开始拖拽。 */
+  /** 开始拖拽；从源槽读取 rot，使幽灵比例与当前朝向一致。 */
   function beginDrag(event, from, slotEl) {
     const c = cfg();
     if (!open || !c) return;
     const have = from === 'crate' ? countCrate() : countPlayer(c.itemId);
     if (have <= 0) return;
-    drag = { pointerId: event.pointerId, from, slotEl };
+    const inv = from === 'crate' ? crateInventory() : bagViewInv;
+    const index = Number(slotEl.dataset.slotIndex);
+    const stack = Number.isFinite(index) ? inv?.getSlot?.(index) : null;
+    const rot = Core.stackRot(stack);
+    drag = { pointerId: event.pointerId, from, slotEl, rot };
     slotEl.classList.add('is-dragging');
     placeGhost(event.clientX, event.clientY);
     slotEl.setPointerCapture?.(event.pointerId);
