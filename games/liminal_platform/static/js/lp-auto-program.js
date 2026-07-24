@@ -285,12 +285,23 @@
     return { vars, varsByCar, rulesByCar, beltsByCar };
   }
 
-  /** 浅拷贝单条规则（含 condition/action.params）。 */
+  /**
+   * 拷贝单条规则；params 浅拷贝，slots 数组单独 slice，避免多条规则共享同一弹链引用。
+   * @param {object} r
+   */
   function cloneRule(r) {
+    const conditionParams = { ...(r.condition?.params || {}) };
+    const actionParams = { ...(r.action?.params || {}) };
+    if (Array.isArray(conditionParams.slots)) {
+      conditionParams.slots = conditionParams.slots.slice();
+    }
+    if (Array.isArray(actionParams.slots)) {
+      actionParams.slots = actionParams.slots.slice();
+    }
     return {
       ...r,
-      condition: { ...r.condition, params: { ...r.condition?.params } },
-      action: { ...r.action, params: { ...r.action?.params } },
+      condition: { ...r.condition, params: conditionParams },
+      action: { ...r.action, params: actionParams },
     };
   }
 
@@ -338,6 +349,38 @@
     const j = i + delta;
     if (i < 0 || j < 0 || j >= section.length) return false;
     [section[i], section[j]] = [section[j], section[i]];
+    setRules(carId, joinRulesByTrigger(continuous, edge));
+    return true;
+  }
+
+  /**
+   * 将规则放到目标触发段的指定下标（可跨段，顺带改 trigger）。
+   * index 为「除去本条后」的插入前位置（与控制台拖放命中一致）：0=段首，length=段末。
+   * while 段顺序=优先级；edge 段顺序仅美观。持久化同 setRules。
+   * @param {string} carId
+   * @param {string} ruleId
+   * @param {'while'|'edge'} targetTrigger
+   * @param {number} index
+   * @returns {boolean} 是否发生了位置或触发类型变化
+   */
+  function moveRuleToSlot(carId, ruleId, targetTrigger, index) {
+    const trigger = targetTrigger === 'edge' ? 'edge' : 'while';
+    const { continuous, edge } = splitRulesByTrigger(getRules(carId));
+    const fromEdge = edge.some((r) => r.id === ruleId);
+    const fromList = fromEdge ? edge : continuous;
+    const fromIdx = fromList.findIndex((r) => r.id === ruleId);
+    if (fromIdx < 0) return false;
+    const rule = fromList[fromIdx];
+    const toList = trigger === 'edge' ? edge : continuous;
+    const sameSection = (fromEdge && trigger === 'edge') || (!fromEdge && trigger !== 'edge');
+    let insertAt = Math.max(0, Number(index) || 0);
+    if (sameSection && insertAt === fromIdx && rule.trigger === trigger) {
+      return false;
+    }
+    fromList.splice(fromIdx, 1);
+    if (!sameSection) rule.trigger = trigger;
+    insertAt = Math.max(0, Math.min(insertAt, toList.length));
+    toList.splice(insertAt, 0, rule);
     setRules(carId, joinRulesByTrigger(continuous, edge));
     return true;
   }
@@ -511,11 +554,11 @@
       trigger: 'while',
       condition: {
         id: cond.id,
-        params: Cat.defaultParams(cond.params),
+        params: Cat.defaultParams(cond.params, carId),
       },
       action: {
         id: act.id,
-        params: Cat.defaultParams(act.params),
+        params: Cat.defaultParams(act.params, carId),
       },
       note: '',
     };
@@ -660,7 +703,7 @@
       kind: SHARE_KIND,
       version: SHARE_VERSION,
       _comment:
-        '枢机自动化 v3：vars=全局；varsByCar=车厢局部；beltsByCar=可选遗留程序弹链库；rulesByCar 仍为一数组（while→edge）。select_ammo：params.target=type:ap|belt，弹链模式另带 params.slots[]（嵌入规则，无需手输 belt id）。旧 belt:pb_… / turret_ammo 导入时自动迁移。',
+        '枢机自动化 v3：vars=全局；varsByCar=车厢局部；beltsByCar=可选遗留程序弹链库；rulesByCar 仍为一数组（while→edge）。select_ammo：连发车 params={target:belt,slots[]}，火炮车 params={target:type:ap}；由车厢 supportsBelts 自动决定，加载时 normalize。旧 type:ap / belt:pb_… / turret_ammo 导入时自动迁移。',
       vars: getGlobalVars(),
       varsByCar: { ...state.varsByCar },
       beltsByCar: { ...(state.beltsByCar || {}) },
@@ -899,6 +942,7 @@
     getRulesByTrigger,
     rulesForRuntime,
     moveRuleInSection,
+    moveRuleToSlot,
     upsertRule,
     removeRule,
     splitRulesByTrigger,

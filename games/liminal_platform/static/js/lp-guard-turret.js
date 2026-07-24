@@ -6,7 +6,8 @@
  * 深内侧仅跟踪不开火；禁止浅角打进甲板/货箱/友穹；
  * 多人：座位决定控哪塔；仅 1 名操作员时可双联；联机经 pose.turretId 同步占用与瞄准。
  * 连射抬升散布 bloom（准星张开 + 弹道抖动，封顶偏低）；双联时对角线准星显示 2 号塔 bloom。
- * 开火后坐；无抛壳特效；一发弹药 → 回收箱静默 +1 shell_casing（离线即时入箱；联机由服务端权威写入）。
+ * 开火后坐；一发弹药 → 回收箱有空则静默 +1 shell_casing（离线即时入箱；联机由服务端权威写入）；
+ * 回收箱已满则对每个实际开火枪口各播抛壳 FX（散落，不入箱；与联射枪口数对齐）。
  */
 (() => {
   const Core = window.LpInventoryCore;
@@ -759,15 +760,76 @@
 
 
   /**
-   * 弹壳落入回收箱：离线写入本地 recycleInv；联机跳过（由 handle_fire 权威写入）。
-   * 无视觉抛壳；开火成功时由 tryFire 直接调用。
+   * 回收箱是否还能再收 1 枚 shell_casing（只读，不写入）。
+   * 联机用快照中的 recycleInv 做本地预测，与服务端满箱丢弃一致。
+   */
+  function canDepositCasing() {
+    ensureInventories();
+    const inv = state.recycleInv;
+    if (!inv?.acceptsItem?.(CASING_ID)) return false;
+    const cap = inv.stackCap(CASING_ID);
+    for (let i = 0; i < inv.slots.length; i += 1) {
+      const raw = inv.slots[i];
+      if (!raw || raw.occupiedBy != null || raw.itemId !== CASING_ID) continue;
+      if (raw.qty < cap) return true;
+    }
+    return inv.findPlaceIndex(CASING_ID) >= 0;
+  }
+
+  /**
+   * 弹壳落入回收箱：离线写入本地 recycleInv；联机勿调（由 handle_fire 权威写入）。
+   * @returns {boolean} 是否成功入箱（箱满为 false）。
    */
   function depositCasing() {
-    if (window.LpInventoryNet?.isActive?.()) return;
+    if (window.LpInventoryNet?.isActive?.()) return false;
     ensureInventories();
-    state.recycleInv.addItem(CASING_ID, 1);
+    const leftover = state.recycleInv.addItem(CASING_ID, 1);
+    if (leftover > 0) return false;
     saveCrates();
     window.LpGuardCrateUi?.refresh?.();
+    return true;
+  }
+
+  /**
+   * 回收箱已满时的抛壳视觉：从枪口偏后散落（不飞入黄箱、不入库存）。
+   * 复用 LpCombat 弹壳粒子，避免卫士侧再维护一套 casings。
+   */
+  function spawnCasingFx(originX, originY, dirX, dirY) {
+    const item = Catalog?.getItem?.(CASING_ID) || null;
+    const fxItem = {
+      shellEjectSpeed: item?.shellEjectSpeed || { forward: -55, up: 165 },
+      shellCasingScale: item?.shellCasingScale ?? 1.2,
+    };
+    const len = Math.hypot(dirX, dirY) || 1;
+    const fx = dirX / len;
+    const fy = dirY / len;
+    const ejectX = originX - fx * 16;
+    const ejectY = originY - fy * 16;
+    window.LpCombat?.spawnShellCasing?.(ejectX, ejectY, fx, fy, fxItem);
+  }
+
+  /**
+   * 开火后弹壳结算。经济：耗 1 弹 → 最多 1 壳入箱（与联射枪口数无关）。
+   * - 回收箱有空：静默入箱一次（离线写本地；联机交给服务端）；不播抛壳 FX。
+   * - 回收箱已满：对每个实际开火枪口各播一次抛壳 FX（视觉独立，不入箱）。
+   * @param {Array<{x:number,y:number,dirX:number,dirY:number}>} firedMuzzles
+   */
+  function resolveCasingAfterFire(firedMuzzles) {
+    if (canDepositCasing()) {
+      if (!window.LpInventoryNet?.isActive?.()) depositCasing();
+      return;
+    }
+    const list = Array.isArray(firedMuzzles) ? firedMuzzles : [];
+    for (let i = 0; i < list.length; i += 1) {
+      const muzzle = list[i];
+      if (!muzzle) continue;
+      spawnCasingFx(
+        Number(muzzle.x) || 0,
+        Number(muzzle.y) || 0,
+        Number(muzzle.dirX) || 1,
+        Number(muzzle.dirY) || 0
+      );
+    }
   }
 
   /** 枢轴到准星的原始瞄准角（未钳制；画布 atan2）。 */
@@ -842,7 +904,7 @@
   /**
    * 炮塔开火：耗弹 1，仅对「本机控制且该塔射界/炮管就绪」的塔联射。
    * 各塔独立判定；无一就绪时只更新瞄准、不开火不耗弹。
-   * 每耗 1 发产生 1 枚弹壳（飞向回收箱；联机由服务端写入）。
+   * 每耗 1 发：回收箱有空 → +1 shell_casing（一次）；已满 → 每个开火枪口各抛壳 FX。
    */
   function tryFire(aimX, aimY) {
     if (!state.manned || state.fireCooldown > 0) return null;
@@ -901,8 +963,8 @@
     }
     if (muzzles.length === 0) return null;
     window.LpArmedAmmo?.advanceFireCursor?.('guard');
-    /* 一发弹药 → 回收箱 +1 shell_casing；无抛壳特效。联机由服务端权威写入。 */
-    if (!online) depositCasing();
+    /* 耗 1 弹：有空入箱一次；已满则每开火枪口各抛壳。联机入箱由服务端权威。 */
+    resolveCasingAfterFire(muzzles);
     window.LpCombat?.syncCrosshairBloom?.();
 
     window.LpSfx?.play?.(SHOT_SFX, {
@@ -945,7 +1007,8 @@
   }
 
   /**
-   * 远端炮塔开火反馈：后坐与炮口火光（弹道已由 session 生成；库存由服务端权威；无抛壳特效）。
+   * 远端炮塔开火反馈：后坐与炮口火光；回收箱已满时按 shots[] 每枪口补抛壳 FX。
+   * 弹道已由 session 生成；有空时库存由服务端权威写入（本机不重复入箱）。
    * 每发按枪口近邻踢后坐（双联 shots[] 时左右塔都会晃，不单靠 seat turretId）。
    */
   function noteRemoteFire(detail) {
@@ -999,6 +1062,19 @@
             ? 'left'
             : null;
       if (turretId) kickRecoil(turretId);
+    }
+    /* 远端开火：本机不写库存；箱满时对每个实际枪口各播抛壳（与本机 tryFire 一致）。 */
+    if (!canDepositCasing()) {
+      for (let i = 0; i < shots.length; i += 1) {
+        const shot = shots[i];
+        if (shot?.x == null || shot?.y == null) continue;
+        spawnCasingFx(
+          Number(shot.x),
+          Number(shot.y),
+          Number(shot.dirX) || 0,
+          Number(shot.dirY) || 0
+        );
+      }
     }
   }
 
@@ -1106,8 +1182,8 @@
   }
 
   /**
-   * 在车厢贴图之上绘制炮口火光（与车厢同套颠簸；无抛壳特效）。
-   * 开火原点仍用未颠簸世界坐标。
+   * 在车厢贴图之上绘制炮口火光（与车厢同套颠簸）。
+   * 抛壳粒子由 LpCombat.draw 绘制（回收箱满时 spawnCasingFx）。
    */
   function drawFx(ctx) {
     if (!guardCar()) return;

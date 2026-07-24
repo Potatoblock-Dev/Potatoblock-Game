@@ -215,7 +215,10 @@
     }
   }
 
-  /** 抛出地上弹壳（从抛壳口飞出，速度相对枪口朝向）。 */
+  /**
+   * 抛出地上弹壳（从抛壳口飞出，速度相对枪口朝向）。
+   * 卫士回收箱满时也走此路径播抛壳 FX（由 LpGuardTurret 调用）。
+   */
   function spawnShellCasing(originX, originY, dirX, dirY, item) {
     const speed = item?.shellEjectSpeed || { forward: -40, up: 140 };
     const len = Math.hypot(dirX, dirY) || 1;
@@ -862,6 +865,7 @@
     tryReload,
     spawnProjectile,
     spawnTracer,
+    spawnShellCasing,
     tick,
     draw,
     setWeapon,

@@ -922,7 +922,8 @@
   function updateInventoryHint() {
     if (!hintEl) return;
     if (!isCoarse()) {
-      hintEl.textContent = '拖拽移动 · R 旋转 · Shift+点击快速转移 · 整理 · Tab 关闭';
+      hintEl.textContent =
+        '拖拽移动 · R 旋转 · Q 丢地上 · Shift+点击快速转移 · 整理 · Tab 关闭';
       return;
     }
     if (state.cursor) {
@@ -1639,8 +1640,124 @@
     return rotateStackInPlace(inv, inv.originIndex(index));
   }
 
+  /** 是否为当前打开的地面堆库存。 */
+  function isGroundInventory(inventory) {
+    return Boolean(
+      inventory &&
+        (inventory === state.groundInv || String(inventory.id || '').startsWith('ground'))
+    );
+  }
+
   /**
-   * 桌面：物品栏打开时 R 优先旋转（盖过世界装填）。
+   * 解析悬停详情目标格（与 tooltip / R 旋转同一 `.is-inspecting`）。
+   * @returns {{ inventory: object, origin: number }|null}
+   */
+  function inspectingDropTarget() {
+    const inspecting = root.querySelector('.lp-inventory-slot.is-inspecting');
+    if (!inspecting) return null;
+    const inv = inventoryById(inspecting.dataset.inventoryId);
+    const index = Number(inspecting.dataset.slotIndex);
+    if (!inv || Number.isNaN(index)) return null;
+    const origin = inv.originIndex(index);
+    if (!inv.getSlot(origin)) return null;
+    return { inventory: inv, origin };
+  }
+
+  /**
+   * 把堆叠丢到脚边地面；联机发 `drop` 意图（权威 transfer 到 ground）。
+   * @param {object|null} inventory 源库存；已取出时可为 null
+   * @param {number} origin 源原点格
+   * @param {{ alreadyTaken?: object|null, fromRef?: object|null }} [options]
+   * @returns {boolean}
+   */
+  function dropStackToGround(inventory, origin, options = {}) {
+    const alreadyTaken = options.alreadyTaken || null;
+    const fromRef = options.fromRef || null;
+
+    if (!alreadyTaken && isGroundInventory(inventory)) {
+      window.LiminalInteract?.showToast?.('物品已在地面');
+      return false;
+    }
+
+    let stack = alreadyTaken;
+    let from = fromRef;
+    if (!stack) {
+      if (!inventory) return false;
+      stack = inventory.takeSlot(origin);
+      if (!stack) {
+        window.LiminalInteract?.showToast?.('无法丢弃');
+        return false;
+      }
+      from = bagRef(inventory, origin);
+    }
+
+    const worldX = state.openWorldX;
+    const floorY = Spec?.FLOOR_Y ?? 0;
+    window.LpGroundLoot?.dropStacks?.(worldX, [stack], floorY);
+    if (from) {
+      netSend({
+        action: 'drop',
+        from,
+        x: worldX,
+        y: floorY,
+      });
+    }
+    clearDetail();
+    persistAndRender();
+    return true;
+  }
+
+  /** 丢弃光标持物到地面。 */
+  function dropCursorToGround() {
+    if (!state.cursor) return false;
+    const stack = state.cursor;
+    const from = cursorSource;
+    state.cursor = null;
+    cursorSource = null;
+    clearPlacePreview();
+    return dropStackToGround(null, -1, { alreadyTaken: stack, fromRef: from });
+  }
+
+  /** 丢弃已提起拖拽堆叠到地面。 */
+  function dropDragToGround() {
+    if (!state.dragSource || !state.dragMoved) return false;
+    const { inventory, index, pendingRot } = state.dragSource;
+    state.dragSource = null;
+    state.dragMoved = false;
+    state.pointerId = null;
+    clearPlacePreview();
+    if (isGroundInventory(inventory)) {
+      window.LiminalInteract?.showToast?.('物品已在地面');
+      persistAndRender();
+      return false;
+    }
+    const stack = inventory.takeSlot(index);
+    if (!stack) {
+      window.LiminalInteract?.showToast?.('无法丢弃');
+      persistAndRender();
+      return false;
+    }
+    if (pendingRot != null) writeStackRot(stack, pendingRot);
+    return dropStackToGround(null, -1, {
+      alreadyTaken: stack,
+      fromRef: bagRef(inventory, index),
+    });
+  }
+
+  /**
+   * 丢弃当前目标到地面：持物 > 拖拽提起 > 悬停详情格。
+   * 不依赖槽位键盘焦点。
+   */
+  function dropHeldOrSelected() {
+    if (state.cursor) return dropCursorToGround();
+    if (state.dragSource && state.dragMoved) return dropDragToGround();
+    const target = inspectingDropTarget();
+    if (!target) return false;
+    return dropStackToGround(target.inventory, target.origin);
+  }
+
+  /**
+   * 桌面：物品栏打开时 R 旋转、Q 丢地上（盖过世界键）。
    * 持物/拖拽中不依赖槽位 focus（格子 tabindex=-1）。
    */
   function onInventoryKeyDown(event) {
@@ -1648,6 +1765,24 @@
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
       return;
     }
+
+    const isDropKey = event.code === 'KeyQ' || event.key === 'q' || event.key === 'Q';
+    if (isDropKey) {
+      if (state.cursor || (state.dragSource && state.dragMoved)) {
+        if (dropHeldOrSelected()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+      if (!inspectingDropTarget()) return;
+      if (dropHeldOrSelected()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+
     const isRotateKey =
       Bindings?.matchesKeyEvent?.('reload', event) ||
       event.code === 'KeyR' ||

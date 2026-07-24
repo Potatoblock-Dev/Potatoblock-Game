@@ -1,6 +1,7 @@
 /**
  * 枢机车厢全屏自动化控制台：横滑选车厢 → 持续判定 / 瞬时触发两段规则 → 分步编辑。
  * 持续判定段内上→下为优先级；瞬时触发段内换行仅美观、无优先级。
+ * 规则行支持拖拽换序 / 跨段改触发；↑↓ 仍作后备。桌面指针拖；触控长按后拖。
  * 支持整份程序 / 单条规则复制到剪贴板；导入按 kind 覆盖或追加。
  * 整份覆盖导入后可「撤销导入」恢复快照（约 25s 或下次编辑前）。
  * UI 参考 Pixel Starships 船员/房间自动化行表。
@@ -25,6 +26,10 @@
 
   /** 覆盖导入后「撤销导入」横幅可见时长（毫秒）。 */
   const UNDO_BANNER_MS = 25000;
+  /** 触控长按后才进入拖拽（毫秒），避免与滚动冲突。 */
+  const RULE_DRAG_LONG_PRESS_MS = 320;
+  /** 指针移动超过该像素才视为拖拽（摘要点击仍可编辑）。 */
+  const RULE_DRAG_MOVE_PX = 8;
 
   let open = false;
   let selectedCarId = null;
@@ -32,6 +37,22 @@
   let editor = null;
   /** @type {ReturnType<typeof setTimeout> | null} */
   let undoBannerTimer = null;
+  /**
+   * 规则行拖拽会话（指针模型；跨段改 trigger）。
+   * @type {null | {
+   *   ruleId: string,
+   *   fromTrigger: 'while'|'edge',
+   *   pointerId: number,
+   *   startX: number,
+   *   startY: number,
+   *   active: boolean,
+   *   fromHandle: boolean,
+   *   longPressTimer: ReturnType<typeof setTimeout> | null,
+   *   dropTrigger: 'while'|'edge' | null,
+   *   dropIndex: number,
+   * }}
+   */
+  let ruleDrag = null;
 
   function isOpen() {
     return open;
@@ -55,6 +76,7 @@
     if (!open) return;
     open = false;
     editor = null;
+    endRuleDrag();
     hidePasteDialog();
     hideUndoBanner({ clearSnapshot: false });
     window.LpAutoProgramBelts?.unmount?.();
@@ -181,7 +203,7 @@
     parent.appendChild(block);
   }
 
-  /** 刷新左侧全局 / 车厢局部两块变量；换车厢时随 renderAll 更新局部值与程序弹链。 */
+  /** 刷新左侧全局 / 车厢局部两块变量；换车厢时随 renderAll 更新局部值。 */
   function renderVars() {
     if (!varsBox) return;
     varsBox.innerHTML = '';
@@ -238,29 +260,236 @@
     });
   }
 
+  /** 清除拖放插入线与段高亮（保留源行 is-dragging）。 */
+  function clearRuleDropIndicator() {
+    rulesList.querySelectorAll('.lp-auto-drop-line').forEach((el) => el.remove());
+    rulesList.querySelectorAll('.lp-auto-rule-section.is-drop-target').forEach((el) => {
+      el.classList.remove('is-drop-target');
+    });
+  }
+
   /**
-   * 渲染一段规则区（持续判定 / 瞬时触发）。
-   * @param {{ title:string, hint:string, rules:object[], priority:boolean }} section
+   * 在目标段的插入下标处画水平插入线（相对「非拖拽中」行，与 moveRuleToSlot 下标一致）。
+   * @param {HTMLElement} body
+   * @param {number} index
+   */
+  function showRuleDropLine(body, index) {
+    clearRuleDropIndicator();
+    const section = body.closest('.lp-auto-rule-section');
+    if (section) section.classList.add('is-drop-target');
+    const line = document.createElement('div');
+    line.className = 'lp-auto-drop-line';
+    line.setAttribute('aria-hidden', 'true');
+    const rows = [...body.querySelectorAll('.lp-auto-rule-row')].filter(
+      (r) => !r.classList.contains('is-dragging')
+    );
+    if (!rows.length || index <= 0) {
+      const firstRow = body.querySelector('.lp-auto-rule-row');
+      body.insertBefore(line, firstRow || body.firstChild);
+      return;
+    }
+    if (index >= rows.length) {
+      const last = rows[rows.length - 1];
+      last.after(line);
+      return;
+    }
+    body.insertBefore(line, rows[index]);
+  }
+
+  /**
+   * 根据指针 Y 解析落点：所属触发段 + 段内插入下标。
+   * @param {number} clientY
+   * @returns {{ trigger: 'while'|'edge', index: number, body: HTMLElement } | null}
+   */
+  function hitTestRuleDrop(clientY) {
+    const sections = [...rulesList.querySelectorAll('.lp-auto-rule-section[data-trigger]')];
+    if (!sections.length) return null;
+    let best = null;
+    let bestDist = Infinity;
+    for (const section of sections) {
+      const body = section.querySelector('.lp-auto-rule-section-body');
+      if (!body) continue;
+      const trigger = section.getAttribute('data-trigger') === 'edge' ? 'edge' : 'while';
+      const rect = body.getBoundingClientRect();
+      const rows = [...body.querySelectorAll('.lp-auto-rule-row')].filter(
+        (r) => r.dataset.ruleId !== ruleDrag?.ruleId
+      );
+      let index = 0;
+      if (!rows.length) {
+        index = 0;
+      } else {
+        index = rows.length;
+        for (let i = 0; i < rows.length; i += 1) {
+          const mid = rows[i].getBoundingClientRect().top + rows[i].offsetHeight / 2;
+          if (clientY < mid) {
+            index = i;
+            break;
+          }
+        }
+      }
+      const clampedY = Math.max(rect.top, Math.min(clientY, rect.bottom));
+      const dist = Math.abs(clientY - clampedY);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { trigger, index, body };
+      }
+    }
+    return best;
+  }
+
+  /** 结束拖拽会话并卸下 document 指针监听。 */
+  function endRuleDrag() {
+    if (!ruleDrag) return;
+    if (ruleDrag.longPressTimer) {
+      clearTimeout(ruleDrag.longPressTimer);
+      ruleDrag.longPressTimer = null;
+    }
+    document.removeEventListener('pointermove', onRuleDragMove);
+    document.removeEventListener('pointerup', onRuleDragUp);
+    document.removeEventListener('pointercancel', onRuleDragUp);
+    clearRuleDropIndicator();
+    rulesList.querySelectorAll('.lp-auto-rule-row.is-dragging').forEach((el) => {
+      el.classList.remove('is-dragging');
+    });
+    rulesList.classList.remove('is-rule-dragging');
+    ruleDrag = null;
+  }
+
+  /** 按 ruleId 查找规则行节点。 */
+  function findRuleRowEl(ruleId) {
+    return (
+      [...rulesList.querySelectorAll('.lp-auto-rule-row')].find((r) => r.dataset.ruleId === ruleId) ||
+      null
+    );
+  }
+
+  /** 进入「已激活拖拽」态：源行半透明、列表禁选。 */
+  function activateRuleDrag() {
+    if (!ruleDrag || ruleDrag.active) return;
+    ruleDrag.active = true;
+    rulesList.classList.add('is-rule-dragging');
+    const row = findRuleRowEl(ruleDrag.ruleId);
+    if (row) row.classList.add('is-dragging');
+  }
+
+  /**
+   * 拖拽中更新插入线；记录 dropTrigger / dropIndex。
+   * @param {PointerEvent} event
+   */
+  function onRuleDragMove(event) {
+    if (!ruleDrag || event.pointerId !== ruleDrag.pointerId) return;
+    const dx = event.clientX - ruleDrag.startX;
+    const dy = event.clientY - ruleDrag.startY;
+    const moved = Math.hypot(dx, dy) >= RULE_DRAG_MOVE_PX;
+    if (!ruleDrag.active) {
+      /* 触控未进入拖拽前移动 → 取消，把滚动留给列表 */
+      if (event.pointerType === 'touch' && moved) {
+        endRuleDrag();
+        return;
+      }
+      if (ruleDrag.fromHandle || moved) {
+        if (ruleDrag.longPressTimer) {
+          clearTimeout(ruleDrag.longPressTimer);
+          ruleDrag.longPressTimer = null;
+        }
+        activateRuleDrag();
+      } else {
+        return;
+      }
+    }
+    event.preventDefault();
+    const hit = hitTestRuleDrop(event.clientY);
+    if (!hit) return;
+    ruleDrag.dropTrigger = hit.trigger;
+    ruleDrag.dropIndex = hit.index;
+    showRuleDropLine(hit.body, hit.index);
+    const src = findRuleRowEl(ruleDrag.ruleId);
+    if (src) src.classList.add('is-dragging');
+  }
+
+  /**
+   * 松手：若已激活则写入 moveRuleToSlot 并刷新；否则当作点击（摘要可编辑）。
+   * @param {PointerEvent} event
+   */
+  function onRuleDragUp(event) {
+    if (!ruleDrag || event.pointerId !== ruleDrag.pointerId) return;
+    const session = ruleDrag;
+    const wasActive = session.active;
+    const { ruleId, dropTrigger, dropIndex } = session;
+    endRuleDrag();
+    if (!wasActive || dropTrigger == null || !selectedCarId) return;
+    const moved = Prog().moveRuleToSlot
+      ? Prog().moveRuleToSlot(selectedCarId, ruleId, dropTrigger, dropIndex)
+      : false;
+    if (moved) {
+      discardImportUndo();
+      renderRules();
+    }
+  }
+
+  /**
+   * 在拖动手柄或摘要上开始潜在拖拽（触控需长按；手柄立即可拖）。
+   * @param {PointerEvent} event
+   * @param {object} rule
+   * @param {'while'|'edge'} fromTrigger
+   * @param {boolean} fromHandle
+   */
+  function beginRuleDrag(event, rule, fromTrigger, fromHandle) {
+    if (event.button != null && event.button !== 0) return;
+    if (ruleDrag) endRuleDrag();
+    ruleDrag = {
+      ruleId: rule.id,
+      fromTrigger,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      fromHandle,
+      longPressTimer: null,
+      dropTrigger: null,
+      dropIndex: 0,
+    };
+    document.addEventListener('pointermove', onRuleDragMove, { passive: false });
+    document.addEventListener('pointerup', onRuleDragUp);
+    document.addEventListener('pointercancel', onRuleDragUp);
+    const isTouch = event.pointerType === 'touch';
+    if (fromHandle && !isTouch) {
+      activateRuleDrag();
+      event.preventDefault();
+      return;
+    }
+    if (isTouch) {
+      ruleDrag.longPressTimer = setTimeout(() => {
+        if (!ruleDrag || ruleDrag.pointerId !== event.pointerId) return;
+        activateRuleDrag();
+      }, RULE_DRAG_LONG_PRESS_MS);
+    }
+  }
+
+  /**
+   * 渲染一段规则区（持续判定 / 瞬时触发）；body 为拖放命中区。
+   * @param {{ title:string, hint:string, rules:object[], priority:boolean, trigger:'while'|'edge' }} section
    */
   function appendRuleSection(section) {
     const wrap = document.createElement('section');
     wrap.className = `lp-auto-rule-section${section.priority ? ' is-priority' : ' is-cosmetic'}`;
+    wrap.dataset.trigger = section.trigger;
     wrap.innerHTML = `
       <header class="lp-auto-rule-section-head">
         <h4 class="lp-auto-rule-section-title">${section.title}</h4>
         <p class="lp-auto-rule-section-hint">${section.hint}</p>
       </header>
-      <div class="lp-auto-rule-section-body"></div>
+      <div class="lp-auto-rule-section-body" data-drop-body></div>
     `;
     const body = wrap.querySelector('.lp-auto-rule-section-body');
     if (!section.rules.length) {
       const empty = document.createElement('p');
-      empty.className = 'lp-auto-empty';
-      empty.textContent = '本段暂无规则';
+      empty.className = 'lp-auto-empty lp-auto-section-drop-pad';
+      empty.textContent = '本段暂无规则 · 可拖入';
       body.appendChild(empty);
     } else {
       section.rules.forEach((rule, index) => {
-        body.appendChild(buildRuleRow(rule, index, section.priority));
+        body.appendChild(buildRuleRow(rule, index, section.priority, section.trigger));
       });
     }
     rulesList.appendChild(wrap);
@@ -268,14 +497,17 @@
 
   /**
    * 构建单条规则行；priority=true 时 #n 与 ↑↓ 表示优先级，否则仅美观换行。
+   * 左侧手柄 / 摘要可拖；工具按钮不参与拖拽。
    * @param {object} rule
    * @param {number} index
    * @param {boolean} priority
+   * @param {'while'|'edge'} trigger
    */
-  function buildRuleRow(rule, index, priority) {
+  function buildRuleRow(rule, index, priority, trigger) {
     const row = document.createElement('div');
     row.className = `lp-auto-rule-row${priority ? '' : ' is-edge'}`;
     row.dataset.ruleId = rule.id;
+    row.dataset.trigger = trigger;
     const summary = Cat().summarizeRule(rule, selectedCarId);
     const prioTitle = priority ? '优先级（数字越小越高）' : '显示序号（无优先级）';
     const prioHtml = priority
@@ -283,18 +515,36 @@
       : `<span class="lp-auto-prio is-cosmetic" title="${prioTitle}">·</span>`;
     const upTitle = priority ? '上移（提高优先级）' : '上移（仅美观，无优先级）';
     const downTitle = priority ? '下移（降低优先级）' : '下移（仅美观，无优先级）';
+    const dragTitle = priority
+      ? '拖拽调整优先级；拖到「瞬时触发」可改触发类型'
+      : '拖拽调整显示顺序；拖到「持续判定」可改触发类型';
     row.innerHTML = `
+      <button type="button" class="lp-auto-rule-handle" data-drag-handle title="${dragTitle}" aria-label="拖拽排序">⋮⋮</button>
       ${prioHtml}
-      <button type="button" class="lp-auto-rule-summary" data-act="edit">${summary}</button>
+      <button type="button" class="lp-auto-rule-summary" data-act="edit" data-drag-summary>${summary}</button>
       <div class="lp-auto-rule-tools">
         <button type="button" data-act="up" title="${upTitle}">↑</button>
         <button type="button" data-act="down" title="${downTitle}">↓</button>
-        <button type="button" data-act="copy" title="复制本条规则">复制</button>
+        <button type="button" data-act="copy" title="复制" aria-label="复制">⧉</button>
         <button type="button" data-act="edit" title="编辑">✎</button>
         <button type="button" data-act="del" title="删除">×</button>
       </div>
     `;
+    const handle = row.querySelector('[data-drag-handle]');
+    const summaryBtn = row.querySelector('[data-drag-summary]');
+    handle?.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      beginRuleDrag(event, rule, trigger, true);
+    });
+    summaryBtn?.addEventListener('pointerdown', (event) => {
+      beginRuleDrag(event, rule, trigger, false);
+    });
     row.addEventListener('click', (event) => {
+      if (rulesList.classList.contains('is-rule-dragging')) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const btn = event.target.closest('[data-act]');
       if (!btn) return;
       const act = btn.getAttribute('data-act');
@@ -327,6 +577,7 @@
 
   /** 分两段渲染持续判定（有优先级）与瞬时触发（无优先级）。 */
   function renderRules() {
+    endRuleDrag();
     rulesList.innerHTML = '';
     if (!selectedCarId) {
       rulesList.innerHTML = '<p class="lp-auto-empty">先在上方选择一节车厢</p>';
@@ -340,28 +591,41 @@
       };
     if (!split.continuous.length && !split.edge.length) {
       rulesList.innerHTML =
-        '<p class="lp-auto-empty">尚无规则。点击「添加规则」。持续判定段内越靠上优先级越高；瞬时触发无优先级。</p>';
+        '<p class="lp-auto-empty">尚无规则。点击「添加规则」。持续判定段内越靠上优先级越高；瞬时触发无优先级。可拖拽行调整位置。</p>';
       return;
     }
     appendRuleSection({
       title: '持续判定',
-      hint: '列表越靠上优先级越高（约每帧检查）。',
+      hint: '列表越靠上优先级越高。拖拽排序；拖到下方可改为瞬时触发。',
       rules: split.continuous,
       priority: true,
+      trigger: 'while',
     });
     appendRuleSection({
       title: '瞬时触发',
-      hint: '换行 / 顺序仅美观，无优先级（边沿触发时各自独立执行）。',
+      hint: '顺序仅美观，无优先级。拖拽换行；拖到上方可改为持续判定。',
       rules: split.edge,
       priority: false,
+      trigger: 'edge',
     });
   }
 
   /** 分步向导：触发 → 条件（参数内联同行）→ 行为（参数内联同行）。 */
   function openWizard(mode, rule) {
+    const migratedAction = Cat()?.migrateAction
+      ? Cat().migrateAction(rule.action || {}, {
+          carId: selectedCarId,
+          belts: Prog()?.getBelts?.(selectedCarId) || [],
+        })
+      : rule.action;
     editor = {
       mode,
-      rule: JSON.parse(JSON.stringify(rule)),
+      rule: JSON.parse(
+        JSON.stringify({
+          ...rule,
+          action: migratedAction,
+        })
+      ),
       step: 0,
     };
     wizard.hidden = false;
@@ -418,14 +682,17 @@
     } else if (step.id === 'cond') {
       const conds = Cat().conditionsForCar(selectedCarId);
       if (!conds.some((c) => c.id === rule.condition.id)) {
-        rule.condition = { id: conds[0].id, params: Cat().defaultParams(conds[0].params) };
+        rule.condition = {
+          id: conds[0].id,
+          params: Cat().defaultParams(conds[0].params, selectedCarId),
+        };
       }
       body.innerHTML = conds
         .map((c) => {
           const values =
             rule.condition.id === c.id
               ? rule.condition.params
-              : Cat().defaultParams(c.params);
+              : Cat().defaultParams(c.params, selectedCarId);
           return renderChoiceRow({
             name: 'lpAutoCond',
             value: c.id,
@@ -440,7 +707,10 @@
         .join('');
       const selectCond = (id, row) => {
         const c = Cat().conditionById(id);
-        rule.condition = { id: c.id, params: Cat().defaultParams(c.params) };
+        rule.condition = {
+          id: c.id,
+          params: Cat().defaultParams(c.params, selectedCarId),
+        };
         syncInlineParamsFromRow(row, rule.condition.params);
       };
       bindChoiceRadios(body, 'lpAutoCond', selectCond);
@@ -455,12 +725,17 @@
     } else if (step.id === 'action') {
       const acts = Cat().actionsForCar(selectedCarId);
       if (!acts.some((a) => a.id === rule.action.id)) {
-        rule.action = { id: acts[0].id, params: Cat().defaultParams(acts[0].params) };
+        rule.action = {
+          id: acts[0].id,
+          params: Cat().defaultParams(acts[0].params, selectedCarId),
+        };
       }
       body.innerHTML = acts
         .map((a) => {
           const values =
-            rule.action.id === a.id ? rule.action.params : Cat().defaultParams(a.params);
+            rule.action.id === a.id
+              ? rule.action.params
+              : Cat().defaultParams(a.params, selectedCarId);
           return renderChoiceRow({
             name: 'lpAutoAct',
             value: a.id,
@@ -475,7 +750,10 @@
         .join('');
       const selectAct = (id, row) => {
         const a = Cat().actionById(id);
-        rule.action = { id: a.id, params: Cat().defaultParams(a.params) };
+        rule.action = {
+          id: a.id,
+          params: Cat().defaultParams(a.params, selectedCarId),
+        };
         syncInlineParamsFromRow(row, rule.action.params);
       };
       bindChoiceRadios(body, 'lpAutoAct', selectAct);
@@ -518,65 +796,83 @@
   }
 
   /**
-   * 渲染 select_ammo 的 ammoTarget 内联参数：弹种/弹链模式切换 + chips 或弹链槽位。
+   * 渲染 select_ammo 内联参数：由车厢 supportsBelts 自动决定弹链槽位或弹种 chips（无手动切换）。
    * @param {Record<string, unknown>} values
    */
   function renderAmmoTargetControl(values) {
-    const Ammo = window.LpArmedAmmo;
-    const cfg = Ammo?.getCarriage?.(selectedCarId);
-    const supportsBelt = Boolean(cfg?.supportsBelts);
-    const parsed = Cat()?.parseAmmoTarget?.(values?.target) || {
-      kind: 'type',
-      ammo: 'ap',
-    };
-    let kind = parsed.kind === 'belt' && supportsBelt ? 'belt' : 'type';
-    const ammo =
-      kind === 'type'
-        ? parsed.ammo || 'ap'
-        : String(
-            (cfg?.allowedTypes || ['ap']).includes(parsed.ammo) ? parsed.ammo : 'ap'
-          );
-    const targetVal = kind === 'belt' ? 'belt' : `type:${ammo}`;
+    const normalized =
+      Cat()?.normalizeSelectAmmoParams?.(selectedCarId, values || {}) ||
+      Cat()?.migrateAction?.(
+        { id: 'select_ammo', params: values || {} },
+        { carId: selectedCarId }
+      )?.params ||
+      values ||
+      {};
+    const kind = String(normalized.target) === 'belt' ? 'belt' : 'type';
     if (values) {
-      values.target = targetVal;
+      values.target = normalized.target;
       if (kind === 'belt') {
-        values.slots = Cat()?.normalizeAmmoSlots?.(selectedCarId, values.slots) ||
-          Cat()?.normalizeAmmoSlots?.(selectedCarId, null) ||
-          ['ap', 'ap', 'ap'];
+        values.slots = normalized.slots;
       } else {
         delete values.slots;
       }
     }
+    const targetVal = String(normalized.target || 'type:ap');
+    const ammo = targetVal.startsWith('type:')
+      ? targetVal.slice(5) || 'ap'
+      : 'ap';
     const typeOpts = Cat()?.ammoTypeOptionsForCar?.(selectedCarId) || [
       { value: 'type:ap', label: '穿甲 AP', tag: 'AP', ammo: 'ap' },
     ];
-    const modeHtml = supportsBelt
-      ? `<span class="lp-auto-ammo-mode" role="group" aria-label="选择弹种或弹链">
-          <button type="button" class="lp-auto-ammo-mode-btn${kind === 'type' ? ' is-on' : ''}" data-ammo-mode="type">弹种</button>
-          <button type="button" class="lp-auto-ammo-mode-btn${kind === 'belt' ? ' is-on' : ''}" data-ammo-mode="belt">弹链</button>
-        </span>`
-      : '';
-    const typeChips = typeOpts
-      .map((o) => {
-        const on = kind === 'type' && o.value === targetVal;
-        return `<button type="button" class="lp-auto-ammo-type-chip${on ? ' is-on' : ''}" data-ammo-type="${escapeHtml(o.ammo || o.value.replace(/^type:/, ''))}" ${kind === 'belt' ? 'hidden' : ''}>${escapeHtml(o.tag || String(o.ammo || '').toUpperCase())}</button>`;
-      })
-      .join('');
+    const typeChips =
+      kind === 'type'
+        ? typeOpts
+            .map((o) => {
+              const on = o.value === targetVal || o.ammo === ammo;
+              return `<button type="button" class="lp-auto-ammo-type-chip${on ? ' is-on' : ''}" data-ammo-type="${escapeHtml(o.ammo || o.value.replace(/^type:/, ''))}">${escapeHtml(o.tag || String(o.ammo || '').toUpperCase())}</button>`;
+            })
+            .join('')
+        : '';
     const slotsJson =
-      kind === 'belt' && Array.isArray(values?.slots)
-        ? escapeHtml(JSON.stringify(values.slots))
+      kind === 'belt' && Array.isArray(normalized.slots)
+        ? escapeHtml(JSON.stringify(normalized.slots))
         : '';
     return `<span class="lp-auto-choice-inline lp-auto-ammo-target" data-ammo-target data-ammo-kind="${kind}">
       <input type="hidden" data-pkey="target" value="${escapeHtml(targetVal)}">
       <input type="hidden" data-pkey="slots" data-slots-json value="${slotsJson}" ${kind === 'belt' ? '' : 'disabled'}>
-      ${modeHtml}
-      <span class="lp-auto-ammo-type-chips" ${kind === 'belt' ? 'hidden' : ''}>${typeChips}</span>
-      <span class="lp-auto-ammo-belt-host" data-ammo-belt-host ${kind === 'type' ? 'hidden' : ''}></span>
+      ${kind === 'type' ? `<span class="lp-auto-ammo-type-chips">${typeChips}</span>` : ''}
+      ${kind === 'belt' ? '<span class="lp-auto-ammo-belt-host" data-ammo-belt-host></span>' : ''}
     </span>`;
   }
 
   /**
-   * 在选项行右侧渲染该条目的全部参数控件（select / ammoTarget / var / number / text）。
+   * 渲染 numOrVar 内联控件：kind 下拉 + 数值框 / 变量下拉（按 kind 显隐）。
+   * @param {object} p catalog numOrVar 参数
+   * @param {Record<string, unknown>} values
+   * @param {string} prefix 'cond' | 'act'
+   */
+  function renderNumOrVarControl(p, values, prefix) {
+    const kindKey = `${p.key}Kind`;
+    const numKey = `${p.key}Num`;
+    const varKey = `${p.key}Var`;
+    const kindOpts = Cat()?.NUM_OR_VAR_KINDS || [
+      { value: 'num', label: '数值' },
+      { value: 'var', label: '变量' },
+    ];
+    let kind = String(values?.[kindKey] ?? p.defaultKind ?? 'num');
+    if (!kindOpts.some((o) => o.value === kind)) kind = kindOpts[0]?.value || 'num';
+    const numVal = values?.[numKey] ?? p.defaultNum ?? 0;
+    const varVal = values?.[varKey] ?? p.defaultVar ?? '计数器';
+    const showNum = kind === 'num';
+    return `<span class="lp-auto-choice-inline lp-auto-num-or-var" data-num-or-var data-nov-prefix="${escapeHtml(p.key)}">
+      <span class="lp-auto-nov-kind">${renderSelectControl(kindKey, kind, kindOpts)}</span>
+      <input type="number" class="lp-auto-choice-num" data-pkey="${escapeHtml(numKey)}" data-nov-role="num" value="${escapeHtml(numVal)}" aria-label="${escapeHtml(p.label || '数值')}" inputmode="decimal"${showNum ? '' : ' hidden'}>
+      <span class="lp-auto-nov-var" data-nov-role="var"${showNum ? ' hidden' : ''}>${renderSelectControl(varKey, varVal, varSelectOptions(prefix, varVal))}</span>
+    </span>`;
+  }
+
+  /**
+   * 在选项行右侧渲染该条目的全部参数控件（select / ammoTarget / var / number / numOrVar / static / text）。
    * @param {Array<object>|undefined} schema
    * @param {Record<string, unknown>} values
    * @param {string} prefix
@@ -584,13 +880,23 @@
   function renderInlineParamControls(schema, values, prefix) {
     if (!schema?.length) return '';
     const parts = schema.map((p) => {
+      if (p.type === 'static') {
+        return `<span class="lp-auto-choice-static">${escapeHtml(p.text || '')}</span>`;
+      }
+      if (p.type === 'numOrVar') {
+        return renderNumOrVarControl(p, values || {}, prefix);
+      }
       const v = values?.[p.key] ?? p.default ?? '';
       if (p.type === 'ammoTarget') {
         return renderAmmoTargetControl(values || {});
       }
       if (p.type === 'select') {
-        const options = p.options || [];
+        const options =
+          Cat()?.selectOptionsForParam?.(p, selectedCarId) || p.options || [];
         let current = v;
+        if (options.length && !options.some((o) => o.value === current)) {
+          current = options[0].value;
+        }
         return `<span class="lp-auto-choice-inline">${renderSelectControl(
           p.key,
           current,
@@ -677,7 +983,7 @@
   }
 
   /**
-   * 挂载/绑定 ammoTarget 内联控件（模式切换、弹种 chip、弹链槽位编辑器）。
+   * 挂载/绑定 ammoTarget 内联控件：火炮点选弹种 chip；连发挂载弹链槽位编辑器。
    * @param {HTMLElement} body
    * @param {string} radioName
    * @param {() => object} getParams
@@ -696,96 +1002,71 @@
       return row;
     };
 
-    /** 按模式刷新 wrap 内控件可见性并写回 hidden。 */
-    const applyMode = (wrap, kind, ammoId) => {
-      const supportsBelt = Boolean(window.LpArmedAmmo?.supportsBelts?.(selectedCarId));
-      const nextKind = kind === 'belt' && supportsBelt ? 'belt' : 'type';
-      wrap.dataset.ammoKind = nextKind;
+    /** 写回火炮弹种 chip 选择。 */
+    const applyType = (wrap, ammoId) => {
+      const ammo = ammoId || 'ap';
       const targetInput = wrap.querySelector('[data-pkey="target"]');
       const slotsInput = wrap.querySelector('[data-pkey="slots"]');
-      const typeChips = wrap.querySelector('.lp-auto-ammo-type-chips');
-      const beltHost = wrap.querySelector('[data-ammo-belt-host]');
-      wrap.querySelectorAll('[data-ammo-mode]').forEach((btn) => {
-        btn.classList.toggle('is-on', btn.getAttribute('data-ammo-mode') === nextKind);
-      });
-      if (nextKind === 'type') {
-        const ammo =
-          ammoId ||
-          String(targetInput?.value || 'type:ap').replace(/^type:/, '') ||
-          'ap';
-        if (targetInput) targetInput.value = `type:${ammo}`;
-        if (slotsInput) {
-          slotsInput.value = '';
-          slotsInput.disabled = true;
-        }
-        if (typeChips) typeChips.hidden = false;
-        wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
-          chip.hidden = false;
-          chip.classList.toggle('is-on', chip.getAttribute('data-ammo-type') === ammo);
-        });
-        if (beltHost) {
-          window.LpAutoProgramBelts?.unmountInline?.(beltHost);
-          beltHost.hidden = true;
-          beltHost.replaceChildren();
-        }
-      } else {
-        const slots =
-          Cat()?.normalizeAmmoSlots?.(
-            selectedCarId,
-            (() => {
-              try {
-                return JSON.parse(slotsInput?.value || '[]');
-              } catch {
-                return null;
-              }
-            })()
-          ) || Cat()?.normalizeAmmoSlots?.(selectedCarId, null);
-        if (targetInput) targetInput.value = 'belt';
-        if (slotsInput) {
-          slotsInput.disabled = false;
-          slotsInput.value = JSON.stringify(slots);
-        }
-        if (typeChips) typeChips.hidden = true;
-        wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
-          chip.hidden = true;
-        });
-        if (beltHost) {
-          beltHost.hidden = false;
-          window.LpAutoProgramBelts?.mountInline?.(beltHost, selectedCarId, slots, {
-            onChange: (nextSlots) => {
-              if (slotsInput) {
-                slotsInput.disabled = false;
-                slotsInput.value = JSON.stringify(nextSlots);
-              }
-              const row = ensureSelected(wrap);
-              if (row) syncInlineParamsFromRow(row, getParams());
-            },
-          });
-        }
+      if (targetInput) targetInput.value = `type:${ammo}`;
+      if (slotsInput) {
+        slotsInput.value = '';
+        slotsInput.disabled = true;
       }
+      wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
+        chip.classList.toggle('is-on', chip.getAttribute('data-ammo-type') === ammo);
+      });
       const row = ensureSelected(wrap);
       if (row) syncInlineParamsFromRow(row, getParams());
     };
 
-    body.querySelectorAll('[data-ammo-target]').forEach((wrap) => {
-      wrap.querySelectorAll('[data-ammo-mode]').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          applyMode(wrap, btn.getAttribute('data-ammo-mode') || 'type');
-        });
-        btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    /** 挂载连发弹链槽位并写回 hidden slots。 */
+    const mountBelt = (wrap) => {
+      const targetInput = wrap.querySelector('[data-pkey="target"]');
+      const slotsInput = wrap.querySelector('[data-pkey="slots"]');
+      const beltHost = wrap.querySelector('[data-ammo-belt-host]');
+      const slots =
+        Cat()?.normalizeAmmoSlots?.(
+          selectedCarId,
+          (() => {
+            try {
+              return JSON.parse(slotsInput?.value || '[]');
+            } catch {
+              return null;
+            }
+          })()
+        ) || Cat()?.normalizeAmmoSlots?.(selectedCarId, null);
+      if (targetInput) targetInput.value = 'belt';
+      if (slotsInput) {
+        slotsInput.disabled = false;
+        slotsInput.value = JSON.stringify(slots);
+      }
+      if (!beltHost) return;
+      window.LpAutoProgramBelts?.mountInline?.(beltHost, selectedCarId, slots, {
+        onChange: (nextSlots) => {
+          if (slotsInput) {
+            slotsInput.disabled = false;
+            slotsInput.value = JSON.stringify(nextSlots);
+          }
+          const row = ensureSelected(wrap);
+          if (row) syncInlineParamsFromRow(row, getParams());
+        },
       });
+      // 仅同步已选中行；勿对未选中的 select_ammo 行 ensureSelected（会抢走其它行为并重置 params）
+      const row = wrap.closest('.lp-auto-choice');
+      const radio = row?.querySelector(`input[name="${radioName}"]`);
+      if (radio?.checked && row) syncInlineParamsFromRow(row, getParams());
+    };
+
+    body.querySelectorAll('[data-ammo-target]').forEach((wrap) => {
       wrap.querySelectorAll('[data-ammo-type]').forEach((chip) => {
         chip.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          applyMode(wrap, 'type', chip.getAttribute('data-ammo-type') || 'ap');
+          applyType(wrap, chip.getAttribute('data-ammo-type') || 'ap');
         });
         chip.addEventListener('pointerdown', (e) => e.stopPropagation());
       });
-      const kind = wrap.dataset.ammoKind || 'type';
-      if (kind === 'belt') applyMode(wrap, 'belt');
+      if (wrap.dataset.ammoKind === 'belt') mountBelt(wrap);
     });
   }
 
@@ -794,6 +1075,51 @@
     body.querySelectorAll(`input[name="${name}"]`).forEach((el) => {
       el.addEventListener('change', () => {
         onSelect(el.value, el.closest('.lp-auto-choice'));
+      });
+    });
+  }
+
+  /**
+   * 按 kind 显隐 numOrVar 的数值框 / 变量下拉。
+   * @param {HTMLElement} wrap
+   */
+  function syncNumOrVarVisibility(wrap) {
+    if (!wrap) return;
+    const prefix = wrap.getAttribute('data-nov-prefix') || '';
+    const kindInput = wrap.querySelector(`[data-pkey="${prefix}Kind"]`);
+    const kind = String(kindInput?.value || 'num');
+    const showNum = kind === 'num';
+    const numEl = wrap.querySelector('[data-nov-role="num"]');
+    const varEl = wrap.querySelector('[data-nov-role="var"]');
+    if (numEl) numEl.hidden = !showNum;
+    if (varEl) varEl.hidden = showNum;
+  }
+
+  /**
+   * 绑定 numOrVar：kind 变更时切换显隐并写回 params。
+   * @param {HTMLElement} body
+   * @param {string} radioName
+   * @param {() => object} getParams
+   * @param {(id: string, row: HTMLElement) => void} selectRow
+   */
+  function bindNumOrVarControls(body, radioName, getParams, selectRow) {
+    body.querySelectorAll('[data-num-or-var]').forEach((wrap) => {
+      syncNumOrVarVisibility(wrap);
+      const prefix = wrap.getAttribute('data-nov-prefix') || '';
+      const kindHidden = wrap.querySelector(`[data-pkey="${prefix}Kind"]`);
+      if (!kindHidden || kindHidden.dataset.novBound === '1') return;
+      kindHidden.dataset.novBound = '1';
+      kindHidden.addEventListener('change', () => {
+        syncNumOrVarVisibility(wrap);
+        const row = wrap.closest('.lp-auto-choice');
+        const radio = row?.querySelector(`input[name="${radioName}"]`);
+        if (!radio || !row) return;
+        if (!radio.checked) {
+          radio.checked = true;
+          selectRow(radio.value, row);
+          return;
+        }
+        syncInlineParamsFromRow(row, getParams());
       });
     });
   }
@@ -824,6 +1150,7 @@
     });
     bindCustomSelects(body);
     bindAmmoTargetControls(body, radioName, getParams, selectRow);
+    bindNumOrVarControls(body, radioName, getParams, selectRow);
   }
 
   /**
@@ -947,17 +1274,29 @@
     });
   }
 
+  /** 渲染独立参数表单（含 numOrVar / static；主流程以行内联为主）。 */
   function renderParamForm(schema, values, prefix) {
     if (!schema?.length) return '<p class="lp-auto-empty">无需参数</p>';
     return schema
       .map((p) => {
+        if (p.type === 'static') {
+          return `<div class="lp-auto-param"><span class="lp-auto-choice-static">${escapeHtml(p.text || '')}</span></div>`;
+        }
+        if (p.type === 'numOrVar') {
+          return `<div class="lp-auto-param"><span>${escapeHtml(p.label)}</span>${renderNumOrVarControl(p, values, prefix)}</div>`;
+        }
         const v = values[p.key] ?? p.default ?? '';
-        if (p.type === 'select' || p.type === 'ammoTarget') {
+        if (p.type === 'ammoTarget') {
+          return `<div class="lp-auto-param"><span>${escapeHtml(p.label)}</span>${renderAmmoTargetControl(values)}</div>`;
+        }
+        if (p.type === 'select') {
           const options =
-            p.type === 'ammoTarget'
-              ? Cat()?.ammoTargetOptionsForCar?.(selectedCarId) || []
-              : p.options || [];
-          return `<div class="lp-auto-param"><span>${escapeHtml(p.label)}</span>${renderSelectControl(p.key, v, options)}</div>`;
+            Cat()?.selectOptionsForParam?.(p, selectedCarId) || p.options || [];
+          let current = v;
+          if (options.length && !options.some((o) => o.value === current)) {
+            current = options[0].value;
+          }
+          return `<div class="lp-auto-param"><span>${escapeHtml(p.label)}</span>${renderSelectControl(p.key, current, options)}</div>`;
         }
         if (p.type === 'var') {
           const writableOnly = prefix === 'act';
@@ -974,9 +1313,18 @@
       .join('');
   }
 
+  /** 绑定参数表单控件写回 target；含 ammoTarget / numOrVar。 */
   function bindParamForm(scope, target) {
     bindCustomSelects(scope);
+    bindAmmoTargetControls(
+      scope,
+      'lpAutoParamDummy',
+      () => target,
+      () => {}
+    );
+    bindNumOrVarControls(scope, 'lpAutoParamDummy', () => target, () => {});
     scope.querySelectorAll('[data-pkey]').forEach((el) => {
+      if (el.closest('[data-ammo-target]')) return;
       const key = el.getAttribute('data-pkey');
       const sync = () => {
         target[key] = el.type === 'number' ? Number(el.value) : el.value;
@@ -986,9 +1334,26 @@
     });
   }
 
-  /** 向导完成：写入对应触发段（改 trigger 时迁段）。 */
+  /** 向导完成：先从当前步 DOM 刷回内联参数，再写入对应触发段。 */
   function commitWizard() {
     if (!editor || !selectedCarId) return;
+    const body = wizard.querySelector('[data-role="body"]');
+    if (body) {
+      const actRow = body
+        .querySelector('input[name="lpAutoAct"]:checked')
+        ?.closest('.lp-auto-choice');
+      if (actRow) syncInlineParamsFromRow(actRow, editor.rule.action.params);
+      const condRow = body
+        .querySelector('input[name="lpAutoCond"]:checked')
+        ?.closest('.lp-auto-choice');
+      if (condRow) syncInlineParamsFromRow(condRow, editor.rule.condition.params);
+    }
+    if (editor.rule.action?.id === 'select_ammo' && Cat()?.normalizeSelectAmmoParams) {
+      editor.rule.action.params = Cat().normalizeSelectAmmoParams(
+        selectedCarId,
+        editor.rule.action.params || {}
+      );
+    }
     if (Prog().upsertRule) {
       Prog().upsertRule(selectedCarId, editor.rule, editor.mode);
     } else {

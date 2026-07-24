@@ -23,8 +23,9 @@
    3. 选择行为（**与当前车厢不匹配的行为不会出现**；该行为全部参数在同行内联编辑）  
 
 6. **行位置**  
-   - 持续判定：用 ↑ / ↓ 调整 **优先级**。  
-   - 瞬时触发：用 ↑ / ↓ 仅调整 **显示顺序**（文案会标明无优先级）。
+   - 持续判定：拖拽或 ↑ / ↓ 调整 **优先级**（越靠上越高）。  
+   - 瞬时触发：拖拽或 ↑ / ↓ 仅调整 **显示顺序**（无优先级）。  
+   - **跨段拖拽**会改 `trigger`（持续 ↔ 瞬时）；落点用水平插入线提示（桌面拖手柄/摘要；触控长按后拖）。
 
 ## 比较符（条件共用）
 
@@ -49,7 +50,10 @@
 | `fuel_below` | 锅炉燃料 | `lt` | `level` | power |
 | `speed_above` | 车速绝对值 | `gt` | `speed` | 全车 |
 | `var_gt` | 变量 | `gt` | `name`, `value` | 全车 |
+| `compare_values` | 数值比较 | `gt` | `leftKind`/`leftNum`/`leftVar` + `rightKind`/`rightNum`/`rightVar`（任一侧为数值或变量） | 全车 |
 | `targets_in_view` | 视野内目标数 | `gte` | `count`（默认 1） | huigui |
+
+`compare_values` 行内 UI：`[数值|变量] [值] [比较符] [数值|变量] [值] 时`；求值经 `Catalog.compare`，变量侧用 `LpAutoSensors.readProgramVar`。`var_gt` 仍保留（变量 vs 固定阈值的快捷形式）。
 
 `targets_in_view` 计数与传感器「范围内目标数」同源（`LpAutoSensors.countTargetsInRange('huigui')` / 绘轨探测射程）。
 
@@ -119,17 +123,20 @@
 
 目录项带 `cars: [...]`（`null` = 全车）。向导只列出当前选中车厢可用的项；已保存规则不受影响（列表仍可读摘要）。
 
-| 条件 / 行为 | guard 卫兵 | storage 仓储 | power 动力 | huigui 绘轨 | shuji 枢机 |
-|-------------|:----------:|:------------:|:----------:|:-----------:|:----------:|
-| 射程内存在敌方 / 敌方生命值（比较） | ✓ | | | ✓ | |
-| 弹药剩余量（比较） | ✓ | | | | |
-| 锅炉燃料（比较） | | | ✓ | | |
-| 视野内目标数（比较） | | | | ✓ | |
-| 车速绝对值 / 变量（比较） / 车厢着火 / 总是 | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 锁定单位 | ✓ | | | ✓ | |
-| 选择弹种/弹链 | ✓ | | | | |
-| 车厢设置速度 | | | ✓ | | |
-| 设置变量 / 发送警报 / 无操作 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 条件 / 行为 | guard 卫兵 | storage 仓储 | power 动力 | huigui 绘轨 | shuji 枢机 | artillery 火炮* |
+|-------------|:----------:|:------------:|:----------:|:-----------:|:----------:|:---------------:|
+| 射程内存在敌方 / 敌方生命值（比较） | ✓ | | | ✓ | | |
+| 炮塔当前锁定（分类） | ✓ 无/地/空 | | | | | ✓ 无/大型 |
+| 弹药剩余量（比较） | ✓ | | | | | |
+| 锅炉燃料（比较） | | | ✓ | | | |
+| 视野内目标数（比较） | | | | ✓ | | |
+| 车速绝对值 / 变量（比较） / 车厢着火 / 总是 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* |
+| 锁定单位 | ✓ | | | ✓ | | |
+| 选择弹种/弹链 | ✓ | | | | | |
+| 车厢设置速度 | | | ✓ | | | |
+| 设置变量 / 发送警报 / 无操作 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* |
+
+\* `artillery` 车厢尚未编入列车；条件已按火炮武装预留，卫兵 UI 仅显示机炮三项。
 
 ## 分享：复制 / 导入剪贴板
 
@@ -221,8 +228,8 @@
 
 ## 扩展
 
-- 新条件/行为：改 `LpAutoProgramCatalog`。比较类条件复用 `COMPARE_OPS` / `compareOpParam` / `compare`。  
-- 向导 UI：条件/行为的**全部** params 在选项行内联（`lp-auto-console`）；不再插入独立参数步。  
+- 新条件/行为：改 `LpAutoProgramCatalog`。比较类条件复用 `COMPARE_OPS` / `compareOpParam` / `compare`；左右皆可数值或变量时用 `numOrVarParam`（扁平 `*Kind`/`*Num`/`*Var`）+ `compare_values`。  
+- 向导 UI：条件/行为的**全部** params 在选项行内联（`lp-auto-console`）；`numOrVar` / `static` 类型同文件渲染；不再插入独立参数步。  
 - 默认着火警报：`LpAutoProgramCatalog.defaultRulesForCar` / `ensureStockRules`；`LpAutoProgram` 在 `emptyProgram` / `normalizeProgram` 中种子与迁移。  
 - 运行时：主循环 `LpAutoSensors.tick` 后 `LpAutoExecutors.tick`；用 `rulesForRuntime` → 持续规则条件为真则执行，瞬时规则上升沿执行。控制台打开时暂停调度。  
 - 条件求值：`LpAutoSensors.evaluateCondition(cond, carId)`；比较类走 `Catalog.compare`；`car_on_fire` 经 `isCarOnFire` / `setCarOnFire` 钩子，着火系统未接入前恒为假。  

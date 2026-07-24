@@ -84,7 +84,8 @@
     switch (action.id) {
       case 'select_ammo':
       case 'turret_ammo': {
-        const migrated = Cat()?.migrateAction?.(action) || action;
+        const migrated =
+          Cat()?.migrateAction?.(action, { carId }) || action;
         return executeSelectAmmo(carId, migrated.params || {});
       }
       case 'send_alert': {

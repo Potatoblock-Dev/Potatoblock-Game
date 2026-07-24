@@ -2,6 +2,8 @@
  * 枢机自动化传感器：只读局部变量刷新 + 条件求值钩子。
  * - 范围内目标数 / 剩余弹药数：每帧写入武装车厢局部变量
  * - 比较类条件经 Catalog.compare(op)；绘轨「视野内目标数」与范围内计数同源
+ * - compare_values：左右操作数可为数值或变量（leftKind/rightKind）
+ * - turret_lock_kind：读炮塔锁定分类（API / hostile.kind / stub 表）
  * - car_on_fire：着火系统未接入前读 stub 表（默认假）；可用 setCarOnFire 调试
  */
 (() => {
@@ -13,6 +15,15 @@
 
   /** @type {Record<string, boolean>} carId → 是否着火（stub；默认无键=假） */
   const carOnFire = Object.create(null);
+
+  /**
+   * 炮塔当前锁定分类 stub：carId → none|ground|air|large。
+   * 战斗/炮塔正式接入前由 setTurretLockKind 或 hostile.kind 推断。
+   * @type {Record<string, string>}
+   */
+  const turretLockKindByCar = Object.create(null);
+
+  const TURRET_LOCK_KINDS = new Set(['none', 'ground', 'air', 'large']);
 
   const ARMED_TARGET_CARS = ['guard', 'huigui'];
   const AMMO_CARS = ['guard'];
@@ -161,6 +172,59 @@
   }
 
   /**
+   * 把敌方对象粗分类为锁定类型；未知但有坐标时 stub 为 ground。
+   * @param {{ kind?: string, targetClass?: string, class?: string, x?: number }|null|undefined} hostile
+   * @returns {'none'|'ground'|'air'|'large'}
+   */
+  function classifyHostileLockKind(hostile) {
+    if (!hostile) return 'none';
+    const raw = String(hostile.kind || hostile.targetClass || hostile.class || '').toLowerCase();
+    if (TURRET_LOCK_KINDS.has(raw) && raw !== 'none') return raw;
+    if (raw.includes('air') || raw.includes('aerial') || raw.includes('fly')) return 'air';
+    if (raw.includes('large') || raw.includes('capital') || raw.includes('巨')) return 'large';
+    if (raw.includes('ground') || raw.includes('surface') || raw.includes('地')) return 'ground';
+    if (hostile.x != null && Number.isFinite(Number(hostile.x))) return 'ground';
+    return 'none';
+  }
+
+  /**
+   * 读取炮塔当前锁定分类：优先战斗/炮塔 API，其次 stub 表，默认 none。
+   * @param {string} carId
+   * @returns {'none'|'ground'|'air'|'large'}
+   */
+  function readTurretLockKind(carId) {
+    const fromApi =
+      window.LpCombat?.getLockedHostileKind?.(carId) ??
+      window.LpGuardTurret?.getLockKind?.(carId) ??
+      window.LpRadarScope?.getLockedTargetKind?.(carId);
+    if (typeof fromApi === 'string' && TURRET_LOCK_KINDS.has(fromApi)) return fromApi;
+
+    const locked = window.LpCombat?.getLockedHostile?.(carId);
+    if (locked) return classifyHostileLockKind(locked);
+
+    if (Object.prototype.hasOwnProperty.call(turretLockKindByCar, carId)) {
+      const stub = turretLockKindByCar[carId];
+      if (TURRET_LOCK_KINDS.has(stub)) return stub;
+    }
+    return 'none';
+  }
+
+  /**
+   * 写入炮塔锁定分类 stub（供 lock_unit / 战斗接入前调试）。
+   * @param {string} carId
+   * @param {string} kind none|ground|air|large
+   */
+  function setTurretLockKind(carId, kind) {
+    if (!carId) return;
+    const k = String(kind || 'none');
+    if (!TURRET_LOCK_KINDS.has(k) || k === 'none') {
+      delete turretLockKindByCar[carId];
+      return;
+    }
+    turretLockKindByCar[carId] = k;
+  }
+
+  /**
    * 敌方生命值：优先战斗模块锁定目标；否则取射程内最近目标的 hp。
    * @returns {number|null}
    */
@@ -237,6 +301,20 @@
   }
 
   /**
+   * 从 params 解析 numOrVar 操作数（left/right 等前缀）为有限数值。
+   * @param {string} carId
+   * @param {Record<string, unknown>|null|undefined} params
+   * @param {string} prefix
+   */
+  function resolveNumOrVarOperand(carId, params, prefix) {
+    const kind = String(params?.[`${prefix}Kind`] || 'num');
+    if (kind === 'var') {
+      return readProgramVar(carId, String(params?.[`${prefix}Var`] || ''));
+    }
+    return resolveNumber(params, `${prefix}Num`);
+  }
+
+  /**
    * 求值一条条件；未知 id 为假。着火系统落地前 car_on_fire 仅读 stub 表。
    * @param {{ id?: string, params?: Record<string, unknown> }|null|undefined} condition
    * @param {string} carId
@@ -254,6 +332,10 @@
         return true;
       case 'enemy_in_range':
         return countTargetsInRange(carId) > 0;
+      case 'turret_lock_kind': {
+        const want = String(params.kind || 'none');
+        return readTurretLockKind(carId) === want;
+      }
       case 'ammo_below':
         return compareValues(
           readAmmo(carId),
@@ -285,6 +367,12 @@
           resolveOp(params, id, 'gt'),
           resolveNumber(params, 'value')
         );
+      case 'compare_values':
+        return compareValues(
+          resolveNumOrVarOperand(carId, params, 'left'),
+          resolveOp(params, id, 'gt'),
+          resolveNumOrVarOperand(carId, params, 'right')
+        );
       case 'enemy_hp_below': {
         const hp = readEnemyHp(carId);
         if (hp == null) return false;
@@ -305,6 +393,9 @@
     readAbsSpeed,
     readProgramVar,
     readEnemyHp,
+    classifyHostileLockKind,
+    readTurretLockKind,
+    setTurretLockKind,
     rangeForCar,
     isCarOnFire,
     setCarOnFire,

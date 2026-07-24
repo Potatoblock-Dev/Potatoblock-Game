@@ -45,6 +45,36 @@
     };
   }
 
+  /** 数值/变量操作数 kind 选项（numOrVar 参数用）。 */
+  const NUM_OR_VAR_KINDS = [
+    { value: 'num', label: '数值' },
+    { value: 'var', label: '变量' },
+  ];
+
+  /**
+   * 构造「数值或变量」操作数参数（存 leftKind/leftNum/leftVar 等扁平键）。
+   * @param {string} prefix 'left' | 'right' 等键前缀
+   * @param {{ label?: string, defaultKind?: string, defaultNum?: number, defaultVar?: string }} [opts]
+   */
+  function numOrVarParam(prefix, opts = {}) {
+    return {
+      key: prefix,
+      label: opts.label || (prefix === 'left' ? '左值' : prefix === 'right' ? '右值' : prefix),
+      type: 'numOrVar',
+      defaultKind: opts.defaultKind || 'num',
+      defaultNum: opts.defaultNum ?? 0,
+      defaultVar: opts.defaultVar || '计数器',
+    };
+  }
+
+  /**
+   * 构造内联静态文案参数（不写 params，仅 UI/摘要）。
+   * @param {string} text
+   */
+  function staticTextParam(text) {
+    return { key: '', label: '', type: 'static', text: String(text || '') };
+  }
+
   /**
    * 数值比较：按 op 判断 a 与 b（非有限数视为不等成立条件为假）。
    * @param {number} a
@@ -102,6 +132,27 @@
     return { id, params };
   }
 
+  /** 机炮武装（guard）可选锁定分类。 */
+  const TURRET_LOCK_KIND_MG = [
+    { value: 'none', label: '无目标' },
+    { value: 'ground', label: '地面目标' },
+    { value: 'air', label: '空中目标' },
+  ];
+
+  /** 火炮武装（artillery）可选锁定分类。 */
+  const TURRET_LOCK_KIND_ARTILLERY = [
+    { value: 'none', label: '无目标' },
+    { value: 'large', label: '大型目标' },
+  ];
+
+  /** 摘要/存档用全量锁定分类（含机炮+火炮）。 */
+  const TURRET_LOCK_KIND_ALL = [
+    { value: 'none', label: '无目标' },
+    { value: 'ground', label: '地面目标' },
+    { value: 'air', label: '空中目标' },
+    { value: 'large', label: '大型目标' },
+  ];
+
   /**
    * 条件目录。cars: null=全车可用；否则为允许的 carId 列表。params 为空数组表示无需填参。
    * 比较类条件统一带 `op` + 阈值；id 保留旧名以兼容存档。
@@ -114,6 +165,25 @@
       hint: '炮塔/探测射程内是否有敌方单位',
       cars: ['guard', 'huigui'],
       params: [],
+    },
+    {
+      id: 'turret_lock_kind',
+      label: '炮塔当前锁定',
+      hint: '当前炮塔锁定分类是否匹配所选类型（机炮：无/地面/空中；火炮：无/大型）',
+      cars: ['guard', 'artillery'],
+      params: [
+        {
+          key: 'kind',
+          label: '类型',
+          type: 'select',
+          options: TURRET_LOCK_KIND_ALL,
+          optionsByCar: {
+            guard: TURRET_LOCK_KIND_MG,
+            artillery: TURRET_LOCK_KIND_ARTILLERY,
+          },
+          default: 'none',
+        },
+      ],
     },
     {
       id: 'enemy_hp_below',
@@ -164,6 +234,28 @@
         { key: 'name', label: '变量名', type: 'var', default: '计数器' },
         compareOpParam('gt'),
         { key: 'value', label: '阈值', type: 'number', default: 10 },
+      ],
+    },
+    {
+      id: 'compare_values',
+      label: '数值比较',
+      hint: '左值与右值按比较符判定；任一侧可为数值或变量',
+      cars: null,
+      params: [
+        numOrVarParam('left', {
+          label: '左值',
+          defaultKind: 'var',
+          defaultNum: 0,
+          defaultVar: '计数器',
+        }),
+        compareOpParam('gt'),
+        numOrVarParam('right', {
+          label: '右值',
+          defaultKind: 'num',
+          defaultNum: 10,
+          defaultVar: '计数器',
+        }),
+        staticTextParam('时'),
       ],
     },
     {
@@ -222,12 +314,12 @@
       id: 'select_ammo',
       label: '选择弹种/弹链',
       hint:
-        '在参数区选弹种，或（连发车）直接编辑弹链槽位；写入 params.target + 可选 params.slots，无需手输 id',
-      cars: ['guard'],
+        '连发车只编辑弹链槽位；火炮车只点选弹种。模式由车厢类型自动决定，无需手输 id',
+      cars: ['guard', 'artillery'],
       params: [
         {
           key: 'target',
-          label: '弹种/弹链',
+          label: '装载',
           type: 'ammoTarget',
           default: 'type:ap',
         },
@@ -423,6 +515,45 @@
     return CONDITIONS.filter((c) => !c.cars || c.cars.includes(carId));
   }
 
+  /**
+   * 是否火炮武装：carId=artillery，或已注册且 supportsBelts=false。
+   * @param {string} carId
+   */
+  function isArtilleryArmedCar(carId) {
+    if (carId === 'artillery') return true;
+    const cfg = window.LpArmedAmmo?.getCarriage?.(carId);
+    return Boolean(cfg && cfg.supportsBelts === false);
+  }
+
+  /**
+   * 是否机炮武装：carId=guard，或已注册且 supportsBelts=true。
+   * @param {string} carId
+   */
+  function isMgArmedCar(carId) {
+    if (carId === 'guard') return true;
+    const cfg = window.LpArmedAmmo?.getCarriage?.(carId);
+    return Boolean(cfg?.supportsBelts);
+  }
+
+  /**
+   * 解析 select 参数在某车厢下的可见选项（支持 optionsByCar；机炮/火炮能力回退）。
+   * @param {{ type?: string, options?: Array<{value:string,label:string}>, optionsByCar?: Record<string, Array<{value:string,label:string}>> }|null|undefined} param
+   * @param {string} [carId]
+   */
+  function selectOptionsForParam(param, carId) {
+    const all = Array.isArray(param?.options) ? param.options : [];
+    const byCar = param?.optionsByCar;
+    if (!byCar || !carId) return all;
+    if (Array.isArray(byCar[carId]) && byCar[carId].length) return byCar[carId];
+    if (isArtilleryArmedCar(carId) && Array.isArray(byCar.artillery) && byCar.artillery.length) {
+      return byCar.artillery;
+    }
+    if (isMgArmedCar(carId) && Array.isArray(byCar.guard) && byCar.guard.length) {
+      return byCar.guard;
+    }
+    return all;
+  }
+
   function conditionById(id) {
     return CONDITIONS.find((c) => c.id === id) || null;
   }
@@ -520,7 +651,64 @@
   }
 
   /**
-   * 迁移行为：旧 turret_ammo → select_ammo；`belt:id` 展开为 target=belt + slots。
+   * 按车厢能力规范化 select_ammo 参数：连发→belt+slots；火炮→type:id（无 slots）。
+   * 连发车上若已有 params.slots 则保留；仅缺 slots 时才把旧 type:ap 扩成同弹种弹链。
+   * @param {string} carId
+   * @param {Record<string, unknown>} params
+   * @param {{ belts?: Array<{ id: string, slots: string[] }> }} [ctx]
+   * @returns {{ target: string, slots?: string[] }}
+   */
+  function normalizeSelectAmmoParams(carId, params, ctx) {
+    const Ammo = window.LpArmedAmmo;
+    const cfg = Ammo?.getCarriage?.(carId);
+    const beltCar = Boolean(cfg?.supportsBelts) || isMgArmedCar(carId);
+    const raw = params || {};
+    let parsed =
+      raw.target != null && raw.target !== ''
+        ? parseAmmoTarget(raw.target)
+        : {
+            kind: 'type',
+            ammo: (
+              String(raw.ammo || 'ap')
+                .replace(/^type:/i, '')
+                .toLowerCase() || 'ap'
+            ),
+          };
+
+    if (beltCar) {
+      // 已有 slots 时必须保留（摘要/存档）；仅在缺 slots 时才用 type:id 扩成同弹种弹链
+      let slots = Array.isArray(raw.slots) ? raw.slots.slice() : null;
+      if (parsed.kind === 'type' && !slots?.length) {
+        const ammo = parsed.ammo || 'ap';
+        const n = cfg?.slotsPerBelt || 3;
+        slots = Array(n).fill(ammo);
+      } else if (!slots?.length && parsed.beltId) {
+        const found = (ctx?.belts || []).find((b) => b.id === parsed.beltId);
+        if (found?.slots) slots = found.slots.slice();
+        else {
+          const live = window.LpAutoProgram?.getBelt?.(carId, parsed.beltId);
+          if (live?.slots) slots = live.slots.slice();
+        }
+      }
+      return {
+        target: 'belt',
+        slots: normalizeAmmoSlots(carId, slots),
+      };
+    }
+
+    let ammo = 'ap';
+    if (parsed.kind === 'type') {
+      ammo = parsed.ammo || 'ap';
+    } else if (Array.isArray(raw.slots) && raw.slots.length) {
+      ammo = String(raw.slots[0] || 'ap').toLowerCase();
+    }
+    const allowed = cfg?.allowedTypes?.length ? cfg.allowedTypes : ['ap'];
+    if (!allowed.includes(ammo)) ammo = allowed[0] || 'ap';
+    return { target: `type:${ammo}` };
+  }
+
+  /**
+   * 迁移行为：旧 turret_ammo → select_ammo；按车厢类型强制 type 或 belt+slots。
    * @param {{ id?: string, params?: Record<string, unknown> }} action
    * @param {{ carId?: string, belts?: Array<{ id: string, slots: string[] }> }} [ctx]
    */
@@ -529,50 +717,31 @@
       return { id: 'noop', params: {} };
     }
     const params = { ...(action.params || {}) };
+    const carId = ctx?.carId || '';
     if (action.id === 'turret_ammo') {
       let ammo = String(params.ammo ?? params.target ?? 'ap')
         .replace(/^type:/i, '')
         .toLowerCase();
       const legacyMap = { he: 'ap', sap: 'ap', ap: 'ap', t: 't' };
       ammo = legacyMap[ammo] || (ammo === 'ap' || ammo === 't' ? ammo : 'ap');
-      return { id: 'select_ammo', params: { target: `type:${ammo}` } };
+      return {
+        id: 'select_ammo',
+        params: normalizeSelectAmmoParams(carId, { target: `type:${ammo}` }, ctx),
+      };
     }
     if (action.id === 'select_ammo') {
-      if (params.target == null || params.target === '') {
-        const ammo = String(params.ammo || 'ap')
-          .replace(/^type:/i, '')
-          .toLowerCase();
-        return { id: 'select_ammo', params: { target: `type:${ammo || 'ap'}` } };
-      }
-      const parsed = parseAmmoTarget(params.target);
-      if (parsed.kind === 'type') {
-        return { id: 'select_ammo', params: { target: `type:${parsed.ammo}` } };
-      }
-      const carId = ctx?.carId || '';
-      let slots = Array.isArray(params.slots) ? params.slots : null;
-      if (!slots?.length && parsed.beltId) {
-        const found = (ctx?.belts || []).find((b) => b.id === parsed.beltId);
-        if (found?.slots) slots = found.slots;
-        else {
-          const live = window.LpAutoProgram?.getBelt?.(carId, parsed.beltId);
-          if (live?.slots) slots = live.slots;
-        }
-      }
-      if (!slots?.length) {
-        slots = normalizeAmmoSlots(carId, null);
-      } else {
-        slots = normalizeAmmoSlots(carId, slots);
-      }
-      return { id: 'select_ammo', params: { target: 'belt', slots } };
+      return {
+        id: 'select_ammo',
+        params: normalizeSelectAmmoParams(carId, params, ctx),
+      };
     }
     return { id: action.id || 'noop', params };
   }
 
-  /** 生成可读摘要行（carId 用于 ammoTarget 选项文案）。 */
+  /** 生成可读摘要行（carId 用于 ammoTarget 选项文案；触发模式由列表分段标题说明，摘要不再重复）。 */
   function summarizeRule(rule, carId) {
-    const trig = triggerById(rule.trigger)?.label || rule.trigger;
     const cond = conditionById(rule.condition?.id);
-    const migratedAct = migrateAction(rule.action || {});
+    const migratedAct = migrateAction(rule.action || {}, { carId });
     const act = actionById(migratedAct.id);
     const cp = rule.condition?.params || {};
     const ap = migratedAct.params || {};
@@ -582,39 +751,96 @@
     const actTxt = act
       ? `${act.label}${formatParams(act.params, ap, carId)}`
       : '(无行为)';
-    return `[${trig}] 若 ${condTxt} → ${actTxt}`;
+    return `若 ${condTxt} → ${actTxt}`;
   }
 
-  /** 把参数值格式化为摘要文案（select / ammoTarget 显示选项中文或弹链图案）。 */
+  /**
+   * 把 numOrVar 参数格式成摘要片段（变量名或数字）。
+   * @param {object} p
+   * @param {Record<string, unknown>} values
+   */
+  function formatNumOrVarValue(p, values) {
+    const kind = String(values[`${p.key}Kind`] || p.defaultKind || 'num');
+    if (kind === 'var') {
+      const name = values[`${p.key}Var`] ?? p.defaultVar ?? '';
+      return name === undefined || name === '' ? null : String(name);
+    }
+    const n = values[`${p.key}Num`];
+    if (n === undefined || n === '') {
+      return p.defaultNum != null ? String(p.defaultNum) : '0';
+    }
+    return String(n);
+  }
+
+  /** 把参数值格式化为摘要文案（select / ammoTarget / numOrVar 等）。 */
   function formatParams(schema, values, carId) {
     if (!schema?.length) return '';
     const parts = schema.map((p) => {
+      if (p.type === 'static') {
+        return p.text ? String(p.text) : null;
+      }
+      if (p.type === 'numOrVar') {
+        return formatNumOrVarValue(p, values || {});
+      }
       const v = values[p.key];
       if (v === undefined || v === '') return null;
       if (p.type === 'ammoTarget') {
         const parsed = parseAmmoTarget(v);
-        if (parsed.kind === 'belt') {
-          const slots = normalizeAmmoSlots(carId, values.slots);
+        const ownSlots = Array.isArray(values.slots) ? values.slots : null;
+        // 连发：摘要必须读本条 params.slots（勿回落到 defaultSlots AP/AP/AP）
+        if (parsed.kind === 'belt' || (ownSlots && ownSlots.length)) {
+          const slots = normalizeAmmoSlots(carId, ownSlots);
           const pattern =
-            window.LpArmedAmmo?.formatBeltPattern?.(slots) || slots.join('/');
+            window.LpArmedAmmo?.formatBeltPattern?.(slots) ||
+            slots.map((id) => String(id).toUpperCase()).join('/');
           return `弹链 ${pattern}`;
         }
         const opt = ammoTypeOptionsForCar(carId).find((o) => o.value === `type:${parsed.ammo}`);
         return opt?.label || String(v);
       }
-      if (p.type === 'select' && Array.isArray(p.options)) {
-        const opt = p.options.find((o) => o.value === v);
+      if (p.type === 'select') {
+        const opts = selectOptionsForParam(p, carId);
+        const opt = opts.find((o) => o.value === v) || (p.options || []).find((o) => o.value === v);
         return opt?.label || String(v);
       }
       return String(v);
     }).filter(Boolean);
-    return parts.length ? `（${parts.join(', ')}）` : '';
+    if (!parts.length) return '';
+    const spaced = schema.some((p) => p.type === 'numOrVar' || p.type === 'static');
+    return `（${parts.join(spaced ? ' ' : ', ')}）`;
   }
 
-  /** 填参数默认值。 */
-  function defaultParams(schema) {
+  /**
+   * 填参数默认值；select / ammoTarget 按车厢能力钳到合法形态。
+   * @param {Array<object>|null|undefined} schema
+   * @param {string} [carId]
+   */
+  function defaultParams(schema, carId) {
     const out = {};
     for (const p of schema || []) {
+      if (p.type === 'static') continue;
+      if (p.type === 'numOrVar') {
+        out[`${p.key}Kind`] = p.defaultKind || 'num';
+        out[`${p.key}Num`] = p.defaultNum ?? 0;
+        out[`${p.key}Var`] = p.defaultVar || '计数器';
+        continue;
+      }
+      if (p.type === 'ammoTarget') {
+        Object.assign(
+          out,
+          normalizeSelectAmmoParams(carId || '', {
+            target: p.default ?? 'type:ap',
+          })
+        );
+        continue;
+      }
+      if (p.type === 'select') {
+        const opts = selectOptionsForParam(p, carId);
+        const def = p.default;
+        const ok = opts.some((o) => o.value === def);
+        out[p.key] = ok ? def : opts[0]?.value ?? def ?? '';
+        continue;
+      }
       if (p.default !== undefined) out[p.key] = p.default;
     }
     return out;
@@ -693,17 +919,27 @@
     ACTIONS,
     COMPARE_OPS,
     LEGACY_COMPARE_OPS,
+    NUM_OR_VAR_KINDS,
+    TURRET_LOCK_KIND_MG,
+    TURRET_LOCK_KIND_ARTILLERY,
+    TURRET_LOCK_KIND_ALL,
     VAR_DEFS,
     RETIRED_VAR_NAMES,
     DEFAULT_VARS,
     compare,
     compareOpParam,
+    numOrVarParam,
+    staticTextParam,
     migrateConditionParams,
     migrateAction,
     parseAmmoTarget,
+    normalizeSelectAmmoParams,
     normalizeAmmoSlots,
     ammoTypeOptionsForCar,
     ammoTargetOptionsForCar,
+    isArtilleryArmedCar,
+    isMgArmedCar,
+    selectOptionsForParam,
     defaultGlobalVars,
     defaultCarVars,
     defaultRulesForCar,
