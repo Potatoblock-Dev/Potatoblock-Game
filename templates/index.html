@@ -312,11 +312,11 @@
         backdrop-filter: none;
         background: rgb(148 163 184 / .22);
       }
-      html.theme-fading,
-      html.theme-fading *:not(.theme-button-container):not(.theme-button-container *) {
-        transition: none !important;
-      }
+      /* 移动端：不给全体元素挂过渡（省性能）；文字瞬间切换。
+         注意：不可先写 `* { transition:none }` 再写 body ——
+         带双重 :not() 的 * 选择器特异性更高，会盖掉 body 的背景过渡。 */
       html.theme-fading body,
+      html.theme-fading .bg-gray-950,
       html.theme-fading .bg-gray-900,
       html.theme-fading .bg-gray-800,
       html.theme-fading .settings-panel,
@@ -324,8 +324,11 @@
       html.theme-fading .pwa-guide-panel,
       html.theme-fading .theme-manual-row,
       html.theme-fading .theme-mode-option,
-      html.theme-fading .settings-link {
-        transition: background-color .22s ease, border-color .22s ease !important;
+      html.theme-fading .settings-link,
+      html.theme-fading .topbar-icon-btn,
+      html.theme-fading .settings-button {
+        transition: background-color .28s ease, border-color .28s ease,
+          box-shadow .28s ease !important;
       }
     }
     </style>
@@ -538,7 +541,7 @@
         rootEl.classList.add('theme-fading');
         rootEl.dataset.theme = theme;
         clearTimeout(themeFadeTimer);
-        var fadeMs = window.matchMedia('(hover: none), (max-width: 639px)').matches ? 260 : 500;
+        var fadeMs = window.matchMedia('(hover: none), (max-width: 639px)').matches ? 320 : 500;
         themeFadeTimer = setTimeout(() => rootEl.classList.remove('theme-fading'), fadeMs);
       }
 
