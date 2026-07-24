@@ -6,6 +6,7 @@
 - 服务器：`git pull --ff-only` 增量更新（见 `auto_update.py`）
 - 未纳入本仓库的文件（`main.py`、`routers/`、`var/` 等）保留在服务器本地
 - **CD 流水线**：push 到 `main` 分支自动部署到 MCSManager（见下方）
+- **SoT vendor**：其它仓（如 [Liminal-Platform](https://github.com/Potatoblock-Dev/Liminal-Platform)）经各自 `potatoblock-vendor.json` 写入本仓 `games/*`；本仓 **不** 为某个游戏写死特例，只负责整树 → `/app`
 - **音效授权**：[THIRD_PARTY_AUDIO.md](./THIRD_PARTY_AUDIO.md)（游戏音效均为 CC0）
 
 ---
@@ -33,7 +34,9 @@
 
 | Variable | 默认值 | 说明 |
 | --- | --- | --- |
-| `MCSM_UPLOAD_DIR` | `/app` | 上传目标目录 |
+| `MCSM_UPLOAD_DIR` | `/app` | 上传目标目录（与线上 Python 包根一致） |
+
+线上游戏示例路径：`/app/games/liminal_platform`、`/app/games/avatar_lobby`（由 SoT vendor 写入，非本仓 CD 特例）。
 
 ### 内网部署
 
