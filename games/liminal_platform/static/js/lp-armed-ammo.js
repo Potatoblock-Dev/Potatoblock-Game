@@ -941,7 +941,8 @@
       document.body.classList.contains('lp-boiler-panel-open') ||
       document.body.classList.contains('lp-radar-panel-open') ||
       document.body.classList.contains('lp-auto-console-open') ||
-      document.body.classList.contains('lp-train-map-open');
+      document.body.classList.contains('lp-train-map-open') ||
+      document.body.classList.contains('lp-dungeon-map-open');
     root.hidden = !active || uiBlocked;
     root.setAttribute('aria-hidden', root.hidden ? 'true' : 'false');
     root.setAttribute('aria-label', cfg?.supportsBelts ? '弹链' : '弹种');

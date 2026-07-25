@@ -45,6 +45,10 @@
         Core.migrateFacilitiesToFacilityWarehouse(inv.getStorageInventory(), facilityBag);
       }
     }
+    const platformBag = inv?.getPlatformStorageInventory?.();
+    if (platformBag && room.platform_storage) {
+      overwriteInventory(platformBag, room.platform_storage);
+    }
     if (room.ground && window.LpGroundLoot?.applyFromSnapshot) {
       window.LpGroundLoot.applyFromSnapshot(room.ground);
     }

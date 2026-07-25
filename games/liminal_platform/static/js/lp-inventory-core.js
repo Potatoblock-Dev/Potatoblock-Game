@@ -697,6 +697,11 @@
     return new Inventory('storage_facility', 8, 8, FACILITY_STORAGE_SEED);
   }
 
+  /** 新建空地牢仓库（仓库房本地仓；进站按种子填装，不连通车辆仓）。 */
+  function createEmptyPlatformStorage() {
+    return new Inventory('platform_storage', 6, 6);
+  }
+
   /**
    * TEST_ONLY — remove after playtest：物资仓种子补到 maxStack（或缺省 qty），取用不尽。
    * 与服务端 refill_storage_infinite 对齐；不碰玩家存入的非种子格；跳过可摆放设施。
@@ -871,6 +876,7 @@
       player,
       storage: partial.storage,
       facilityStorage: partial.facilityStorage || createDefaultFacilityStorage(),
+      platformStorage: partial.platformStorage || createEmptyPlatformStorage(),
       hands: ensureHandsShape(partial.hands || createDefaultHands(), player),
       equip,
       overflow: shaped.overflow || [],
@@ -1135,5 +1141,6 @@
     ensurePlaceableFacilitySeeds,
     migrateFacilitiesToFacilityWarehouse,
     createDefaultFacilityStorage,
+    createEmptyPlatformStorage,
   };
 })();

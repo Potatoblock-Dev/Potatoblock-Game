@@ -96,6 +96,10 @@
       canHoldInHand: true,
       /** 选中手槽时在角色手上绘制（复用 icon，无单独 holdSprite）。 */
       drawHeld: true,
+      /** 背包 rot=90 时贴图跟着转（细长工具，直立会与足迹不符）。 */
+      iconFollowsRot: true,
+      /** 竖放时逆时针 90°（头朝上）；默认顺时针会头朝下。 */
+      iconRotDeg: -90,
       icon: '/static/games/liminal-platform/img/items/wrench-icon.png?v=1',
       gripOffset: { x: 20, y: -18 },
       /* 256×96 贴图；握把在左侧，头朝右沿 facing */
@@ -387,6 +391,8 @@
       /** 持续治疗用；不可整箱复活。 */
       canHeal: true,
       canRevive: false,
+      /** 移动端准星吸附：仅友方。 */
+      aimTargetClass: 'ally',
     },
     /**
      * 急救箱：手部 3 号槽持有；对准濒死队友开火消耗整箱复活。
@@ -411,6 +417,8 @@
       allyAimRadius: 88,
       canHeal: false,
       canRevive: true,
+      /** 移动端准星吸附：仅友方（含濒死）。 */
+      aimTargetClass: 'ally',
     },
     /**
      * 手提灭火器：可装入手部 1/2/3 任一槽；弹药 stack.ammo（0–100，HUD 进度条）。
@@ -430,8 +438,10 @@
       canHoldInHand: true,
       canHoldAnyHandSlot: true,
       drawHeld: true,
-      icon: '/static/games/liminal-platform/img/items/fire-extinguisher-icon.png?v=1',
-      holdSprite: '/static/games/liminal-platform/img/items/fire-extinguisher.png?v=1',
+      /** 对准火源，不吸附实体。 */
+      aimTargetClass: 'none',
+      icon: '/static/games/liminal-platform/img/items/fire-extinguisher-icon.png?v=2',
+      holdSprite: '/static/games/liminal-platform/img/items/fire-extinguisher.png?v=2',
       gripOffset: { x: 18, y: -24 },
       holdDrawW: 20,
       holdDrawH: 46,
@@ -648,11 +658,68 @@
   }
 
   /**
-   * 背包 rot 时图标是否跟着转：仅武器与装备。
-   * 弹药/材料/燃料/工具等足迹仍可换向，贴图保持 upright。
+   * 背包 rot 时图标是否跟着转：武器、装备，或 item.iconFollowsRot === true（如扳手）。
+   * 弹药/材料/燃料等足迹仍可换向，贴图默认 upright。
    */
   function iconFollowsRot(itemId) {
+    const item = getItem(itemId);
+    if (!item) return false;
+    if (item.iconFollowsRot === true) return true;
+    if (item.iconFollowsRot === false) return false;
     return isWeapon(itemId) || isEquipment(itemId);
+  }
+
+  /**
+   * rot=90 跟转时的 CSS rotate 角度（度）。默认 90（顺时针）；item.iconRotDeg 可覆盖（扳手 -90）。
+   */
+  function iconRotCssDeg(itemId) {
+    const item = getItem(itemId);
+    const deg = Number(item?.iconRotDeg);
+    return Number.isFinite(deg) ? deg : 90;
+  }
+
+  /**
+   * 切换 is-rotated，并写入/清除 --lp-icon-rot（供 CSS var 使用）。
+   */
+  function applyIconRotationClass(iconEl, shouldRotate, itemId) {
+    if (!iconEl) return;
+    iconEl.classList.toggle('is-rotated', Boolean(shouldRotate));
+    if (shouldRotate) {
+      iconEl.style.setProperty('--lp-icon-rot', `${iconRotCssDeg(itemId)}deg`);
+      return;
+    }
+    iconEl.style.removeProperty('--lp-icon-rot');
+  }
+
+  /**
+   * 将图鉴图标应用到槽位/详情 DOM：写入 --lp-item-icon 与 has-image。
+   * CSS 须直接用 var(--lp-item-icon)（勿套进另一自定义属性，否则图标变 none）。
+   * 无 icon 时回退 short 文字；item 为空则清空。
+   */
+  function applyItemIcon(el, item) {
+    if (!el) return;
+    if (!item) {
+      el.classList.remove('has-image');
+      el.style.removeProperty('--lp-item-icon');
+      el.style.removeProperty('--item-color');
+      el.style.removeProperty('--item-accent');
+      el.style.backgroundImage = '';
+      el.textContent = '';
+      return;
+    }
+    el.style.setProperty('--item-color', item.color);
+    el.style.setProperty('--item-accent', item.accent);
+    if (item.icon) {
+      el.classList.add('has-image');
+      el.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
+      el.style.backgroundImage = '';
+      el.textContent = '';
+      return;
+    }
+    el.classList.remove('has-image');
+    el.style.removeProperty('--lp-item-icon');
+    el.style.backgroundImage = '';
+    el.textContent = item.short || '';
   }
 
   /**
@@ -732,6 +799,26 @@
   }
 
   /**
+   * 移动端准星吸附的有效目标类。
+   * 显式 aimTargetClass 优先；否则医疗→ally、武器→enemy、灭火器→none；空手默认 enemy。
+   * @param {string|object|null|undefined} itemOrId
+   * @returns {'enemy'|'ally'|'any'|'none'}
+   */
+  function getAimTargetClass(itemOrId) {
+    if (itemOrId == null || itemOrId === '') return 'enemy';
+    const item = typeof itemOrId === 'string' ? getItem(itemOrId) : itemOrId;
+    if (!item) return 'enemy';
+    const raw = String(item.aimTargetClass || '').toLowerCase();
+    if (raw === 'enemy' || raw === 'ally' || raw === 'any' || raw === 'none') {
+      return raw;
+    }
+    if (isMedicalTool(item)) return 'ally';
+    if (isFireExtinguisher(item)) return 'none';
+    if (isWeapon(item.id) && !isCompanionDrone(item)) return 'enemy';
+    return 'none';
+  }
+
+  /**
    * 武器是否接受该弹药：须有 magazineSize，且 ammoId 与弹药 id 一致。
    * 机炮弹等无 ammoId 武器返回 false（不走背包拖装填）。
    */
@@ -791,10 +878,14 @@
     isCompanionDrone,
     isEquipment,
     iconFollowsRot,
+    iconRotCssDeg,
+    applyIconRotationClass,
+    applyItemIcon,
     isAmmo,
     isMedkit,
     isFirstAidKit,
     isMedicalTool,
+    getAimTargetClass,
     isFullAuto,
     getWeaponId,
     weaponAcceptsAmmo,

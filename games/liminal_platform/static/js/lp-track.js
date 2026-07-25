@@ -1,5 +1,5 @@
 /**
- * 列车下方铁路轨道（纯视觉）：轨下地面 + 道砟 + 轨枕 + 双轨头，随车速卷动。
+ * 列车下方铁路轨道（纯视觉）：轨下地面 + 停靠月台白标 + 道砟 + 轨枕 + 双轨头，随车速卷动。
  * 仅绘制相机 FOV 内（含边距）的轨带，保证视口左右不断轨；不改碰撞 / 协议 / 走道。
  * 绘轨车厢玩法仍是雷达探测，与此视觉轨无关。
  */
@@ -35,6 +35,13 @@
   let scrollX = 0;
   /** 上一帧轨枕卷动增量（世界像素；正速度时为正，轨面向 −X 退）。 */
   let lastScrollDelta = 0;
+  /**
+   * 月台白标轨面锚点：track = world + scrollX（与 applyTrackScroll / 尘土同相）。
+   * 进站上升沿锁定；离站后仍画到滚出 FOV 再清。
+   */
+  let dockMarkerTrackLeft = null;
+  let dockMarkerTrackRight = null;
+  let dockMarkerWasDocked = false;
 
   /** 读取规格；缺省时不绘制。 */
   function spec() {
@@ -88,6 +95,53 @@
   function applyTrackScroll(entity) {
     if (!entity) return;
     entity.x -= lastScrollDelta;
+  }
+
+  /**
+   * 进站上升沿把月台白标钉到轨面坐标；离站保留锚点直至滚出视野。
+   * track = world + scrollX，与轨枕相位 / applyTrackScroll 同相，避免贴编组不动。
+   */
+  function syncDockMarkerTrackAnchor() {
+    const span = window.LpPlatform?.getDockTrackMarkerSpan?.();
+    const docked = Boolean(span);
+    if (docked && !dockMarkerWasDocked) {
+      dockMarkerTrackLeft = span.left + scrollX;
+      dockMarkerTrackRight = span.right + scrollX;
+    }
+    dockMarkerWasDocked = docked;
+  }
+
+  /**
+   * 在轨带上画半透明白色长矩形（月台视觉标）。
+   * 锚在轨面 scroll 空间，随轨平移；离站后滚出 FOV 再消失；低 alpha 不挡玩法。
+   */
+  function drawDockPlatformMarker(ctx, S, yRail, gauge, viewLeft, viewRight) {
+    syncDockMarkerTrackAnchor();
+    if (dockMarkerTrackLeft == null || dockMarkerTrackRight == null) return;
+
+    const worldLeft = dockMarkerTrackLeft - scrollX;
+    const worldRight = dockMarkerTrackRight - scrollX;
+    if (worldRight <= viewLeft || worldLeft >= viewRight) {
+      if (!dockMarkerWasDocked) {
+        dockMarkerTrackLeft = null;
+        dockMarkerTrackRight = null;
+      }
+      return;
+    }
+
+    const left = Math.max(worldLeft, viewLeft);
+    const right = Math.min(worldRight, viewRight);
+    if (!(right > left)) return;
+
+    /* 盖住道砟顶到下轨略下：侧视下像贴轨的月台板 */
+    const top = yRail - S.scaleArt(8);
+    const bot = yRail + gauge + S.scaleArt(22);
+    const h = bot - top;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.38)';
+    ctx.fillRect(left, top, right - left, h);
+    /* 顶缘略亮，标出月台面 */
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.fillRect(left, top, right - left, Math.max(1, S.scaleArt(3)));
   }
 
   /**
@@ -176,6 +230,8 @@
     ctx.save();
 
     drawGround(ctx, S, left, right, yRail, gauge);
+    /* 停靠月台标：地面之上、道砟/轨枕之下 */
+    drawDockPlatformMarker(ctx, S, yRail, gauge, left, right);
 
     /* 道砟带：深色阈限底，略压暗背景 */
     const bed = ctx.createLinearGradient(0, bedTop, 0, bedBot);

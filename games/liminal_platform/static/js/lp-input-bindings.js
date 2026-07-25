@@ -1,5 +1,6 @@
 /**
- * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑、下蹲；支持自动奔跑（进房默认锁定奔跑）。
+ * 阈限月台键位与移动偏好：物品栏、交互、开火、奔跑、下蹲；
+ * 自动奔跑：进房默认奔跑；桌面按住奔跑键改行走，触控点「跑」切换。
  */
 (() => {
   const STORAGE_KEY = 'liminal-platform-input-bindings-v7';
@@ -24,7 +25,7 @@
   };
   const ACTION_NAMES = {
     inventory: '物品栏',
-    trainMap: '列车地图',
+    trainMap: '地图',
     interact: '交互',
     fire: '开火',
     reload: '装填',
@@ -178,9 +179,13 @@
       const needsShift = modifiers.some((c) => c === 'ShiftLeft' || c === 'ShiftRight');
       const needsCtrl = modifiers.some((c) => c === 'ControlLeft' || c === 'ControlRight');
       const needsAlt = modifiers.some((c) => c === 'AltLeft' || c === 'AltRight');
-      if (Boolean(event.shiftKey) !== needsShift) continue;
-      if (Boolean(event.ctrlKey) !== needsCtrl) continue;
-      if (Boolean(event.altKey) !== needsAlt) continue;
+      /* 主键本身是修饰键时，对应 *Key 恒为 true，不能当「多余修饰」拒绝（否则 Shift 奔跑永远匹配不上）。 */
+      const mainIsShift = mainCode === 'ShiftLeft' || mainCode === 'ShiftRight';
+      const mainIsCtrl = mainCode === 'ControlLeft' || mainCode === 'ControlRight';
+      const mainIsAlt = mainCode === 'AltLeft' || mainCode === 'AltRight';
+      if (!mainIsShift && Boolean(event.shiftKey) !== needsShift) continue;
+      if (!mainIsCtrl && Boolean(event.ctrlKey) !== needsCtrl) continue;
+      if (!mainIsAlt && Boolean(event.altKey) !== needsAlt) continue;
       return true;
     }
     return false;
@@ -243,7 +248,7 @@
     const status = document.getElementById('lpBindingStatus');
     if (status && !captureTarget) {
       const sprintHint = settings.autoRun
-        ? `${formatAction('sprint') || 'Shift'} 切换走/跑`
+        ? `${formatAction('sprint') || 'Shift'} 按住改行走`
         : `${formatAction('sprint') || 'Shift'} 按住奔跑`;
       status.textContent =
         `${formatAction('inventory')} 物品栏 · ${formatAction('trainMap')} 地图 · ${formatAction('interact')} 交互 · ${formatAction('fire')} 开火 · ${formatAction('reload')} 装填 · ${formatAction('handsHud') || 'X'} 切换手部 · 1/2/3 选手部 · ${formatAction('kneel') || 'S / ↓'} 下蹲 · ${sprintHint}`;

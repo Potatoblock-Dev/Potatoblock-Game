@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="/static/icons/icon-192.png?v=2" sizes="192x192">
   <link rel="stylesheet" href="/static/css/site.css">
   <link rel="stylesheet" href="/static/games/avatar-lobby/css/theme.css?v=2">
-  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=20">
+  <link rel="stylesheet" href="/static/games/avatar-lobby/css/avatar-lobby.css?v=21">
 </head>
 <body>
   <canvas id="lobbyCanvas"></canvas>
@@ -122,6 +122,7 @@
               导入素材<input type="file" id="editorImportInput" accept="image/*" multiple hidden>
             </label>
             <button type="button" id="editorDownloadTemplateButton" class="editor-import-button">下载模板</button>
+            <button type="button" id="editorOpenUvPaintButton" class="editor-import-button">画板绘制 UV</button>
             <label class="editor-import-button">
               导入完整 UV<input type="file" id="editorAtlasImportInput" accept="image/png,image/webp" hidden>
             </label>
@@ -197,6 +198,49 @@
       </div>
     </section>
 
+    <section id="skinUvPaint" class="skin-uv-paint hidden" aria-label="UV 画板">
+      <header class="uv-paint-heading">
+        <div>
+          <h2>画板绘制 UV</h2>
+          <p class="uv-paint-sub">你画我猜同款笔刷 · 透明底 · 整张 683×512 UV</p>
+        </div>
+        <div class="uv-paint-heading-actions">
+          <button type="button" id="uvPaintGuideToggle" class="secondary-button" aria-pressed="true">隐藏模板</button>
+          <button type="button" id="uvPaintCloseButton" class="secondary-button">关闭</button>
+        </div>
+      </header>
+      <div class="uv-paint-body">
+        <div id="uvPaintStage" class="uv-paint-stage drawing-board" aria-label="UV 画布">
+          <canvas id="uvPaintCanvas" width="683" height="512" aria-label="皮套 UV 画板"></canvas>
+          <canvas id="uvPaintGuideCanvas" class="uv-paint-guide" width="683" height="512" aria-hidden="true"></canvas>
+        </div>
+        <aside class="uv-paint-toolbar" aria-label="画板工具">
+          <div class="uv-paint-tool-row" role="group" aria-label="工具">
+            <button type="button" data-uv-tool="brush" class="uv-paint-tool is-active" aria-pressed="true" title="画笔（B）">画笔</button>
+            <button type="button" data-uv-tool="eraser" class="uv-paint-tool" aria-pressed="false" title="橡皮（E）">橡皮</button>
+            <button type="button" data-uv-tool="fill" class="uv-paint-tool" aria-pressed="false" title="填充（G）">填充</button>
+          </div>
+          <label class="uv-paint-size">
+            <span>笔触</span>
+            <input id="uvPaintSizeInput" type="range" min="1" max="32" value="5">
+          </label>
+          <div id="uvPaintPalette" class="uv-paint-palette" aria-label="色板"></div>
+          <label class="uv-paint-color">
+            <span>色轮</span>
+            <input id="uvPaintColorPicker" type="color" value="#111827">
+          </label>
+          <div class="uv-paint-actions">
+            <button type="button" id="uvPaintUndoButton" class="secondary-button">撤销</button>
+            <button type="button" id="uvPaintRedoButton" class="secondary-button">重做</button>
+            <button type="button" id="uvPaintClearButton" class="secondary-button">清空</button>
+          </div>
+          <button type="button" id="uvPaintApplyButton" class="uv-paint-apply">应用到编辑器</button>
+          <p id="uvPaintStatus" class="skin-status" role="status"></p>
+          <p class="editor-hint">快捷键：B 画笔 · E 橡皮 · G 填充 · ⌘/Ctrl+Z 撤销 · Esc 关闭。模板线仅作参考，不会写入皮套。</p>
+        </aside>
+      </div>
+    </section>
+
     <p id="controlHint" class="stage-hint">A / ← 向左，D / → 向右，空格跳跃，Shift 奔跑</p>
 
     <div id="mobileControls" class="mobile-controls" aria-label="触控操作">
@@ -247,6 +291,8 @@
   <script src="/static/games/avatar-lobby/js/world-objects.js?v=1"></script>
   <script src="/static/games/avatar-lobby/js/avatar-lobby.js?v=28"></script>
   <script src="/static/games/avatar-lobby/js/skin-editor-utils.js?v=2"></script>
-  <script src="/static/games/avatar-lobby/js/skin-editor.js?v=19"></script>
+  <script src="/static/games/avatar-lobby/js/skin-editor.js?v=20"></script>
+  <script src="/static/games/avatar-lobby/js/drawing-board.js?v=1"></script>
+  <script src="/static/games/avatar-lobby/js/skin-uv-paint.js?v=1"></script>
 </body>
 </html>

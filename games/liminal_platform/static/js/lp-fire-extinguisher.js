@@ -11,9 +11,9 @@
   /** 靠近站台可装填的距离（世界像素）。 */
   const REFILL_RANGE = 150;
   /** 喷射锥半角（度）。 */
-  const SPRAY_CONE_DEG = 26;
-  /** 喷射最大距离。 */
-  const SPRAY_RANGE = 200;
+  const SPRAY_CONE_DEG = 36;
+  /** 喷射最大距离（世界像素；粒子速度/寿命按此标定）。 */
+  const SPRAY_RANGE = 300;
   /** 满罐灭火时长（秒）→ 扣弹速率 maxAmmo/秒。 */
   const SPRAY_DURATION_SEC = 15;
   /** 在着火车厢内持续喷射时，火灾强度每秒下降量。 */
@@ -202,13 +202,15 @@
     };
   }
 
-  /** 生成一簇干粉/水雾粒子。 */
+  /** 生成一簇干粉/水雾粒子（速度与寿命按 SPRAY_RANGE 拉长喷射）。 */
   function spawnMist(ox, oy, dirX, dirY, intensity) {
     const len = Math.hypot(dirX, dirY) || 1;
     const nx = dirX / len;
     const ny = dirY / len;
-    const count = Math.max(2, Math.round(5 * intensity));
+    const count = Math.max(2, Math.round(6 * intensity));
     const cone = (SPRAY_CONE_DEG * Math.PI) / 180;
+    const spdLo = SPRAY_RANGE * 1.15;
+    const spdHi = SPRAY_RANGE * 2.05;
     for (let i = 0; i < count; i += 1) {
       if (mist.length >= MAX_MIST) mist.shift();
       const ang = (Math.random() - 0.5) * cone;
@@ -216,15 +218,15 @@
       const s = Math.sin(ang);
       const rx = nx * c - ny * s;
       const ry = nx * s + ny * c;
-      const spd = randRange(220, 420) * (0.75 + 0.25 * intensity);
+      const spd = randRange(spdLo, spdHi) * (0.75 + 0.25 * intensity);
       mist.push({
-        x: ox + (Math.random() - 0.5) * 4,
-        y: oy + (Math.random() - 0.5) * 4,
+        x: ox + (Math.random() - 0.5) * 6,
+        y: oy + (Math.random() - 0.5) * 6,
         vx: rx * spd,
-        vy: ry * spd + randRange(-20, 10),
-        life: randRange(0.22, 0.48),
+        vy: ry * spd + randRange(-28, 14),
+        life: randRange(0.34, 0.72),
         age: 0,
-        size: randRange(3.5, 8),
+        size: randRange(4, 10),
       });
     }
   }
@@ -269,10 +271,10 @@
       }
       p.x += p.vx * step;
       p.y += p.vy * step;
-      p.vx *= 0.92;
-      p.vy *= 0.92;
-      p.vy += 40 * step;
-      p.size += 10 * step;
+      p.vx *= 0.94;
+      p.vy *= 0.94;
+      p.vy += 36 * step;
+      p.size += 12 * step;
     }
 
     if (!ctx.fireHeld || !isHolding()) {
@@ -346,11 +348,34 @@
     return { spraying: true, intensity };
   }
 
-  /** 绘制喷雾粒子。 */
+  /** 绘制喷雾粒子；视口外跳过。 */
   function draw(ctx) {
     if (!ctx || !mist.length) return;
+    let view = null;
+    try {
+      const m = ctx.getTransform();
+      const sx = m.a;
+      const sy = m.d;
+      if (sx > 0 && sy > 0 && ctx.canvas) {
+        const margin = 40;
+        view = {
+          left: (0 - m.e) / sx - margin,
+          right: (ctx.canvas.width - m.e) / sx + margin,
+          top: (0 - m.f) / sy - margin,
+          bot: (ctx.canvas.height - m.f) / sy + margin,
+        };
+      }
+    } catch {
+      view = null;
+    }
     ctx.save();
     for (const p of mist) {
+      if (
+        view &&
+        (p.x < view.left || p.x > view.right || p.y < view.top || p.y > view.bot)
+      ) {
+        continue;
+      }
       const t = p.age / p.life;
       const alpha = (1 - t) * 0.55;
       if (alpha <= 0.02) continue;
@@ -404,6 +429,13 @@
     debugStations = [];
   }
 
+  /** 清空喷雾粒子（场景切换时调用，避免跨场景残留）。 */
+  function clearMist() {
+    mist.length = 0;
+    spraying = false;
+    wasSpraying = false;
+  }
+
   /** 是否正在喷射（供 hold-fire 判定）。 */
   function isSpraying() {
     return spraying;
@@ -425,6 +457,7 @@
     updatePrompt,
     debugSpawnStation,
     clearDebugStations,
+    clearMist,
     isSpraying,
     listStationCenters,
   };

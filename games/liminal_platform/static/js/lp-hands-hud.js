@@ -116,10 +116,8 @@
     label.textContent = LABELS[index];
     label.hidden = !LABELS[index];
     if (!stack) {
-      icon.classList.remove('has-image', 'is-rotated');
-      icon.style.removeProperty('--lp-item-icon');
-      icon.style.backgroundImage = '';
-      icon.textContent = '';
+      Catalog.applyItemIcon(icon, null);
+      Catalog.applyIconRotationClass(icon, false);
       qty.textContent = '';
       const emptyBar = el.querySelector('.lp-hands-hud-ammo');
       if (emptyBar) emptyBar.hidden = true;
@@ -127,22 +125,11 @@
     }
     const item = Catalog.getItem(stack.itemId);
     if (!item) return;
-    icon.style.setProperty('--item-color', item.color);
-    icon.style.setProperty('--item-accent', item.accent);
-    if (item.icon) {
-      icon.classList.add('has-image');
-      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-      icon.style.backgroundImage = '';
-      icon.textContent = '';
-    } else {
-      icon.classList.remove('has-image');
-      icon.style.removeProperty('--lp-item-icon');
-      icon.style.backgroundImage = '';
-      icon.textContent = item.short;
-    }
-    icon.classList.toggle(
-      'is-rotated',
+    Catalog.applyItemIcon(icon, item);
+    Catalog.applyIconRotationClass(
+      icon,
       Number(stack.rot) === 90 && Catalog.iconFollowsRot(stack.itemId),
+      stack.itemId,
     );
     if (item.magazineSize != null) {
       qty.textContent = `${stack.mag ?? 0}/${item.magazineSize}`;

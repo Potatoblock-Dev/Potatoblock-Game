@@ -154,12 +154,11 @@
     return inv;
   }
 
-  /** 武器/装备在 rot=90 时给图标加 is-rotated；其它类型仅足迹旋转、贴图 upright。 */
+  /** 武器/装备在 rot=90 时给图标加 is-rotated（角度见 Catalog.iconRotCssDeg）；其它类型仅足迹旋转。 */
   function applyIconRotation(iconEl, stack) {
-    if (!iconEl) return;
     const rotate =
       Core.stackRot(stack) === 90 && Catalog.iconFollowsRot(stack?.itemId);
-    iconEl.classList.toggle('is-rotated', Boolean(rotate));
+    Catalog.applyIconRotationClass(iconEl, rotate, stack?.itemId);
   }
 
   /**
@@ -203,15 +202,7 @@
 
     const icon = document.createElement('span');
     icon.className = 'lp-inventory-item-icon';
-    icon.style.setProperty('--item-color', item.color);
-    icon.style.setProperty('--item-accent', item.accent);
-    if (item.icon) {
-      icon.classList.add('has-image');
-      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-      icon.textContent = '';
-    } else {
-      icon.textContent = item.short;
-    }
+    Catalog.applyItemIcon(icon, item);
     applyIconRotation(icon, stack);
 
     const qty = document.createElement('span');
@@ -463,19 +454,7 @@
     ghost.style.height = `${dims.h}px`;
     const icon = ghost.querySelector('.lp-fuel-item-icon');
     if (icon && item) {
-      icon.style.setProperty('--item-color', item.color);
-      icon.style.setProperty('--item-accent', item.accent);
-      if (item.icon) {
-        icon.classList.add('has-image');
-        icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-        icon.style.backgroundImage = '';
-        icon.textContent = '';
-      } else {
-        icon.classList.remove('has-image');
-        icon.style.removeProperty('--lp-item-icon');
-        icon.style.backgroundImage = '';
-        icon.textContent = item.short;
-      }
+      Catalog.applyItemIcon(icon, item);
       applyIconRotation(icon, { itemId: item.id, rot });
     }
     ghost.hidden = false;

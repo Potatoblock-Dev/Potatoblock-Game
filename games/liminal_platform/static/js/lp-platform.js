@@ -1,6 +1,7 @@
 /**
  * 月台首通：列车 / 月台两套场景切换（连接处 F 下月台；月台回车点 F 上车）。
  * - 停靠：路线进度接近站点且车速≈0 → atPlatform（亦可 debugDock）
+ * - 站间距约满档 150s；离站后雷达延迟 60–120s（种子）才显示下一站
  * - 自动驾驶：LpAutoAutopilot 读传感近站急刹；本模块钳制路线避免冲过站
  * - 回车重生在离开时的同一连接处索引
  * - 月台灰矩形占位 + 编辑台（会话内编组顺序/空车·仓储显隐）
@@ -12,10 +13,26 @@
   const GREY_DARK = '#9a9a9a';
   const GREY_EDIT = '#b0b0b0';
 
-  /** 站点间距（路线单位；与速度积分同量纲）。 */
-  const STATION_SPACING = 4200;
+  /**
+   * 站点间距（路线单位；与速度积分同量纲）。
+   * 满档巡航 route 速率 ≈ MAX_SPEED(5)×220 = 1100 u/s → 约 150s 一程（1–3 分钟中段）。
+   */
+  const STATION_SPACING = 165000;
+  /**
+   * 离站后雷达显示「下一站」的行驶时间（秒，按世界种子+离站站序取值）。
+   * 落在 60–120，保证满档下仍早于到站、符合「行驶约 1–2 分钟后才见下一站」。
+   */
+  const RADAR_REVEAL_SEC_MIN = 60;
+  const RADAR_REVEAL_SEC_MAX = 120;
   /** 前方有月台传感距离（对齐 LpAutoSensors.PLATFORM_AHEAD_DIST）。 */
   const AHEAD_DIST = 800;
+  /**
+   * 小怪禁近火车缓冲区（路线单位）：当前/最近站心前后各此距离。
+   * 满档巡航 ≈ MAX_SPEED(5)×220 = 1100 u/s → 约 14s 行程；远大于 AHEAD_DIST(800)，
+   * 进站缓行时墙钟更长，体感为「月台前后一带」，而非传感窗那么短。
+   * LpMobs：区内轨面/俯冲不朝火车靠拢，且不刷列车波次怪。
+   */
+  const MOB_TRAIN_SAFE_DIST = 15000;
   /**
    * 可停靠距离阈值（路线单位）。
    * 须宽于自动驾驶近站急刹后的滑行余量；过窄会冲过站永远停不上。
@@ -28,6 +45,19 @@
   const CAPTURE_DIST = 300;
   /** 车速视为停稳。 */
   const STOP_SPEED = 0.08;
+
+  /**
+   * 清空跨场景短暂 VFX / 弹道（进出月台时调用，避免粒子与弹壳残留涨内存）。
+   * 列车机炮弹壳/火光一并清掉，防止停靠后漏进月台画面。
+   */
+  function clearSceneTransientFx() {
+    window.LpCombat?.clearWorldFx?.();
+    window.LpImpactFx?.clear?.();
+    window.LpMobDeathFx?.clear?.();
+    window.LpGuardTurret?.clearFlashes?.();
+    window.LpFireExtinguisher?.clearMist?.();
+    window.LpMobBubbleFill?.reset?.();
+  }
   /** 连接处交互半宽（世界）。 */
   const COUPLER_RADIUS = 90;
   /** 月台场景尺寸（世界）。 */
@@ -47,6 +77,20 @@
   /** 月台场景内本地 X（相对月台原点）。 */
   let platformLocalX = PLAT_WALK_LEFT + 200;
   let editOpen = false;
+  /** @type {number|null} */
+  let worldSeed = null;
+  /** 停靠锁定的站序（routeX / spacing）。 */
+  let lockedStationIndex = 0;
+  /** @type {'small'|'large'|null} */
+  let platformKind = null;
+  /** @type {ReturnType<typeof window.LpDungeon.generate>|null} */
+  let dungeon = null;
+  /** 月台多楼层：上一帧所站地板 Y，供 floorAt 近邻选择。 */
+  let lastPlatformFloorY = null;
+  /** 本程离站时刻（performance.now）；未离站为 null。 */
+  let departedAtMs = null;
+  /** 本程雷达揭示下一站所需行驶秒数（离站时按种子锁定）。 */
+  let radarRevealSec = 90;
 
   const editRoot = document.getElementById('lpPlatformEditRoot');
   const editList = document.getElementById('lpPlatformEditList');
@@ -113,6 +157,29 @@
     return STATION_SPACING - mod;
   }
 
+  /**
+   * 沿路线到最近站心的距离（前方或刚驶过的后方取较小者）。
+   * 停靠 / 强制停靠视为 0；供小怪禁近火车区判定。
+   * @returns {number}
+   */
+  function distanceToNearestStation() {
+    if (atPlatform || forceDock) return 0;
+    const mod = ((routeX % STATION_SPACING) + STATION_SPACING) % STATION_SPACING;
+    if (mod < 0.75) return 0;
+    const ahead = STATION_SPACING - mod;
+    const behind = mod;
+    return Math.min(ahead, behind);
+  }
+
+  /**
+   * 列车是否处于月台前后缓冲区内（含停靠）。
+   * 区内小怪不应再朝火车接近；见 MOB_TRAIN_SAFE_DIST。
+   * @returns {boolean}
+   */
+  function isNearPlatformMobSafeZone() {
+    return distanceToNearestStation() <= MOB_TRAIN_SAFE_DIST;
+  }
+
   /** 刷新 LpAutoSensors 月台 stub。 */
   function syncSensorStub() {
     const dist = distanceToStation();
@@ -153,7 +220,7 @@
     return false;
   }
 
-  /** 是否允许离开空档发车。 */
+  /** 是否允许离开空档发车（停靠时要求全员在车厢上，含拉汽笛者）。 */
   function canDepart() {
     return atPlatform ? !anyPlayerOnPlatform() : true;
   }
@@ -162,12 +229,126 @@
   function getDepartBlockReason() {
     if (!atPlatform) return null;
     if (!anyPlayerOnPlatform()) return null;
-    if (scene === 'platform') return '你仍在月台 — 回车后再发车';
-    return '仍有玩家在月台 — 全员回车后才能发车';
+    if (scene === 'platform') return '还有玩家在月台上（你仍在月台 — 请先回车）';
+    return '还有玩家在月台上';
   }
+
+  /**
+   * 由世界种子与离站站序得到本程雷达揭示延迟（秒）。
+   * @param {number} fromStationIndex
+   * @returns {number}
+   */
+  function pickRadarRevealSec(fromStationIndex) {
+    const seed = getWorldSeed() >>> 0;
+    const idx = (fromStationIndex | 0) >>> 0;
+    let h = (seed ^ Math.imul(idx + 1, 0x9e3779b9)) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x7feb352d) >>> 0;
+    h = Math.imul(h ^ (h >>> 15), 0x846ca68b) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
+    const span = RADAR_REVEAL_SEC_MAX - RADAR_REVEAL_SEC_MIN;
+    return RADAR_REVEAL_SEC_MIN + (h % (span + 1));
+  }
+
+  /**
+   * 离站：解除停靠、推离站心，并锁定本程雷达揭示计时。
+   * @returns {number} 离站时的站序
+   */
+  function leavePlatformRoute() {
+    const from = lockedStationIndex;
+    forceDock = false;
+    atPlatform = false;
+    routeX = Math.floor(routeX / STATION_SPACING) * STATION_SPACING + 4;
+    departedAtMs = performance.now();
+    radarRevealSec = pickRadarRevealSec(from);
+    syncSensorStub();
+    return from;
+  }
+
+  /**
+   * 行驶中是否已可在雷达上显示下一站标。
+   * 停靠显示当前站；离站后须满揭示秒数，或已进入近站传感窗（避免盲进站）。
+   * @returns {boolean}
+   */
+  function isNextPlatformRadarVisible() {
+    if (atPlatform || forceDock) return true;
+    if (departedAtMs == null) return true;
+    if (distanceToStation() <= AHEAD_DIST) return true;
+    const elapsedSec = (performance.now() - departedAtMs) / 1000;
+    return elapsedSec >= radarRevealSec;
+  }
+
+  /**
+   * 自动驾驶汽笛发车：校验全员在车后立刻离站，驶向下一个月台。
+   * 解除 forceDock / atPlatform，并把 route 略推离站心，避免下一帧再进停靠窗。
+   * @returns {boolean} 是否已开始离站
+   */
+  function beginDepart() {
+    if (!atPlatform) return false;
+    if (!canDepart()) return false;
+    const from = leavePlatformRoute();
+    window.dispatchEvent(
+      new CustomEvent('liminal:platform-depart', {
+        detail: { stationIndex: from },
+      })
+    );
+    return true;
+  }
+
+  /** 写入房间世界种子（快照 / 离线本地种）；同步背景层重建。 */
+  function setWorldSeed(seed) {
+    if (seed == null || !Number.isFinite(Number(seed))) return;
+    worldSeed = Number(seed) >>> 0;
+    window.LpWorldBackground?.setSeed?.(worldSeed);
+  }
+
+  /** 当前世界种子；无则本地生成一次。 */
+  function getWorldSeed() {
+    if (worldSeed == null) {
+      worldSeed = (Math.random() * 0x1fffffffffffff) >>> 0;
+    }
+    return worldSeed;
+  }
+
+  /** 由 routeX 推算站序。 */
+  function stationIndexFromRoute() {
+    return Math.max(0, Math.floor(routeX / STATION_SPACING + 1e-6));
+  }
+
+  /** 当前（或停靠锁定）站序。 */
+  function getStationIndex() {
+    return atPlatform ? lockedStationIndex : stationIndexFromRoute();
+  }
+
+  /** 解析当前站月台类型。 */
+  function resolvePlatformKind(stationIndex) {
+    const D = window.LpDungeon;
+    if (!D?.resolveKind) return 'large';
+    return D.resolveKind(getWorldSeed(), stationIndex | 0);
+  }
+
+  /** 当前月台类型（进站后缓存）。 */
+  function getPlatformKind() {
+    if (platformKind) return platformKind;
+    return resolvePlatformKind(getStationIndex());
+  }
+
+  /** 当前地牢实例（仅 small）。 */
+  function getDungeon() {
+    return dungeon;
+  }
+
+  /** 地牢房间高度占位（与 LpDungeon.ROOM_H 对齐；仅作 topY 缺失时的回退）。 */
+  const ROOM_H_FALLBACK = window.LpDungeon?.ROOM_H || 634;
 
   /** 月台行走边界（供主循环）。 */
   function getPlatformWalkBounds() {
+    if (platformKind === 'small' && dungeon) {
+      return {
+        left: dungeon.bounds.left,
+        right: dungeon.bounds.right,
+        floorY: dungeon.spawnFloorY || dungeon.bounds.floorY,
+      };
+    }
     return {
       left: PLAT_WALK_LEFT + 40,
       right: PLAT_WALK_RIGHT - 40,
@@ -175,8 +356,61 @@
     };
   }
 
-  /** 月台交互点（回车 / 编辑台）。 */
+  /**
+   * 月台/地牢镜头可显示内容包围盒（世界坐标）。
+   * 供主循环钳制镜头，避免画面落到内容外的大片虚空。
+   * 底边上沿须够大：halfH≈viewH/(2zoom) 常见 400–500，若 bottom 仅 floor+140，
+   * 则 bottom-halfH 远高于最低层地板，角色会被钳到屏底并露出上层虚空。
+   * @returns {{ left: number, right: number, top: number, bottom: number }|null}
+   */
+  function getCameraBounds() {
+    if (scene !== 'platform') return null;
+    if (platformKind === 'small' && dungeon) {
+      const floorY = dungeon.bounds.floorY ?? dungeon.baseFloorY ?? PLAT_FLOOR_Y;
+      const top = Number.isFinite(dungeon.topY)
+        ? dungeon.topY - 80
+        : floorY - ROOM_H_FALLBACK * 3;
+      return {
+        left: dungeon.bounds.left,
+        right: dungeon.bounds.right,
+        top,
+        /* 覆盖最低层居中（含躯干上抬）所需的视口半高余量 */
+        bottom: floorY + 560,
+      };
+    }
+    return {
+      left: PLAT_WALK_LEFT,
+      right: PLAT_WALK_RIGHT,
+      top: PLAT_FLOOR_Y - 420,
+      bottom: PLAT_FLOOR_Y + 400,
+    };
+  }
+
+  /**
+   * 月台多楼层地板查询；无地牢时退回单层。
+   * 带 preferY 记忆，避免楼梯廊叠 x 时跳错层。
+   * @param {number} x
+   */
+  function platformFloorAt(x) {
+    if (platformKind === 'small' && dungeon) {
+      const y = window.LpDungeon?.floorAt?.(dungeon, x, lastPlatformFloorY);
+      if (y != null) {
+        lastPlatformFloorY = y;
+        return y;
+      }
+      const fallback = dungeon.spawnFloorY || dungeon.bounds.floorY;
+      lastPlatformFloorY = fallback;
+      return fallback;
+    }
+    lastPlatformFloorY = PLAT_FLOOR_Y;
+    return PLAT_FLOOR_Y;
+  }
+
+  /** 月台交互点（回车 / 编辑台 或 地牢点）。 */
   function platformSpots() {
+    if (platformKind === 'small' && dungeon?.spots) {
+      return dungeon.spots;
+    }
     const returnX = PLAT_WALK_LEFT + 280;
     const editX = PLAT_WALK_LEFT + 900;
     return [
@@ -231,11 +465,47 @@
     };
   }
 
+  /** 确保月台仓库袋已按当前站种子填装（联机问服 / 离线本地）。 */
+  function ensurePlatformLoot(stationIndex) {
+    const seed = getWorldSeed();
+    if (window.LpInventoryNet?.isActive?.()) {
+      window.LpInventoryNet.sendOp?.({
+        action: 'ensure_platform_storage',
+        stationIndex: stationIndex | 0,
+      });
+      return;
+    }
+    const inv = window.LpInventory?.getPlatformStorageInventory?.();
+    if (inv && window.LpDungeon?.fillPlatformInventory) {
+      window.LpDungeon.fillPlatformInventory(inv, seed, stationIndex | 0);
+    }
+  }
+
   /** 切入月台场景（记住连接处）。 */
   function enterPlatformFromCoupler(couplerIndex, trainLocal) {
     exitCouplerIndex = Math.max(0, couplerIndex | 0);
+    lockedStationIndex = stationIndexFromRoute();
+    platformKind = resolvePlatformKind(lockedStationIndex);
+    dungeon = null;
+    lastPlatformFloorY = null;
+    if (platformKind === 'small' && window.LpDungeon?.generate) {
+      dungeon = window.LpDungeon.generate(getWorldSeed(), lockedStationIndex);
+      ensurePlatformLoot(lockedStationIndex);
+      window.LpMobs?.spawnDungeonFromLayout?.(dungeon);
+      window.LpDungeonFow?.bindDungeon?.(dungeon);
+    } else {
+      window.LpMobs?.clearDungeonMobs?.();
+      window.LpDungeonFow?.reset?.();
+    }
+    clearSceneTransientFx();
     scene = 'platform';
-    platformLocalX = platformSpots()[0].worldX;
+    const spots = platformSpots();
+    platformLocalX = spots[0]?.worldX ?? PLAT_WALK_LEFT + 200;
+    const spawnY =
+      platformKind === 'small' && dungeon
+        ? dungeon.spawnFloorY
+        : PLAT_FLOOR_Y;
+    lastPlatformFloorY = spawnY;
     if (trainLocal) {
       trainLocal.x = platformLocalX;
       trainLocal.vx = 0;
@@ -243,15 +513,24 @@
       trainLocal.onGround = true;
     }
     window.LpPlatformAmbience?.setPlayerOnPlatformStub?.(true);
-    window.LiminalInteract?.showToast?.('已进入月台');
+    const kindLabel = platformKind === 'small' ? '小型月台（地牢）' : '大型月台';
+    window.LiminalInteract?.showToast?.(`已进入${kindLabel}`);
     window.dispatchEvent(
-      new CustomEvent('liminal:platform-scene', { detail: { scene } })
+      new CustomEvent('liminal:platform-scene', {
+        detail: { scene, kind: platformKind, stationIndex: lockedStationIndex },
+      })
     );
   }
 
   /** 从月台回车到记住的连接处。 */
   function boardTrain(trainLocal) {
     scene = 'train';
+    dungeon = null;
+    lastPlatformFloorY = null;
+    platformKind = null;
+    window.LpMobs?.clearDungeonMobs?.();
+    window.LpDungeonFow?.reset?.();
+    clearSceneTransientFx();
     const x = couplerWorldX(exitCouplerIndex);
     if (trainLocal) {
       trainLocal.x = x;
@@ -611,7 +890,7 @@
   }
 
   /**
-   * 尝试交互（连接处下月台 / 月台回车 / 编辑台）。
+   * 尝试交互（连接处下月台 / 月台回车 / 编辑台 / 安全屋车辆仓 / 地牢仓）。
    * @param {{ x: number, onGround?: boolean, y?: number, vx?: number }} local
    */
   function tryInteract(local) {
@@ -626,6 +905,14 @@
     }
     if (spot.action === 'openPlatformEdit') {
       return openEdit();
+    }
+    if (spot.action === 'openVehicleStorage') {
+      window.LpInventory?.openVehicleStorage?.(local.x);
+      return true;
+    }
+    if (spot.action === 'openPlatformStorage') {
+      window.LpInventory?.openPlatformStorage?.(local.x);
+      return true;
     }
     return false;
   }
@@ -668,13 +955,13 @@
     if (forceDock) {
       atPlatform = true;
     } else if (atPlatform) {
-      /* 全员回车且油门离开空档、开始移动后离站 */
+      /* 全员回车且油门离开空档、开始移动后离站（手动发车路径） */
       if (canDepart() && Math.abs(throttle) > 0.01 && absSpeed > STOP_SPEED) {
-        atPlatform = false;
-        routeX = Math.floor(routeX / STATION_SPACING) * STATION_SPACING + 4;
+        leavePlatformRoute();
       }
     } else if (stopped && dist <= DOCK_DIST) {
       atPlatform = true;
+      lockedStationIndex = stationIndexFromRoute();
       /* 对齐站心，传感 distanceAhead=0 */
       routeX = Math.floor(routeX / STATION_SPACING + 1e-9) * STATION_SPACING + STATION_SPACING;
       window.LiminalInteract?.showToast?.('列车已停靠月台 — 连接处按 F 进入');
@@ -697,11 +984,15 @@
   }
 
   /**
-   * 绘制月台场景灰矩形占位（仅 platform 场景）。
+   * 绘制月台场景（大型灰块 或 小型地牢）。
    * @param {CanvasRenderingContext2D} ctx
    */
   function draw(ctx) {
     if (scene !== 'platform') return;
+    if (platformKind === 'small' && dungeon) {
+      window.LpDungeon?.draw?.(ctx, dungeon, exitCouplerIndex);
+      return;
+    }
     const S = Spec();
     const floorY = PLAT_FLOOR_Y;
 
@@ -742,17 +1033,51 @@
     ctx.font = '20px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('月台（占位）', 100, 80);
+    ctx.fillText('大型月台', 100, 80);
     ctx.font = '14px sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.fillText(`回车连接处 #${exitCouplerIndex + 1}`, 100, 108);
   }
 
   /**
-   * 雷达月台标：相对列车航向前方的站点位置（世界近似）。
-   * @returns {{ x: number, y: number, label?: string }|null}
+   * 将路线剩余距离映射为雷达示波器上的世界距离。
+   * 近距用真实距离；更远压到默认量程内的外环，揭示后无需拉满档也能看见。
+   * @param {number} routeDist
+   * @returns {number}
    */
-  function getRadarPlatformBlip() {
+  function radarBlipRouteDist(routeDist) {
+    const d = Math.max(0, Number(routeDist) || 0);
+    if (d <= 0) return 0;
+    /** 真实距离段；对齐默认量程 4800 以内。 */
+    const TRUE_UNTIL = 3600;
+    if (d <= TRUE_UNTIL) return d;
+    /** 远站外环（略低于默认量程，保证开雷达即可见）。 */
+    const FAR_EDGE = 4400;
+    const farSpan = Math.max(1, STATION_SPACING - TRUE_UNTIL);
+    const t = Math.min(1, (d - TRUE_UNTIL) / farSpan);
+    return TRUE_UNTIL + (FAR_EDGE - TRUE_UNTIL) * t;
+  }
+
+  /**
+   * 停靠时轨面月台标长度（世界 px）：大型用 PLAT_W；小型用地牢宽，未生成前用下限。
+   * @returns {number}
+   */
+  function dockTrackMarkerLength() {
+    if (getPlatformKind() === 'small') {
+      const w = Number(dungeon?.width);
+      if (w > 0) return w;
+      return Math.max(1200, PLAT_W);
+    }
+    return PLAT_W;
+  }
+
+  /**
+   * 进站瞬间轨面白标的世界 X 跨度（编组中心对齐月台长度）；未停靠返回 null。
+   * LpTrack 在停靠上升沿把该跨度钉入 scroll 轨面坐标并随轨平移；本函数不随车速更新。
+   * @returns {{ left: number, right: number }|null}
+   */
+  function getDockTrackMarkerSpan() {
+    if (!isAtPlatform()) return null;
     const S = Spec();
     if (!S?.CARRIAGES?.length) return null;
     const mid =
@@ -760,7 +1085,26 @@
         S.CARRIAGES[S.CARRIAGES.length - 1].worldX +
         S.MODULE_W) /
       2;
-    const dist = atPlatform ? 0 : distanceToStation();
+    const half = dockTrackMarkerLength() * 0.5;
+    return { left: mid - half, right: mid + half };
+  }
+
+  /**
+   * 雷达月台标：相对列车航向前方的站点位置（世界近似）。
+   * 停靠显示当前站；离站后在揭示延迟内返回 null（下一站尚未出现在雷达上）。
+   * @returns {{ x: number, y: number, label?: string }|null}
+   */
+  function getRadarPlatformBlip() {
+    if (!isNextPlatformRadarVisible()) return null;
+    const S = Spec();
+    if (!S?.CARRIAGES?.length) return null;
+    const mid =
+      (S.CARRIAGES[0].worldX +
+        S.CARRIAGES[S.CARRIAGES.length - 1].worldX +
+        S.MODULE_W) /
+      2;
+    const routeDist = atPlatform ? 0 : distanceToStation();
+    const dist = radarBlipRouteDist(routeDist);
     const forward = S.TRAIN_FORWARD_X >= 0 ? 1 : -1;
     return {
       x: mid + forward * dist * 0.85,
@@ -816,15 +1160,19 @@
     );
   }
 
-  /* URL ?dock=1 进入即强制停靠，便于首通试玩 */
+  /* URL ?dock=1 进入即强制停靠；?platform=small|large 强制类型（见 LpDungeon.resolveKind） */
   try {
-    if (new URLSearchParams(location.search).get('dock') === '1') {
+    const params = new URLSearchParams(location.search);
+    if (params.get('dock') === '1') {
       forceDock = true;
       atPlatform = true;
     }
   } catch (_) {
     /* ignore */
   }
+
+  /* 离线本地种子（联机由 world_snapshot 覆盖） */
+  getWorldSeed();
 
   editRoot?.querySelector('#lpPlatformEditClose')?.addEventListener('click', () => {
     closeEdit();
@@ -837,13 +1185,26 @@
     anyPlayerOnPlatform,
     canDepart,
     getDepartBlockReason,
+    beginDepart,
     findActive,
     tryInteract,
     tick,
     draw,
     getPlatformWalkBounds,
+    getCameraBounds,
+    platformFloorAt,
+    getPlatformKind,
+    getDungeon,
+    getStationIndex,
+    setWorldSeed,
+    getWorldSeed,
+    getDockTrackMarkerSpan,
     getRadarPlatformBlip,
     getRadarTrackPolyline,
+    distanceToNearestStation,
+    isNearPlatformMobSafeZone,
+    /** 小怪禁近火车缓冲（路线单位）；只读常量供调试。 */
+    MOB_TRAIN_SAFE_DIST,
     debugDock,
     listCouplers,
     couplerWorldX,

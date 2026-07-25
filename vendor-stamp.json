@@ -1,7 +1,7 @@
 {
   "source": "liminal-platform",
   "repository_config": "potatoblock-vendor.json",
-  "files": 317,
+  "files": 363,
   "runtime": {
     "mcs_upload_dir": "/app",
     "note": "Game CD (deploy.py) zips repo root → MCSM_UPLOAD_DIR (default /app). Static mounts come from each game_info.static_url.",

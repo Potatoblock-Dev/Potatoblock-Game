@@ -1,3 +1,9 @@
+/* 禁止双击放大；仍允许滚动。画布/摇杆用 none；可滚动面板用 pan-y */
+html,
+body {
+  touch-action: manipulation;
+}
+
 .lp-page {
   --lp-line: rgb(163 163 163 / 0.45);
   --lp-line-strong: rgb(212 212 212 / 0.55);
@@ -6,6 +12,10 @@
   --lp-panel-inset: rgb(12 12 12 / 0.72);
   --lp-text-muted: #a3a3a3;
   --lp-radius: 0;
+  /* Item icons: set --lp-item-icon on the element; use direct
+     `background: transparent var(--lp-item-icon, none) center / contain no-repeat`
+     (do NOT nest that var() inside another custom property — Chrome resolves the
+     inner var on the ancestor and icons become none). */
   --lp-frame:
     inset 0 0 0 1px rgb(28 28 28 / 0.9),
     0 0 0 1px rgb(163 163 163 / 0.28);
@@ -16,6 +26,7 @@
   background: #0a0a0a;
   color: #e5e5e5;
   font-family: "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  touch-action: manipulation;
   /* 游戏 HUD / 触控：禁止长按选中与 iOS 呼出菜单；输入框另行放开 */
   -webkit-user-select: none;
   user-select: none;
@@ -34,6 +45,7 @@
   position: relative;
   width: 100vw;
   height: 100dvh;
+  touch-action: manipulation;
 }
 
 #lpCanvas {
@@ -101,6 +113,10 @@ body.lp-train-map-open .lp-crosshair,
 body.lp-train-map-open .lp-mobile-controls,
 body.lp-train-map-open .lp-hotbar-cluster,
 body.lp-train-map-open .lp-hud-top,
+body.lp-dungeon-map-open .lp-crosshair,
+body.lp-dungeon-map-open .lp-mobile-controls,
+body.lp-dungeon-map-open .lp-hotbar-cluster,
+body.lp-dungeon-map-open .lp-hud-top,
 body.lp-facility-edit-open .lp-crosshair,
 body.lp-facility-edit-open .lp-mobile-controls,
 body.lp-facility-edit-open .lp-hotbar-cluster,
@@ -376,11 +392,8 @@ body.lp-facility-edit-open {
 .lp-fuel-item-icon.has-image,
 .lp-fuel-coal-icon.has-image {
   border-radius: 4px;
-  background-color: #171717;
-  background-image: var(--lp-item-icon, none);
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
+  /* Keep dark plate behind transparent PNGs in fuel UI. */
+  background: #171717 var(--lp-item-icon, none) center / contain no-repeat;
   color: transparent;
   box-shadow: inset 0 0 0 1px rgb(28 28 28 / 0.65);
 }
@@ -1633,6 +1646,11 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   pointer-events: auto;
 }
 
+/* 顶栏横向占满；空区须穿透到画布（瞄准/射击），仅子控件可点 */
+.lp-stage-ui > .lp-hud-top {
+  pointer-events: none;
+}
+
 /* 触控条本身不挡画布，仅摇杆/按钮可点 */
 .lp-stage-ui > .lp-mobile-controls {
   pointer-events: none;
@@ -1677,6 +1695,12 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   gap: 8px;
   min-width: 0;
   flex: 1 1 280px;
+  /* flex 拉宽后的空隙不吞点击；标题块 / 房间条自行接收 */
+  pointer-events: none;
+}
+
+.lp-hud-main > * {
+  pointer-events: auto;
 }
 
 .lp-title-block {
@@ -2059,10 +2083,100 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
 }
 
 .lp-hud-actions {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* 桌面/触屏共用：右上动作折叠进汉堡，展开为下拉面板 */
+.lp-hud-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--lp-radius);
+  border: 1px solid var(--lp-line);
+  background: var(--lp-chip);
+  color: #e5e5e5;
+  cursor: pointer;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+
+.lp-hud-menu-toggle.is-open,
+.lp-hud-menu-toggle:hover {
+  border-color: rgb(212 212 212 / 0.55);
+  background: rgb(38 38 38 / 0.96);
+}
+
+.lp-hud-menu-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 168px;
+  padding: 8px;
+  border: 1px solid rgb(163 163 163 / 0.4);
+  border-radius: var(--lp-radius);
+  background: rgb(28 28 28 / 0.96);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.45);
+}
+
+.lp-hud-actions.is-open .lp-hud-menu-panel {
+  display: flex;
+}
+
+.lp-hud-menu-panel .lp-skin-link,
+.lp-hud-menu-panel .lp-back,
+.lp-hud-menu-panel .lp-fullscreen-btn,
+.lp-hud-menu-panel .lp-hud-settings-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.lp-hud-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--lp-radius);
+  border: 1px solid var(--lp-line);
+  background: var(--lp-chip);
+  color: #e5e5e5;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+
+.lp-hud-settings-btn.is-active,
+.lp-hud-settings-btn:hover {
+  border-color: rgb(212 212 212 / 0.55);
+  background: rgb(38 38 38 / 0.96);
+}
+
+.lp-hud-settings-btn .lp-ui-icon--gear {
+  width: 16px;
+  height: 16px;
+}
+
+.lp-inv-header-settings {
+  display: none;
 }
 
 .lp-hud-rail {
@@ -2072,6 +2186,13 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   gap: 10px;
   flex-shrink: 0;
   max-width: min(100%, 320px);
+  pointer-events: none;
+}
+
+/* 汉堡 / 编组小地图可点；地牢图保持自身 pointer-events: none */
+.lp-hud-rail > .lp-hud-actions,
+.lp-hud-rail > .lp-train-minimap {
+  pointer-events: auto;
 }
 
 .lp-train-minimap {
@@ -2086,6 +2207,63 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   user-select: none;
   overflow: visible;
   cursor: pointer;
+}
+
+/* 小型月台地牢结构（自绘 canvas HUD） */
+.lp-dungeon-minimap {
+  min-width: 148px;
+  max-width: 100%;
+  width: min(100%, 200px);
+  padding: 6px 6px 4px;
+  border: 1px solid rgb(163 163 163 / 0.35);
+  border-radius: 4px;
+  background: rgb(18 18 22 / 0.82);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+  pointer-events: none;
+  user-select: none;
+}
+
+.lp-dungeon-minimap[hidden] {
+  display: none !important;
+}
+
+.lp-dungeon-minimap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 0 2px;
+}
+
+.lp-dungeon-minimap-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lp-text-muted);
+}
+
+.lp-dungeon-minimap-floor {
+  font-size: 10px;
+  font-weight: 700;
+  color: #d4d4d8;
+  font-variant-numeric: tabular-nums;
+}
+
+.lp-dungeon-minimap canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+  background: #141418;
+}
+
+.lp-dungeon-minimap-legend {
+  margin: 4px 2px 0;
+  font-size: 9px;
+  line-height: 1.3;
+  color: rgb(161 161 170 / 0.9);
 }
 
 .lp-train-minimap-head {
@@ -2246,7 +2424,8 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
 
 .lp-skin-link,
 .lp-back,
-.lp-fullscreen-btn {
+.lp-fullscreen-btn,
+.lp-hud-settings-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2279,6 +2458,12 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   --lp-ui-icon: url('/static/games/liminal-platform/img/ui/gear.png');
   width: 22px;
   height: 22px;
+}
+
+.lp-ui-icon--menu {
+  --lp-ui-icon: url('/static/games/liminal-platform/img/ui/menuList.png');
+  width: 20px;
+  height: 20px;
 }
 
 .lp-ui-icon--larger {
@@ -2328,6 +2513,7 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   position: absolute;
   left: calc(12px + env(safe-area-inset-left));
   bottom: calc(14px + env(safe-area-inset-bottom));
+  touch-action: manipulation;
   z-index: 4;
   display: flex;
   flex-direction: row;
@@ -2406,8 +2592,8 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
   display: grid;
   place-items: center;
   width: calc(100% - 6px);
-  height: calc(100% - 18px);
-  margin: 3px 3px 0;
+  height: calc(100% - 6px);
+  margin: 3px;
   border: 1px solid rgb(0 0 0 / 0.35);
   background: linear-gradient(180deg, var(--item-accent, #737373), var(--item-color, #262626));
   font-size: 11px;
@@ -2416,16 +2602,13 @@ body.lp-turret-mode .lp-crosshair.lp-crosshair-accuracy-buff .lp-crosshair-dot {
 }
 
 .lp-hands-hud-icon.has-image {
-  background-color: transparent;
-  background-image: var(--lp-item-icon, none);
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
+  background: transparent var(--lp-item-icon, none) center / contain no-repeat;
   color: transparent;
+  border-color: transparent;
 }
 
 .lp-hands-hud-icon.is-rotated {
-  transform: rotate(90deg);
+  transform: rotate(var(--lp-icon-rot, 90deg));
 }
 
 .lp-hands-hud-qty {
@@ -2965,6 +3148,7 @@ body.lp-inventory-open .lp-hud-top {
     calc(12px + env(safe-area-inset-bottom))
     calc(12px + env(safe-area-inset-left));
   overflow: auto;
+  touch-action: pan-y;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -3039,6 +3223,7 @@ body.lp-inventory-open .lp-hud-top {
   box-shadow: var(--lp-frame), 0 18px 48px rgb(0 0 0 / 0.55);
   overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
 }
 
 /* 有右侧附近弹窗时：主背包略收，为右栏留空 */
@@ -3130,20 +3315,30 @@ body.lp-inventory-open .lp-hud-top {
   background: rgb(82 82 82 / 0.22);
 }
 
+/* 固定于视口：可从右上菜单打开，不依赖物品栏 root */
 .lp-inventory-settings {
-  position: absolute;
+  position: fixed;
   top: calc(64px + env(safe-area-inset-top));
   right: calc(12px + env(safe-area-inset-right));
-  z-index: 4;
+  z-index: 26;
   width: min(360px, calc(100vw - 24px));
   max-height: min(70dvh, 560px);
   padding: 12px 14px 14px;
   overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
   border: 1px solid rgb(163 163 163 / 0.35);
   border-radius: var(--lp-radius);
   background: rgb(28 28 28 / 0.96);
   box-shadow: 0 16px 40px rgb(0 0 0 / 0.45);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.lp-inventory-settings input,
+.lp-inventory-settings textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .lp-inventory-settings[hidden] {
@@ -3293,6 +3488,7 @@ body.lp-inventory-open .lp-hud-top {
   padding: 14px;
   overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
   align-items: start;
   flex: 0 1 auto;
   min-height: 0;
@@ -3360,6 +3556,13 @@ body.lp-inventory-open .lp-hud-top {
   min-width: 0;
 }
 
+/* display:flex 会盖掉原生 [hidden]，地牢仓须强制隐藏物资/设施页签与摆放 */
+.lp-storage-warehouse-tabs[hidden],
+.lp-facility-edit-enter[hidden],
+.lp-storage-transfer-all[hidden] {
+  display: none !important;
+}
+
 .lp-storage-warehouse-tab {
   margin: 0;
   padding: 4px 12px;
@@ -3398,6 +3601,7 @@ body.lp-inventory-open .lp-hud-top {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   padding: 12px;
 }
@@ -3532,6 +3736,7 @@ body.lp-inventory-open .lp-hud-top {
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
   overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
 }
 
 .lp-inventory-panel.is-compact {
@@ -3916,8 +4121,8 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-inventory-item-icon.has-image {
-  /* 整段 background 覆盖父级 gradient，避免透明 PNG 下仍透出色块底；底对齐贴格 */
-  background: transparent var(--lp-item-icon, none) center bottom / contain no-repeat;
+  /* Cover parent gradient; transparent PNG centered in slot (qty/overlays stay absolute). */
+  background: transparent var(--lp-item-icon, none) center / contain no-repeat;
   color: transparent;
   text-shadow: none;
   box-shadow: none;
@@ -3925,7 +4130,7 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-inventory-item-icon.is-rotated {
-  transform: rotate(90deg);
+  transform: rotate(var(--lp-icon-rot, 90deg));
 }
 
 .lp-inventory-item-qty {
@@ -3977,6 +4182,7 @@ body.lp-inventory-open .lp-hud-top {
 
 .lp-mobile-controls {
   display: none;
+  touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -4037,22 +4243,42 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-skin-link .lp-label-long,
   .lp-back .lp-label-long,
-  .lp-fullscreen-btn .lp-label-long {
+  .lp-fullscreen-btn .lp-label-long,
+  .lp-hud-settings-btn .lp-label-long {
     display: none;
   }
 
   .lp-skin-link .lp-label-short,
   .lp-back .lp-label-short,
-  .lp-fullscreen-btn .lp-label-short {
+  .lp-fullscreen-btn .lp-label-short,
+  .lp-hud-settings-btn .lp-label-short {
     display: inline;
   }
 
   .lp-skin-link,
   .lp-back,
-  .lp-fullscreen-btn {
+  .lp-fullscreen-btn,
+  .lp-hud-settings-btn {
     min-width: 48px;
     min-height: 44px;
     padding: 8px 14px;
+  }
+
+  /* 右上汉堡：触屏下面板条目用短标签（折叠逻辑见基线样式） */
+  .lp-hud-menu-panel {
+    min-width: 148px;
+  }
+
+  .lp-inv-header-settings {
+    display: inline-flex;
+  }
+
+  .lp-inventory-settings {
+    top: calc(58px + env(safe-area-inset-top));
+    right: calc(12px + env(safe-area-inset-right));
+    width: min(320px, calc(100vw - 24px));
+    max-height: min(60dvh, 420px);
+    padding: 12px;
   }
 
   .lp-hud-top {
@@ -4077,6 +4303,11 @@ body.lp-inventory-open .lp-hud-top {
     min-width: 0;
     width: min(100%, 200px);
     padding: 2px 0;
+  }
+
+  .lp-dungeon-minimap {
+    width: min(100%, 168px);
+    min-width: 0;
   }
 
   .lp-train-minimap-car {
@@ -4116,11 +4347,11 @@ body.lp-inventory-open .lp-hud-top {
     transition: opacity 0.15s ease;
   }
 
-  /* 右上：跑走在手部物品栏左侧；下移避开顶栏皮套/返回 */
+  /* 右上：跑走在手部栏左侧；顶栏已折成单按钮，可上移 */
   .lp-hotbar-cluster {
     left: auto;
     right: calc(12px + env(safe-area-inset-right));
-    top: calc(96px + env(safe-area-inset-top));
+    top: calc(58px + env(safe-area-inset-top));
     bottom: auto;
     align-items: center;
     gap: 10px;
@@ -4221,19 +4452,16 @@ body.lp-inventory-open .lp-hud-top {
     gap: 16px;
   }
 
-  /* Kenney Mobile Controls Style A (CC0) — Large 2× sprites */
+  /* 触控摇杆：CSS 圆环占位（不用 Kenney 贴图） */
   .lp-move-joystick,
   .lp-look-joystick {
     position: relative;
     width: clamp(104px, 25vw, 132px);
     aspect-ratio: 1;
-    border: none;
+    border: 2px solid rgb(212 212 212 / 0.42);
     border-radius: 50%;
-    background-color: transparent;
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-outline.png");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
+    background: rgb(24 24 27 / 0.42);
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
@@ -4244,13 +4472,12 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-look-joystick {
     width: clamp(88px, 22vw, 112px);
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-look-outline.png");
   }
 
   /* 入座机炮：左摇杆改瞄准外观；右侧只留开火；离开键已挂到左侧簇 */
   .lp-mobile-controls.is-turret-mode .lp-move-joystick {
     width: clamp(112px, 28vw, 140px);
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-look-outline.png");
+    border-color: rgb(251 191 36 / 0.55);
   }
 
   .lp-mobile-controls.is-turret-mode .lp-look-joystick,
@@ -4324,21 +4551,18 @@ body.lp-inventory-open .lp-hud-top {
     content: none;
   }
 
-  /* Optional look cue: faint Kenney crosshair under the knob */
+  /* 瞄准摇杆中心「准」字提示 */
   .lp-look-joystick::before,
   .lp-mobile-controls.is-turret-mode .lp-move-joystick::before {
-    content: "";
+    content: "准";
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 28%;
-    aspect-ratio: 1;
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-look.png");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
     transform: translate(-50%, -50%);
-    opacity: 0.4;
+    font-size: clamp(11px, 2.8vw, 14px);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: rgb(229 229 229 / 0.35);
     pointer-events: none;
   }
 
@@ -4347,28 +4571,32 @@ body.lp-inventory-open .lp-hud-top {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 46%;
+    width: 42%;
     aspect-ratio: 1;
-    border: none;
+    border: 2px solid rgb(229 229 229 / 0.65);
     border-radius: 50%;
-    background-color: transparent;
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/stick-handle.png");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
+    background: rgb(63 63 70 / 0.92);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
     transform: translate(0, 0);
     translate: -50% -50%;
     pointer-events: none;
   }
 
   .lp-mc-icon {
-    display: block;
-    width: 42%;
-    aspect-ratio: 1;
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
+    display: grid;
+    place-items: center;
+    width: auto;
+    min-width: 1em;
+    aspect-ratio: auto;
+    font-size: clamp(15px, 4vw, 20px);
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    color: #f5f5f5;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
+    background: none;
     pointer-events: none;
+    user-select: none;
   }
 
   .lp-mobile-jump-button,
@@ -4380,16 +4608,13 @@ body.lp-inventory-open .lp-hud-top {
     align-items: center;
     justify-content: center;
     aspect-ratio: 1;
-    border: none;
+    border: 2px solid rgb(212 212 212 / 0.5);
     border-radius: 50%;
-    background-color: transparent;
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/btn-circle.png");
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: contain;
-    color: transparent;
-    font-size: 0;
-    line-height: 0;
+    background: rgb(28 28 30 / 0.72);
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35), 0 4px 12px rgb(0 0 0 / 0.35);
+    color: #f5f5f5;
+    font-size: inherit;
+    line-height: 1;
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
@@ -4420,35 +4645,38 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-mobile-fire-button .lp-mc-icon {
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-fire.png");
+    font-size: clamp(16px, 4.2vw, 22px);
   }
 
   .lp-mobile-jump-button .lp-mc-icon {
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-jump.png");
+    font-size: clamp(16px, 4.2vw, 22px);
   }
 
   .lp-mobile-inventory-button .lp-mc-icon {
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-menu.png");
+    font-size: clamp(15px, 3.8vw, 19px);
   }
 
   .lp-mobile-map-button .lp-mc-icon {
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-menu.png");
-    filter: hue-rotate(160deg) saturate(1.2);
+    font-size: clamp(13px, 3.4vw, 17px);
   }
 
   .lp-mobile-sprint-button .lp-mc-icon {
-    width: 46%;
-    background-image: url("/static/games/liminal-platform/img/mobile-controls/icon-sprint.png");
-    opacity: 0.55;
+    font-size: 14px;
+    opacity: 0.72;
   }
 
   .lp-mobile-sprint-button.is-sprint-on .lp-mc-icon,
   .lp-mobile-sprint-button[aria-pressed="true"] .lp-mc-icon {
     opacity: 1;
+    color: #fde68a;
   }
 
   .lp-mobile-inventory-button.is-interact-mode {
-    filter: hue-rotate(200deg) saturate(1.15);
+    border-color: rgb(147 197 253 / 0.75);
+  }
+
+  .lp-mobile-inventory-button.is-interact-mode .lp-mc-icon {
+    color: #bfdbfe;
   }
 
   .lp-mobile-jump-button.is-active,
@@ -4456,12 +4684,13 @@ body.lp-inventory-open .lp-hud-top {
   .lp-mobile-inventory-button.is-active,
   .lp-mobile-map-button.is-active,
   .lp-mobile-sprint-button.is-active {
-    filter: brightness(1.35);
+    filter: brightness(1.2);
     transform: scale(0.94);
+    border-color: rgb(250 250 250 / 0.85);
   }
 
   .lp-mobile-inventory-button.is-interact-mode.is-active {
-    filter: hue-rotate(200deg) saturate(1.15) brightness(1.35);
+    filter: brightness(1.2);
   }
 
   .lp-mobile-inventory-button.is-storage-hint {
@@ -4544,8 +4773,16 @@ body.lp-inventory-open .lp-hud-top {
 
 /* ---- 移动端物品栏：顶部分区 + 单栏 + 底部详情 ---- */
 @media (hover: none), (pointer: coarse) {
+  /* 铺满视口；滚动交给 bag 面板 / float-body，不让 shell 自己滚 */
   .lp-inventory-root.is-mobile-inv {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
     padding: 0;
+    display: flex;
+    flex-direction: column;
     align-items: stretch;
     justify-content: stretch;
     gap: 0;
@@ -4553,34 +4790,49 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-shell {
+    flex: 1 1 auto;
     width: 100%;
-    max-width: none;
+    max-width: 100%;
     height: 100%;
-    max-height: none;
+    max-height: 100%;
     border-width: 0;
     border-radius: 0;
-    flex: 1 1 auto;
+    overflow: hidden;
   }
 
   .lp-inventory-root.is-mobile-inv .lp-side-loot-floats {
     display: none;
+    flex: 1 1 auto;
+    flex-direction: column;
     width: auto;
     min-width: 0;
+    min-height: 0;
     max-height: none;
-    flex: 1 1 auto;
     gap: 10px;
     padding:
       10px
       calc(12px + env(safe-area-inset-right))
       10px
       calc(12px + env(safe-area-inset-left));
-    overflow: auto;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-float {
-    flex: 0 0 auto;
+    flex: 1 1 0;
+    min-height: 0;
     max-height: none;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-float-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   .lp-inventory-root.is-mobile-inv .lp-inventory-tabs:not([hidden]) {
@@ -4605,22 +4857,6 @@ body.lp-inventory-open .lp-hud-top {
     font-size: 16px;
   }
 
-  .lp-inventory-root.is-mobile-inv .lp-inv-settings-fab {
-    top: calc(10px + env(safe-area-inset-top));
-    right: calc(12px + env(safe-area-inset-right));
-    width: 44px;
-    height: 44px;
-  }
-
-  .lp-inventory-root.is-mobile-inv .lp-inventory-settings {
-    top: calc(62px + env(safe-area-inset-top));
-    right: calc(12px + env(safe-area-inset-right));
-    left: auto;
-    width: min(320px, calc(100vw - 24px));
-    max-height: min(60dvh, 420px);
-    padding: 12px;
-  }
-
   .lp-inventory-root.is-mobile-inv .lp-inventory-body,
   .lp-inventory-root.is-mobile-inv.is-side-loot .lp-inventory-body {
     display: flex;
@@ -4642,8 +4878,10 @@ body.lp-inventory-open .lp-hud-top {
     display: none;
     flex: 1 1 auto;
     min-height: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="bag"] .lp-inventory-body > [data-lp-inv-pane="bag"] {
@@ -4680,9 +4918,11 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-inventory-root.is-mobile-inv[data-lp-inv-tab="nearby"] .lp-side-loot-floats:not([hidden]) {
     display: flex;
+    flex-direction: column;
     order: 1;
     flex: 1 1 auto;
     min-height: 0;
+    overflow: hidden;
   }
 
   /* 与顶栏 Tab 重复的面板标题在移动端隐藏（附近弹窗保留分区标题） */
@@ -4766,12 +5006,18 @@ body.lp-inventory-open .lp-hud-top {
 
   .lp-inventory-root.is-mobile-inv .lp-gear-panel,
   .lp-inventory-root.is-mobile-inv .lp-inventory-panel {
+    flex: 1 1 auto;
     min-width: 0;
+    min-height: 0;
     width: 100%;
     border: 0;
     background: transparent;
     box-shadow: none;
     padding: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 
   /* 手部优先：拇指区更易够到 */
@@ -4948,6 +5194,57 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 @media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+  /* 横握压缩顶栏/底栏/分区间距，把竖直空间留给格子与仓储滚动区 */
+  .lp-inventory-root.is-mobile-inv {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-header {
+    padding:
+      calc(6px + env(safe-area-inset-top))
+      calc(10px + env(safe-area-inset-right))
+      6px
+      calc(10px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-tabs:not([hidden]) {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-body,
+  .lp-inventory-root.is-mobile-inv.is-side-loot .lp-inventory-body {
+    gap: 6px;
+    padding:
+      6px
+      calc(10px + env(safe-area-inset-right))
+      6px
+      calc(10px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-side-loot-floats {
+    gap: 6px;
+    padding:
+      6px
+      calc(10px + env(safe-area-inset-right))
+      6px
+      calc(10px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-footer {
+    padding:
+      6px
+      calc(10px + env(safe-area-inset-right))
+      calc(6px + env(safe-area-inset-bottom))
+      calc(10px + env(safe-area-inset-left));
+  }
+
+  .lp-inventory-root.is-mobile-inv .lp-inventory-float-header {
+    padding: 8px 10px;
+    row-gap: 6px;
+  }
+
   .lp-inventory-root.is-mobile-inv .lp-paperdoll-preview {
     height: min(132px, 40vh);
     max-height: min(132px, 40vh);
@@ -5012,7 +5309,7 @@ body.lp-inventory-open .lp-hud-top {
   }
 
   .lp-hotbar-cluster {
-    top: calc(72px + env(safe-area-inset-top));
+    top: calc(52px + env(safe-area-inset-top));
     right: calc(10px + env(safe-area-inset-right));
   }
 
@@ -7045,6 +7342,141 @@ body.lp-inventory-open .lp-hud-top {
   }
 }
 
+/* ---- 地牢完整地图（小型月台 M） ---- */
+
+.lp-dungeon-map-root {
+  position: fixed;
+  inset: 0;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.lp-dungeon-map-root[hidden] {
+  display: none;
+}
+
+.lp-dungeon-map-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at center, rgb(12 14 22 / 0.58), rgb(0 0 0 / 0.8));
+}
+
+.lp-dungeon-map-shell {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  width: min(880px, calc(100vw - 28px));
+  max-width: 96vw;
+  padding: 18px 22px 14px;
+  background:
+    linear-gradient(165deg, #1a1c24 0%, #0c0e14 55%, #08090c 100%);
+  border: 3px solid #3a3f52;
+  box-shadow:
+    0 0 0 1px rgb(160 170 200 / 0.2),
+    0 22px 52px rgb(0 0 0 / 0.62),
+    inset 0 1px 0 rgb(200 210 230 / 0.08);
+  color: #e4e4e7;
+}
+
+.lp-dungeon-map-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.lp-dungeon-map-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #8b93a8;
+}
+
+.lp-dungeon-map-title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #f4f4f5;
+}
+
+.lp-dungeon-map-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lp-dungeon-map-floor {
+  font-size: 13px;
+  font-weight: 700;
+  color: #38bdf8;
+  white-space: nowrap;
+}
+
+.lp-dungeon-map-close {
+  appearance: none;
+  border: 2px solid rgb(180 60 50 / 0.9);
+  background: rgb(140 36 28 / 0.92);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+}
+
+.lp-dungeon-map-close:hover {
+  background: rgb(170 45 35);
+}
+
+.lp-dungeon-map-stage {
+  width: 100%;
+  min-height: 240px;
+  border: 1px solid rgb(163 163 163 / 0.25);
+  background: #141418;
+  overflow: hidden;
+}
+
+.lp-dungeon-map-stage canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.lp-dungeon-map-legend {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #a1a1aa;
+}
+
+.lp-dungeon-map-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #8b93a8;
+}
+
+.lp-page.lp-aim-mode .lp-dungeon-map-root,
+.lp-page.lp-aim-mode .lp-dungeon-map-root * {
+  cursor: auto;
+}
+
+@media (max-width: 720px) {
+  .lp-dungeon-map-shell {
+    width: calc(100vw - 16px);
+    padding: 14px 12px 12px;
+  }
+
+  .lp-dungeon-map-stage {
+    min-height: 200px;
+  }
+}
+
 /* ---- 设施编辑：底栏仓库托盘 ---- */
 
 .lp-facility-edit-root {
@@ -7169,7 +7601,7 @@ body.lp-inventory-open .lp-hud-top {
 }
 
 .lp-facility-tray-swatch.has-image {
-  background: transparent var(--lp-fac-icon, none) center bottom / contain no-repeat;
+  background: transparent var(--lp-fac-icon, none) center / contain no-repeat;
   border-color: transparent;
   color: transparent;
 }

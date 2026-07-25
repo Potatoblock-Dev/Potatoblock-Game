@@ -22,7 +22,10 @@
   const closeButton = document.getElementById('lpInventoryClose');
   const sortPlayerBagButton = document.getElementById('lpSortPlayerBag');
   const sortStorageBagButton = document.getElementById('lpSortStorageBag');
-  const settingsToggle = document.getElementById('lpInventorySettingsToggle');
+  const transferAllStorageBtn = document.getElementById('lpTransferAllStorageBtn');
+  const settingsToggles = () => document.querySelectorAll('[data-lp-settings-toggle]');
+  const hudActions = document.getElementById('lpHudActions');
+  const hudMenuToggle = document.getElementById('lpHudMenuToggle');
   const tabsNav = document.getElementById('lpInventoryTabs');
   const detailPanel = document.getElementById('lpInventoryDetail');
   const detailEmpty = document.getElementById('lpInventoryDetailEmpty');
@@ -70,9 +73,13 @@
   const coarsePointer = window.matchMedia('(hover: none), (pointer: coarse)');
   const loaded = Core.loadInventories();
   const { player, storage, facilityStorage, hands, equip } = loaded;
+  const platformStorage =
+    loaded.platformStorage || Core.createEmptyPlatformStorage();
   const state = {
     open: false,
     inStorageCar: false,
+    /** 打开地牢本地仓（platform_storage）；与列车仓储车厢无关。 */
+    usePlatformStorage: false,
     openWorldX: 0,
     groundPile: null,
     groundInv: null,
@@ -103,12 +110,11 @@
     ? Entity.createAvatarEntity({ nickname: '' })
     : null;
 
-  /** 武器/装备在 rot=90 时给图标加 is-rotated；其它类型仅足迹旋转、贴图 upright。 */
+  /** 武器/装备在 rot=90 时给图标加 is-rotated（角度见 Catalog.iconRotCssDeg）；其它类型仅足迹旋转。 */
   function applyIconRotation(iconEl, stack) {
-    if (!iconEl) return;
     const rotate =
       Core.stackRot(stack) === 90 && Catalog.iconFollowsRot(stack?.itemId);
-    iconEl.classList.toggle('is-rotated', Boolean(rotate));
+    Catalog.applyIconRotationClass(iconEl, rotate, stack?.itemId);
   }
 
   /**
@@ -231,6 +237,7 @@
     if (id === 'player') return player;
     if (id === 'storage') return storage;
     if (id === 'storage_facility') return facilityStorage;
+    if (id === 'platform_storage') return platformStorage;
     if (id === 'hands') return hands;
     if (id === 'equip') return equip;
     if (id === 'ground' || id === state.groundInv?.id) return state.groundInv;
@@ -267,6 +274,9 @@
     if (inventory === facilityStorage || inventory.id === 'storage_facility') {
       return { bag: 'storage_facility', index };
     }
+    if (inventory === platformStorage || inventory.id === 'platform_storage') {
+      return { bag: 'platform_storage', index };
+    }
     if (inventory === hands || inventory.id === 'hands') {
       return { bag: 'hands', index };
     }
@@ -289,8 +299,9 @@
     window.LpInventoryNet.sendOp(payload);
   }
 
-  /** 当前仓储浮窗展示的仓库（物资或设施）。 */
+  /** 当前仓储浮窗展示的仓库（物资 / 设施 / 月台）。 */
   function activeStorageInv() {
+    if (state.usePlatformStorage) return platformStorage;
     return state.storageTab === 'storage_facility' ? facilityStorage : storage;
   }
 
@@ -301,6 +312,9 @@
     if (inventory === storage || inventory.id === 'storage') return 'storage';
     if (inventory === facilityStorage || inventory.id === 'storage_facility') {
       return 'storage_facility';
+    }
+    if (inventory === platformStorage || inventory.id === 'platform_storage') {
+      return 'platform_storage';
     }
     if (inventory === hands || inventory.id === 'hands') return 'hands';
     if (inventory === equip || inventory.id === 'equip') return 'equip';
@@ -319,10 +333,15 @@
       return state.groundInv;
     }
     if (state.inStorageCar) {
-      if (inventory.id === 'storage' || inventory.id === 'storage_facility') {
+      if (
+        inventory.id === 'storage' ||
+        inventory.id === 'storage_facility' ||
+        inventory.id === 'platform_storage'
+      ) {
         return player;
       }
       if (inventory.id === 'player') {
+        if (state.usePlatformStorage) return platformStorage;
         const stack = inventory.getSlot(index);
         if (Catalog.isPlaceableFacility?.(stack?.itemId)) return facilityStorage;
         return storage;
@@ -387,6 +406,20 @@
     root.classList.toggle('is-ground-loot', showGround);
     root.classList.toggle('is-storage-loot', showStorage);
 
+    if (storageWarehouseTabs) {
+      storageWarehouseTabs.hidden = Boolean(state.usePlatformStorage);
+    }
+    if (facilityEditEnterBtn) {
+      facilityEditEnterBtn.hidden = Boolean(state.usePlatformStorage);
+    }
+    if (transferAllStorageBtn) {
+      transferAllStorageBtn.hidden = !state.usePlatformStorage;
+    }
+    const titleEl = storageSection.querySelector('.lp-inventory-panel-title');
+    if (titleEl) {
+      titleEl.textContent = state.usePlatformStorage ? '地牢仓库' : '仓储车厢 · 仓库';
+    }
+
     const nearbyTab = tabsNav?.querySelector('[data-lp-inv-tab="nearby"]');
     if (nearbyTab) nearbyTab.hidden = !showSide;
     if (!showSide && state.mobileTab === 'nearby') state.mobileTab = 'bag';
@@ -446,15 +479,17 @@
 
   /**
    * 自动整理背包或当前仓库网格；联机发 sort 意图并由权威快照对齐。
-   * @param {'player'|'storage'|'storage_facility'} bagName
+   * @param {'player'|'storage'|'storage_facility'|'platform_storage'} bagName
    */
   function sortBagGrid(bagName) {
     const inventory =
       bagName === 'storage_facility'
         ? facilityStorage
-        : bagName === 'storage'
-          ? storage
-          : player;
+        : bagName === 'platform_storage'
+          ? platformStorage
+          : bagName === 'storage'
+            ? storage
+            : player;
     if (!inventory) return;
     if (state.cursor || state.dragSource) {
       window.LiminalInteract?.showToast?.('请先放下手中物品再整理');
@@ -561,19 +596,7 @@
     detailBody.hidden = false;
 
     if (detailIcon) {
-      detailIcon.style.setProperty('--item-color', item.color);
-      detailIcon.style.setProperty('--item-accent', item.accent);
-      if (item.icon) {
-        detailIcon.classList.add('has-image');
-        detailIcon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-        detailIcon.style.backgroundImage = '';
-        detailIcon.textContent = '';
-      } else {
-        detailIcon.classList.remove('has-image');
-        detailIcon.style.removeProperty('--lp-item-icon');
-        detailIcon.style.backgroundImage = '';
-        detailIcon.textContent = item.short;
-      }
+      Catalog.applyItemIcon(detailIcon, item);
       applyIconRotation(detailIcon, stack);
     }
     if (detailName) detailName.textContent = item.name;
@@ -727,16 +750,7 @@
 
     const icon = document.createElement('span');
     icon.className = 'lp-inventory-item-icon';
-    icon.style.setProperty('--item-color', item.color);
-    icon.style.setProperty('--item-accent', item.accent);
-    if (item.icon) {
-      icon.classList.add('has-image');
-      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-      icon.style.backgroundImage = '';
-      icon.textContent = '';
-    } else {
-      icon.textContent = item.short;
-    }
+    Catalog.applyItemIcon(icon, item);
     applyIconRotation(icon, stack);
 
     const qty = document.createElement('span');
@@ -757,7 +771,7 @@
   /** 取某网格的槽位按钮列表。 */
   function slotButtonsFor(inventory) {
     if (inventory === player) return Array.from(playerGrid.querySelectorAll('.lp-inventory-slot'));
-    if (inventory === storage || inventory === facilityStorage) {
+    if (inventory === storage || inventory === facilityStorage || inventory === platformStorage) {
       return Array.from(storageGrid.querySelectorAll('.lp-inventory-slot'));
     }
     if (inventory === hands) {
@@ -1127,7 +1141,9 @@
   function gridElFor(inventory) {
     if (!inventory) return null;
     if (inventory === player) return playerGrid;
-    if (inventory === storage || inventory === facilityStorage) return storageGrid;
+    if (inventory === storage || inventory === facilityStorage || inventory === platformStorage) {
+      return storageGrid;
+    }
     if (inventory === state.groundInv && groundGrid) return groundGrid;
     return null;
   }
@@ -1254,16 +1270,7 @@
     cursorEl.replaceChildren();
     const icon = document.createElement('span');
     icon.className = 'lp-inventory-item-icon';
-    icon.style.setProperty('--item-color', item.color);
-    icon.style.setProperty('--item-accent', item.accent);
-    if (item.icon) {
-      icon.classList.add('has-image');
-      icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-      icon.style.backgroundImage = '';
-      icon.textContent = '';
-    } else {
-      icon.textContent = item.short;
-    }
+    Catalog.applyItemIcon(icon, item);
     applyIconRotation(icon, stack);
     const qty = document.createElement('span');
     qty.className = 'lp-inventory-item-qty';
@@ -1973,6 +1980,7 @@
   function open(worldX) {
     flushSeedOverflow(worldX);
     state.openWorldX = worldX;
+    state.usePlatformStorage = false;
     state.inStorageCar = isInStorageCar(worldX);
     state.open = true;
     syncPlayerPanelTitle();
@@ -1980,6 +1988,53 @@
     state.mobileTab = hasSideLoot() ? 'nearby' : 'bag';
     root.hidden = false;
     root.classList.toggle('is-side-loot', hasSideLoot());
+    root.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('lp-inventory-open');
+    window.LpTouchControls?.setEnabled(false);
+    clearDetail();
+    renderGrids();
+    startEquipPreviewLoop();
+    Bindings.renderBindings?.();
+  }
+
+  /**
+   * 打开列车仓储车厢（物资/设施仓），供安全屋远程连通车辆仓库。
+   * @param {number} worldX
+   */
+  function openVehicleStorage(worldX) {
+    flushSeedOverflow(worldX);
+    state.openWorldX = worldX;
+    state.usePlatformStorage = false;
+    state.inStorageCar = true;
+    state.storageTab = 'storage';
+    state.open = true;
+    syncPlayerPanelTitle();
+    syncGroundPanel(worldX);
+    state.mobileTab = 'nearby';
+    root.hidden = false;
+    root.classList.toggle('is-side-loot', true);
+    root.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('lp-inventory-open');
+    window.LpTouchControls?.setEnabled(false);
+    clearDetail();
+    renderGrids();
+    startEquipPreviewLoop();
+    Bindings.renderBindings?.();
+  }
+
+  /** 打开地牢本地仓库（绑 platform_storage；不连通车辆仓）。 */
+  function openPlatformStorage(worldX) {
+    flushSeedOverflow(worldX);
+    state.openWorldX = worldX;
+    state.usePlatformStorage = true;
+    state.inStorageCar = true;
+    state.storageTab = 'storage';
+    state.open = true;
+    syncPlayerPanelTitle();
+    syncGroundPanel(worldX);
+    state.mobileTab = 'nearby';
+    root.hidden = false;
+    root.classList.toggle('is-side-loot', true);
     root.setAttribute('aria-hidden', 'false');
     document.body.classList.add('lp-inventory-open');
     window.LpTouchControls?.setEnabled(false);
@@ -2000,6 +2055,7 @@
     }
     state.open = false;
     state.inStorageCar = false;
+    state.usePlatformStorage = false;
     state.groundPile = null;
     state.groundInv = null;
     state.dragSource = null;
@@ -2020,9 +2076,8 @@
     root.dataset.lpInvTab = '';
     root.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('lp-inventory-open');
-    settingsPanel.hidden = true;
-    settingsToggle?.setAttribute('aria-expanded', 'false');
-    settingsToggle?.classList.remove('is-active');
+    setSettingsOpen(false);
+    setHudMenuOpen(false);
     sideLootFloats.hidden = true;
     groundSection.hidden = true;
     storageSection.hidden = true;
@@ -2100,10 +2155,72 @@
     return removed;
   }
 
+  /**
+   * 地牢仓库一键转入背包：从高下标往低扫，避免 take 后索引错位。
+   * 背包满则留下剩余并 toast。
+   */
+  function transferAllPlatformStorageToBag() {
+    if (!state.usePlatformStorage || !platformStorage || !player) return;
+    if (state.cursor || state.dragSource) {
+      window.LiminalInteract?.showToast?.('请先放下手中物品再转移');
+      return;
+    }
+    let moved = 0;
+    let blocked = 0;
+    const origins = [];
+    for (let i = 0; i < platformStorage.slots.length; i += 1) {
+      if (platformStorage.slots[i]) origins.push(i);
+    }
+    origins.sort((a, b) => b - a);
+    for (const origin of origins) {
+      const stack = platformStorage.getSlot(origin);
+      if (!stack) continue;
+      const qtyBefore = stack.qty;
+      const from = bagRef(platformStorage, origin);
+      Core.quickTransfer(platformStorage, origin, player);
+      const left = platformStorage.getSlot(origin);
+      const didMove = !left || left.qty < qtyBefore;
+      if (didMove) {
+        moved += 1;
+        if (window.LpInventoryNet?.isActive?.() && from) {
+          netSend({
+            action: 'quick_transfer',
+            from,
+            toBag: 'player',
+            pileId: null,
+          });
+        }
+      } else {
+        blocked += 1;
+      }
+    }
+    if (moved > 0) {
+      persistAndRender();
+      if (blocked > 0) {
+        window.LiminalInteract?.showToast?.('部分物品无法转入（背包已满或不兼容）');
+      } else {
+        window.LiminalInteract?.showToast?.('已全部转入背包');
+      }
+    } else if (blocked > 0) {
+      window.LiminalInteract?.showToast?.('无法转入（背包已满或不兼容）');
+    } else {
+      window.LiminalInteract?.showToast?.('仓库为空');
+    }
+  }
+
   closeButton?.addEventListener('click', close);
   sortPlayerBagButton?.addEventListener('click', () => sortBagGrid('player'));
   sortStorageBagButton?.addEventListener('click', () => {
-    sortBagGrid(state.storageTab === 'storage_facility' ? 'storage_facility' : 'storage');
+    sortBagGrid(
+      state.usePlatformStorage
+        ? 'platform_storage'
+        : state.storageTab === 'storage_facility'
+          ? 'storage_facility'
+          : 'storage'
+    );
+  });
+  transferAllStorageBtn?.addEventListener('click', () => {
+    transferAllPlatformStorageToBag();
   });
   storageWarehouseTabs?.addEventListener('click', (event) => {
     const btn = event.target.closest?.('[data-lp-storage-tab]');
@@ -2124,12 +2241,62 @@
     }
   });
   root.querySelector('.lp-inventory-backdrop')?.addEventListener('click', close);
-  settingsToggle?.addEventListener('click', () => {
-    const nextHidden = !settingsPanel.hidden;
-    settingsPanel.hidden = nextHidden;
-    settingsToggle.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
-    settingsToggle.classList.toggle('is-active', !nextHidden);
+  /**
+   * 同步所有设置入口（桌面 FAB / 右上菜单 / 物品栏顶栏）的展开态。
+   * @param {boolean} open
+   */
+  function setSettingsOpen(open) {
+    if (!settingsPanel) return;
+    settingsPanel.hidden = !open;
+    for (const btn of settingsToggles()) {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.classList.toggle('is-active', open);
+    }
+  }
+
+  /** 展开或收起右上汉堡菜单（桌面/触屏共用）。 */
+  function setHudMenuOpen(open) {
+    if (!hudActions || !hudMenuToggle) return;
+    hudActions.classList.toggle('is-open', open);
+    hudMenuToggle.classList.toggle('is-open', open);
+    hudMenuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  for (const btn of settingsToggles()) {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      const nextOpen = Boolean(settingsPanel?.hidden);
+      setSettingsOpen(nextOpen);
+      if (nextOpen) setHudMenuOpen(false);
+    });
+  }
+
+  hudMenuToggle?.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const nextOpen = !hudActions?.classList.contains('is-open');
+    setHudMenuOpen(nextOpen);
   });
+
+  /* 点选面板内动作后收起（设置入口已在上方关闭；全屏/链接也收）。 */
+  document.getElementById('lpHudMenuPanel')?.addEventListener('click', (event) => {
+    const action = event.target.closest?.('a, button');
+    if (!action || action.id === 'lpHudMenuToggle') return;
+    setHudMenuOpen(false);
+  });
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!hudActions?.classList.contains('is-open')) return;
+    if (hudActions.contains(event.target)) return;
+    setHudMenuOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'Escape') return;
+    if (!hudActions?.classList.contains('is-open')) return;
+    setHudMenuOpen(false);
+  });
+
   tabsNav?.addEventListener('click', (event) => {
     const btn = event.target.closest?.('[data-lp-inv-tab]');
     if (!btn || btn.hidden) return;
@@ -2156,6 +2323,8 @@
 
   window.LpInventory = {
     open,
+    openVehicleStorage,
+    openPlatformStorage,
     close,
     toggle,
     isOpen,
@@ -2164,6 +2333,7 @@
     getPlayerInventory: () => player,
     getStorageInventory: () => storage,
     getFacilityStorageInventory: () => facilityStorage,
+    getPlatformStorageInventory: () => platformStorage,
     getHandsInventory: () => hands,
     getEquipInventory: () => equip,
     consumeItem,

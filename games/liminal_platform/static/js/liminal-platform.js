@@ -63,6 +63,13 @@
   let feedZoomMul = 1;
   let lastTs = 0;
   let loopStarted = false;
+  /** 电脑端窗口是否聚焦；失焦时暂停主循环以省 CPU/GPU。 */
+  let windowFocused =
+    typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+  /** 是否已排队下一帧（rAF），避免 focus 唤醒与尾调度叠帧。 */
+  let frameScheduled = false;
+  /** 当前 rAF 句柄；失焦时取消以免再跑一帧重负载。 */
+  let frameRafId = 0;
 
   /** 电脑端准星（屏幕坐标）与平滑镜头焦点（世界坐标）。 */
   const pointer = { x: 0, y: 0, known: false };
@@ -70,6 +77,15 @@
   const LOOK_WEIGHT = 0.58;
   const LOOK_WEIGHT_Y = 0.36;
   const CAM_SMOOTH = 9;
+  /**
+   * 传送级硬对齐阈值（世界距离）。须大于地牢 FLOOR_GAP≈794，
+   * 否则爬楼/换层会触发硬切产生顿挫。
+   */
+  const CAM_SNAP_DIST = 1500;
+  /** 月台/地牢竖直焦点相对脚底上抬（世界 px），让躯干更近屏中。 */
+  const PLAT_CAM_BODY_LIFT = 56;
+  /** |ΔY| 超过此值时加快竖直追焦，减少楼梯间镜头滞后露虚空。 */
+  const PLAT_CAM_Y_CATCHUP = 72;
   const crosshairEl = document.getElementById('lpCrosshair');
   const crosshairAltEl = document.getElementById('lpCrosshairAlt');
 
@@ -102,11 +118,12 @@
     return label.split(' / ')[0];
   }
 
-  /** 是否有全屏 UI（物品栏 / 列车地图 / 锅炉 / 加燃料 / 弹药箱 / 雷达 / 枢机 / 设施编辑 / 月台编组）。 */
+  /** 是否有全屏 UI（物品栏 / 列车·地牢地图 / 锅炉 / 加燃料 / 弹药箱 / 雷达 / 枢机 / 设施编辑 / 月台编组）。 */
   function isUiOpen() {
     return (
       (window.LpInventory?.isOpen() ?? false) ||
       (window.LpTrainMap?.isOpen() ?? false) ||
+      (window.LpDungeonMap?.isOpen?.() ?? false) ||
       (window.LpBoilerPanel?.isOpen() ?? false) ||
       (window.LpFuelFeed?.isOpen?.() ?? false) ||
       (window.LpGuardCrateUi?.isOpen?.() ?? false) ||
@@ -181,93 +198,368 @@
     };
   }
 
-  /** 移动端准星吸附：屏幕半径（px）；越近拉力越强，不硬锁。 */
-  const TOUCH_AIM_ASSIST_RADIUS_PX = 88;
-  /** 最大朝目标中心的混合比例（0–1）；留足余量做微调。 */
-  const TOUCH_AIM_ASSIST_MAX_PULL = 0.46;
+  /** 移动端准星硬吸附半径（屏幕 px）；摇杆作方向偏置选目标，非精确自由瞄。 */
+  const TOUCH_AIM_SNAP_RADIUS_PX = 168;
+  /** 无锥内目标时的半球兜底半径（相对玩家屏幕点）。 */
+  const TOUCH_AIM_FALLBACK_RADIUS_PX = 280;
+  /** 摇杆锥半角余弦（约 ±58°）；锥内优先。 */
+  const TOUCH_AIM_CONE_COS = 0.53;
+  /** 锥外候选加分惩罚（越大越不愿选锥外）。 */
+  const TOUCH_AIM_OUT_OF_CONE_PENALTY = 220;
+  /** 粘滞切换余量：挑战者须明显更优才换目标。 */
+  const TOUCH_AIM_STICKY_MARGIN = 48;
+  /** 首次吸附 / 换目标时准星追上目标的速率（1/s）。 */
+  const TOUCH_AIM_SNAP_LERP = 16;
+  /** 已粘滞时准星跟随目标的速率（1/s）。 */
+  const TOUCH_AIM_TRACK_LERP = 24;
+  /** 松手后准星回到自由瞄点的速率（1/s）。 */
+  const TOUCH_AIM_RELEASE_LERP = 12;
+  /** 友方吸附用的胸口相对脚底偏移（与医疗箱瞄准一致）。 */
+  const TOUCH_AIM_ALLY_CHEST_DY = 56;
+  /** 友方缺 radius 时的世界半径占位。 */
+  const TOUCH_AIM_ALLY_RADIUS = 28;
+
+  /** @type {string|number|null} 当前粘滞目标 id（仅触控瞄准路径）。 */
+  let touchAimSnapId = null;
+  /** @type {'enemy'|'ally'|'any'|'none'|null} 粘滞建立时的目标类；换持物不兼容则清。 */
+  let touchAimSnapClass = null;
+  /** @type {{ x: number, y: number }|null} 平滑后的准星屏幕坐标。 */
+  let touchAimSmoothed = null;
 
   /**
-   * 对原始触控准星做软磁吸附：在半径内拉向最近存活敌方（LpMobs / 战斗敌方）。
-   * 拉力随距离二次衰减；不硬锁，桌面鼠标路径不调用。
+   * 将准星平滑移向目标点（指数逼近，避免硬跳）。
+   * @param {number} tx
+   * @param {number} ty
+   * @param {number} rate 速率 1/s
+   * @param {number} dt
+   * @returns {{ x: number, y: number }}
    */
-  function applyTouchAimAssist(screenX, screenY, view) {
+  function lerpTouchAimPointer(tx, ty, rate, dt) {
+    if (!touchAimSmoothed) {
+      touchAimSmoothed = { x: tx, y: ty };
+      return touchAimSmoothed;
+    }
+    const k = 1 - Math.exp(-Math.max(0, rate) * Math.max(0, dt));
+    touchAimSmoothed.x += (tx - touchAimSmoothed.x) * k;
+    touchAimSmoothed.y += (ty - touchAimSmoothed.y) * k;
+    return touchAimSmoothed;
+  }
+
+  /**
+   * 解析当前手持物对应的准星吸附目标类（医疗→友方、武器→敌方等）。
+   * @returns {'enemy'|'ally'|'any'|'none'}
+   */
+  function resolveTouchAimTargetClass() {
+    const Catalog = window.LpItemCatalog;
+    let item = null;
+    if (window.LpMedkit?.isHoldingMedkit?.()) {
+      item =
+        window.LpMedkit.getHeldFirstAidSlot?.()?.item ||
+        window.LpMedkit.getHeldMedkitSlot?.()?.item ||
+        Catalog?.getItem?.('medkit') ||
+        null;
+    } else if (window.LpFireExtinguisher?.isHolding?.()) {
+      item = Catalog?.getItem?.('fire_extinguisher') || null;
+    } else {
+      item =
+        window.LpCombat?.getHeldVisibleItem?.() ||
+        window.LpCombat?.getHeldWeaponItem?.() ||
+        null;
+    }
+    if (Catalog?.getAimTargetClass) return Catalog.getAimTargetClass(item);
+    if (window.LpMedkit?.isHoldingMedkit?.()) return 'ally';
+    if (window.LpFireExtinguisher?.isHolding?.()) return 'none';
+    return 'enemy';
+  }
+
+  /**
+   * 收集敌方实体（世界坐标 + 半径），供触控吸附。
+   * @returns {Array<{ id: string|number, x: number, y: number, radius: number }>}
+   */
+  function listTouchAimHostiles() {
     const hostiles =
       window.LpMobs?.listHostiles?.() ||
       window.LpCombat?.listHostiles?.() ||
       [];
-    if (!hostiles.length) return { x: screenX, y: screenY };
-
-    let bestX = 0;
-    let bestY = 0;
-    let bestDist = Infinity;
-    let bestRadius = TOUCH_AIM_ASSIST_RADIUS_PX;
-
+    const out = [];
     for (let i = 0; i < hostiles.length; i += 1) {
       const h = hostiles[i];
-      const sx = Number(h.x);
-      const sy = Number(h.y);
-      if (!Number.isFinite(sx) || !Number.isFinite(sy)) continue;
-      const scr = worldToScreen(sx, sy, view);
+      if (h?.id == null) continue;
+      const wx = Number(h.x);
+      const wy = Number(h.y);
+      if (!Number.isFinite(wx) || !Number.isFinite(wy)) continue;
+      out.push({
+        id: h.id,
+        x: wx,
+        y: wy,
+        radius: Math.max(0, Number(h.radius) || 0),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 收集联机友方（胸口点），供医疗类吸附；跳过断线与已死亡。
+   * @returns {Array<{ id: string|number, x: number, y: number, radius: number }>}
+   */
+  function listTouchAimAllies() {
+    const out = [];
+    const remoteMap = window.LiminalSession?.remotes?.();
+    if (!remoteMap || typeof remoteMap.values !== 'function') return out;
+    for (const remote of remoteMap.values()) {
+      if (!remote || remote._lpDisconnected) continue;
+      if (remote._lpLifeState === 'dead') continue;
+      const id = remote.id;
+      if (id == null || id === '') continue;
+      const wx = Number(remote.x);
+      const ry = Number(
+        remote.y != null ? remote.y : remote._physicsY != null ? remote._physicsY : NaN
+      );
+      if (!Number.isFinite(wx) || !Number.isFinite(ry)) continue;
+      out.push({
+        id,
+        x: wx,
+        y: ry - TOUCH_AIM_ALLY_CHEST_DY,
+        radius: TOUCH_AIM_ALLY_RADIUS,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 按手持物亲和性列出可吸附实体（enemy / ally / any / none）。
+   * @param {'enemy'|'ally'|'any'|'none'} affinity
+   * @returns {Array<{ id: string|number, x: number, y: number, radius: number }>}
+   */
+  function listTouchAimEntities(affinity) {
+    if (affinity === 'none') return [];
+    if (affinity === 'ally') return listTouchAimAllies();
+    if (affinity === 'enemy') return listTouchAimHostiles();
+    return listTouchAimHostiles().concat(listTouchAimAllies());
+  }
+
+  /**
+   * 在当前亲和性实体列表中按 id 取屏幕坐标；不可见或不兼容则 null。
+   * @param {string|number|null} id
+   * @param {{ zoom: number, offsetX: number, offsetY: number }} view
+   * @param {'enemy'|'ally'|'any'|'none'} affinity
+   * @returns {{ x: number, y: number }|null}
+   */
+  function touchAimScreenOfId(id, view, affinity) {
+    if (id == null || affinity === 'none') return null;
+    const want = String(id);
+    const entities = listTouchAimEntities(affinity);
+    for (let i = 0; i < entities.length; i += 1) {
+      const e = entities[i];
+      if (e?.id == null || String(e.id) !== want) continue;
+      const scr = worldToScreen(e.x, e.y, view);
       if (
-        scr.x < -48 ||
-        scr.x > viewW + 48 ||
-        scr.y < -48 ||
-        scr.y > viewH + 48
+        scr.x < -64 ||
+        scr.x > viewW + 64 ||
+        scr.y < -64 ||
+        scr.y > viewH + 64
+      ) {
+        return null;
+      }
+      return { x: scr.x, y: scr.y };
+    }
+    return null;
+  }
+
+  /**
+   * 换持物导致目标类变化，或粘滞目标已不在合法列表时，清除粘滞。
+   * @param {'enemy'|'ally'|'any'|'none'} affinity
+   */
+  function clearTouchAimStickyIfInvalid(affinity) {
+    if (touchAimSnapClass != null && touchAimSnapClass !== affinity) {
+      touchAimSnapId = null;
+      touchAimSnapClass = null;
+      return;
+    }
+    if (touchAimSnapId == null) {
+      touchAimSnapClass = null;
+      return;
+    }
+    if (affinity === 'none') {
+      touchAimSnapId = null;
+      touchAimSnapClass = null;
+      return;
+    }
+    const stillValid = listTouchAimEntities(affinity).some(
+      (e) => e?.id != null && String(e.id) === String(touchAimSnapId)
+    );
+    if (!stillValid) {
+      touchAimSnapId = null;
+      touchAimSnapClass = null;
+    }
+  }
+
+  /**
+   * 移动端目标选择器：摇杆锥偏置 + 按手持物过滤敌/友；硬吸附并粘滞跟随。
+   * 无合法目标时自由瞄。按住选目标；松手仍跟上次合法目标。桌面不调用。
+   * @param {number} rawX 摇杆换算的自由瞄屏幕 X
+   * @param {number} rawY 摇杆换算的自由瞄屏幕 Y
+   * @param {{ zoom: number, offsetX: number, offsetY: number }} view
+   * @param {{ x?: number, y?: number, mag?: number, active?: boolean, ready?: boolean }} look
+   * @param {{ x: number, y: number }} originScreen 玩家瞄准锚点屏幕坐标
+   * @param {number} dt
+   * @returns {{ x: number, y: number }}
+   */
+  function applyTouchAimSnap(rawX, rawY, view, look, originScreen, dt) {
+    const affinity = resolveTouchAimTargetClass();
+    clearTouchAimStickyIfInvalid(affinity);
+
+    const stickActive = Boolean(look?.active);
+
+    /* 松手：继续跟随上次吸附目标，方便另一拇指开火；目标失效则回自由瞄。 */
+    if (!stickActive) {
+      const stickyScr = touchAimScreenOfId(touchAimSnapId, view, affinity);
+      if (stickyScr) {
+        return lerpTouchAimPointer(stickyScr.x, stickyScr.y, TOUCH_AIM_TRACK_LERP, dt);
+      }
+      touchAimSnapId = null;
+      touchAimSnapClass = null;
+      return lerpTouchAimPointer(rawX, rawY, TOUCH_AIM_RELEASE_LERP, dt);
+    }
+
+    if (affinity === 'none') {
+      touchAimSnapId = null;
+      touchAimSnapClass = null;
+      return lerpTouchAimPointer(rawX, rawY, TOUCH_AIM_RELEASE_LERP, dt);
+    }
+
+    const entities = listTouchAimEntities(affinity);
+    const lx = Number(look?.x) || 0;
+    const ly = Number(look?.y) || 0;
+    const stickLen = Math.hypot(lx, ly);
+    const hasStickDir = Boolean(look?.ready) && stickLen > 0.01;
+    const stickDx = hasStickDir ? lx / stickLen : 0;
+    const stickDy = hasStickDir ? ly / stickLen : 0;
+    const facingDx = avatar.facing >= 0 ? 1 : -1;
+    const biasDx = hasStickDir ? stickDx : facingDx;
+    const biasDy = hasStickDir ? stickDy : 0;
+
+    /** @type {Array<{ id: string|number, scrX: number, scrY: number, distRaw: number, inCone: boolean, score: number }>} */
+    const candidates = [];
+    for (let i = 0; i < entities.length; i += 1) {
+      const e = entities[i];
+      const scr = worldToScreen(e.x, e.y, view);
+      if (
+        scr.x < -64 ||
+        scr.x > viewW + 64 ||
+        scr.y < -64 ||
+        scr.y > viewH + 64
       ) {
         continue;
       }
-      const mobScreenR = Math.max(0, Number(h.radius) || 0) * view.zoom;
-      const assistR = TOUCH_AIM_ASSIST_RADIUS_PX + mobScreenR * 0.4;
-      const dist = Math.hypot(screenX - scr.x, screenY - scr.y);
-      if (dist >= assistR || dist >= bestDist) continue;
-      bestDist = dist;
-      bestRadius = assistR;
-      bestX = scr.x;
-      bestY = scr.y;
+      const mobScreenR = Math.max(0, Number(e.radius) || 0) * view.zoom;
+      const snapR = TOUCH_AIM_SNAP_RADIUS_PX + mobScreenR * 0.55;
+      const distRaw = Math.hypot(rawX - scr.x, rawY - scr.y);
+      const distOrigin = Math.hypot(originScreen.x - scr.x, originScreen.y - scr.y);
+      const toOx = scr.x - originScreen.x;
+      const toOy = scr.y - originScreen.y;
+      const toLen = Math.hypot(toOx, toOy) || 1;
+      const coneDot = (toOx / toLen) * biasDx + (toOy / toLen) * biasDy;
+      const inCone = coneDot >= TOUCH_AIM_CONE_COS;
+      const inSnap = distRaw <= snapR;
+      const inFallback =
+        !inSnap && distOrigin <= TOUCH_AIM_FALLBACK_RADIUS_PX + mobScreenR && coneDot > 0;
+      if (!inSnap && !inFallback) continue;
+
+      let score = distRaw;
+      if (!inCone) score += TOUCH_AIM_OUT_OF_CONE_PENALTY;
+      if (inFallback) score += 80;
+      score -= coneDot * 28;
+      if (e.id != null && String(e.id) === String(touchAimSnapId)) {
+        score -= TOUCH_AIM_STICKY_MARGIN;
+      }
+      candidates.push({
+        id: e.id,
+        scrX: scr.x,
+        scrY: scr.y,
+        distRaw,
+        inCone,
+        score,
+      });
     }
 
-    if (bestDist === Infinity) return { x: screenX, y: screenY };
+    if (!candidates.length) {
+      touchAimSnapId = null;
+      touchAimSnapClass = null;
+      return lerpTouchAimPointer(rawX, rawY, TOUCH_AIM_RELEASE_LERP, dt);
+    }
 
-    const t = 1 - bestDist / bestRadius;
-    const pull = TOUCH_AIM_ASSIST_MAX_PULL * t * t;
+    /* 有锥内候选时只在锥内选；否则用半球兜底。 */
+    const conePool = candidates.filter((c) => c.inCone);
+    const pool = conePool.length ? conePool : candidates;
+    let best = pool[0];
+    for (let i = 1; i < pool.length; i += 1) {
+      if (pool[i].score < best.score) best = pool[i];
+    }
+
+    const sameTarget =
+      touchAimSnapId != null && String(touchAimSnapId) === String(best.id);
+    touchAimSnapId = best.id != null ? best.id : null;
+    touchAimSnapClass = touchAimSnapId != null ? affinity : null;
+    const rate = sameTarget ? TOUCH_AIM_TRACK_LERP : TOUCH_AIM_SNAP_LERP;
+    return lerpTouchAimPointer(best.scrX, best.scrY, rate, dt);
+  }
+
+  /**
+   * 移动端瞄准摇杆可及屏幕领先（与桌面鼠标覆盖视口相当的椭圆）。
+   * 桌面准星可落在视口任意点；摇杆满推应对齐近半屏水平/垂直，而非 min(w,h)*0.42 各向同性短半径。
+   * @returns {{ maxLeadX: number, maxLeadY: number }}
+   */
+  function touchAimMaxLeadPx() {
+    const leadScale = window.LpGuardTurret?.getAimLeadScale?.() ?? 1;
+    const turret = window.LpGuardTurret?.isManned?.() ?? false;
+    const frac = turret ? 0.48 : 0.46;
     return {
-      x: screenX + (bestX - screenX) * pull,
-      y: screenY + (bestY - screenY) * pull,
+      maxLeadX: viewW * frac * leadScale,
+      maxLeadY: viewH * frac * leadScale,
     };
   }
 
   /**
    * 移动端：瞄准摇杆方向 × 把手距离 → 准星屏幕位置（松手保持方向与距离）。
-   * lead = maxLead * mag；mag 为死区外归一化 0–1。近敌时再软吸附。
+   * 满推领先覆盖近整屏椭圆（对齐桌面鼠标可瞄范围）；近距合法目标硬吸附粘滞。
+   * @param {number} [dt]
    */
-  function syncTouchAimPointer() {
+  function syncTouchAimPointer(dt) {
     if (!isCoarsePointer() || isUiOpen()) return;
     const look =
       window.LpTouchControls?.getLook?.() || {
         x: 0,
         y: 0,
         mag: 0,
+        active: false,
         ready: false,
       };
     const view = provisionalCameraView();
     const aimAnchorY = avatar.y - 56;
     const playerScreen = worldToScreen(local.x, aimAnchorY, view);
-    const maxLead = Math.min(viewW, viewH) * 0.42 * (window.LpGuardTurret?.getAimLeadScale?.() ?? 1);
-    const maxLeadY = maxLead * (window.LpGuardTurret?.isManned?.() ? 1.15 : 0.9);
+    const { maxLeadX, maxLeadY } = touchAimMaxLeadPx();
     let rawX;
     let rawY;
     if (look.ready) {
       const mag = Math.min(1, Math.max(0, Number(look.mag) || 0));
-      rawX = playerScreen.x + look.x * maxLead * mag;
+      rawX = playerScreen.x + look.x * maxLeadX * mag;
       rawY = playerScreen.y + look.y * maxLeadY * mag;
     } else {
       const facing = avatar.facing >= 0 ? 1 : -1;
-      rawX = playerScreen.x + facing * maxLead * 0.55;
+      rawX = playerScreen.x + facing * maxLeadX * 0.55;
       rawY = playerScreen.y - maxLeadY * 0.08;
     }
-    const assisted = applyTouchAimAssist(rawX, rawY, view);
-    pointer.x = assisted.x;
-    pointer.y = assisted.y;
+    const snapped = applyTouchAimSnap(
+      rawX,
+      rawY,
+      view,
+      look,
+      playerScreen,
+      Number.isFinite(dt) ? dt : 1 / 60
+    );
+    pointer.x = snapped.x;
+    pointer.y = snapped.y;
     pointer.known = true;
   }
 
@@ -555,17 +847,83 @@
     updateZoom();
   }
 
-  /** 限制镜头相对玩家的最大偏移，避免角色跑出安全区。 */
+  /** 当前场景地面 Y（列车走道或月台/地牢所站楼层）。 */
+  function sceneFloorY() {
+    if (window.LpPlatform?.getScene?.() === 'platform') {
+      return (
+        window.LpPlatform.platformFloorAt?.(local.x) ??
+        window.LpPlatform.getPlatformWalkBounds?.().floorY ??
+        Spec.FLOOR_Y
+      );
+    }
+    return Spec.FLOOR_Y;
+  }
+
+  /** 是否在月台/地牢场景（镜头构图与列车走道不同）。 */
+  function isPlatformScene() {
+    return window.LpPlatform?.getScene?.() === 'platform';
+  }
+
+  /**
+   * 月台/地牢镜头竖直锚点：脚底世界 Y 再上抬到躯干附近。
+   * 含 local.y（跳跃相对位移），楼梯逐级变化时焦点连续。
+   */
+  function platformCamAnchorY() {
+    return sceneFloorY() + local.y - PLAT_CAM_BODY_LIFT;
+  }
+
+  /**
+   * 限制镜头相对玩家的最大偏移，避免角色跑出安全区。
+   * Y 锚在当前场景地面（非列车 Spec.FLOOR_Y），否则地牢多层会被拽向列车地板高度。
+   */
   function clampLookLead(targetX, targetY) {
     const turret = window.LpGuardTurret?.isManned?.() ?? false;
     const lead = window.LpGuardTurret?.getAimLeadScale?.() ?? 1;
-    const maxLeadX = (viewW * (turret ? 0.40 : 0.36) * lead) / zoom;
-    /* 炮塔需要更大仰角视野，纵向领先明显高于步行瞄准 */
-    const maxLeadY = (viewH * (turret ? 0.52 : 0.26) * lead) / zoom;
+    const onPlat = isPlatformScene();
+    /* 月台略收紧 look-ahead，角色更靠屏中 */
+    const leadFracX = turret ? 0.4 : onPlat ? 0.22 : 0.36;
+    const leadFracY = turret ? 0.52 : onPlat ? 0.14 : 0.26;
+    const maxLeadX = (viewW * leadFracX * lead) / zoom;
+    const maxLeadY = (viewH * leadFracY * lead) / zoom;
+    const anchorY = onPlat ? platformCamAnchorY() : sceneFloorY();
     return {
       x: Math.max(local.x - maxLeadX, Math.min(local.x + maxLeadX, targetX)),
-      y: Math.max(Spec.FLOOR_Y - maxLeadY, Math.min(Spec.FLOOR_Y + maxLeadY, targetY)),
+      y: Math.max(anchorY - maxLeadY, Math.min(anchorY + maxLeadY, targetY)),
     };
+  }
+
+  /**
+   * 将镜头焦点钳到月台/地牢内容包围盒；内容小于视口时居中，避免大片虚空。
+   * 列车场景无包围盒时原样返回。
+   */
+  function clampCameraToContent(focusX, focusY) {
+    const bounds = window.LpPlatform?.getCameraBounds?.();
+    if (!bounds) return { x: focusX, y: focusY };
+    const halfW = viewW / (2 * zoom);
+    const halfH = viewH / (2 * zoom);
+    const spanX = bounds.right - bounds.left;
+    const spanY = bounds.bottom - bounds.top;
+    let x = focusX;
+    let y = focusY;
+    if (spanX <= halfW * 2) {
+      x = (bounds.left + bounds.right) * 0.5;
+    } else {
+      x = Math.max(bounds.left + halfW, Math.min(bounds.right - halfW, focusX));
+    }
+    if (spanY <= halfH * 2) {
+      y = (bounds.top + bounds.bottom) * 0.5;
+    } else {
+      y = Math.max(bounds.top + halfH, Math.min(bounds.bottom - halfH, focusY));
+    }
+    return { x, y };
+  }
+
+  /** 立刻把镜头锁到本地玩家当前楼层（进出月台传送后避免慢追）。 */
+  function snapCameraToLocal() {
+    const focusY = isPlatformScene() ? platformCamAnchorY() : sceneFloorY();
+    const c = clampCameraToContent(local.x, focusY);
+    camFocus.x = c.x;
+    camFocus.y = c.y;
   }
 
   /**
@@ -573,6 +931,7 @@
    * 桌面：焦点偏向鼠标准星；移动端：偏向瞄准摇杆虚拟准星。
    * 驾驶台：人物落在操作台上方空白区；加燃料 / 其它 UI 对准站立角色。
    * 设施编辑：锁在舱体重心，水平居中，竖直略上偏避开底栏。
+   * 月台/地牢：角色近屏中（不用列车「地板贴底」构图）。
    */
   function cameraView() {
     const boilerOpen = window.LpBoilerPanel?.isOpen?.() ?? false;
@@ -580,6 +939,7 @@
       (window.LpFuelFeed?.isOpen?.() ?? false) ||
       (window.LpGuardCrateUi?.isOpen?.() ?? false);
     const facilityEditOpen = window.LpFacilityEdit?.isOpen?.() ?? false;
+    const onPlat = isPlatformScene();
 
     if (facilityEditOpen) {
       const focusX = viewW * 0.5;
@@ -600,6 +960,15 @@
         zoom,
         offsetX: focusX - camFocus.x * zoom,
         offsetY: avatarScreenY - camFocus.y * zoom,
+      };
+    }
+
+    /* 月台/地牢：始终近中心构图（列车走道才用地板贴 ~62% 的构图） */
+    if (onPlat) {
+      return {
+        zoom,
+        offsetX: viewW * 0.5 - camFocus.x * zoom,
+        offsetY: viewH * (isCoarsePointer() ? 0.48 : 0.5) - camFocus.y * zoom,
       };
     }
 
@@ -627,6 +996,7 @@
     const boilerOpen = window.LpBoilerPanel?.isOpen?.() ?? false;
     const turretManned = window.LpGuardTurret?.isManned?.() ?? false;
     const facilityFocus = window.LpFacilityEdit?.getCameraFocus?.() || null;
+    const onPlat = isPlatformScene();
     /* 驾驶台略放大；加燃料 / 弹药箱更近；炮塔拉远以便仰射 */
     const wantMul = feedOpen ? 2.35 : boilerOpen ? 1.55 : turretManned ? 0.52 : 1;
     const zoomEase = turretManned || Math.abs(feedZoomMul - 1) > 0.02 ? 3.4 : 5.8;
@@ -634,11 +1004,9 @@
     zoom = baseZoom * feedZoomMul;
 
     let targetX = local.x;
-    const sceneFloor =
-      window.LpPlatform?.getScene?.() === 'platform'
-        ? window.LpPlatform.getPlatformWalkBounds?.().floorY ?? Spec.FLOOR_Y
-        : Spec.FLOOR_Y;
-    let targetY = sceneFloor;
+    const sceneFloor = sceneFloorY();
+    /* 月台/地牢跟躯干锚；列车仍跟地板（走道贴底构图） */
+    let targetY = onPlat ? platformCamAnchorY() : sceneFloor;
     if (facilityFocus) {
       /* 设施编辑：锁焦舱体重心，不跟随站位偏移 */
       targetX = facilityFocus.x;
@@ -655,12 +1023,35 @@
         offsetY: viewH * 0.5 - camFocus.y * zoom,
       };
       const world = screenToWorld(pointer.x, pointer.y, provisional);
-      const lookY = turretManned ? 0.58 : LOOK_WEIGHT_Y;
-      targetX = local.x * (1 - LOOK_WEIGHT) + world.x * LOOK_WEIGHT;
-      targetY = sceneFloor * (1 - lookY) + world.y * lookY;
+      /* 月台 look-ahead 更轻，角色保持近中心 */
+      const lookW = onPlat ? 0.28 : LOOK_WEIGHT;
+      let lookY = turretManned ? 0.58 : onPlat ? 0.12 : LOOK_WEIGHT_Y;
+      const anchorY = onPlat ? platformCamAnchorY() : sceneFloor;
+      /* 换层追焦中压低准星竖直牵引，避免与楼梯平滑抢 Y */
+      if (onPlat && Math.abs(camFocus.y - anchorY) > PLAT_CAM_Y_CATCHUP) {
+        lookY *= 0.35;
+      }
+      targetX = local.x * (1 - lookW) + world.x * lookW;
+      targetY = anchorY * (1 - lookY) + world.y * lookY;
       const clamped = clampLookLead(targetX, targetY);
       targetX = clamped.x;
       targetY = clamped.y;
+    }
+
+    if (onPlat && !facilityFocus) {
+      const boxed = clampCameraToContent(targetX, targetY);
+      targetX = boxed.x;
+      targetY = boxed.y;
+    }
+
+    const dx = targetX - camFocus.x;
+    const dy = targetY - camFocus.y;
+    const dist2 = dx * dx + dy * dy;
+    /* 仅传送级距离硬对齐；单层换高（≈794）走平滑，避免爬楼顿挫 */
+    if (dist2 > CAM_SNAP_DIST * CAM_SNAP_DIST) {
+      camFocus.x = targetX;
+      camFocus.y = targetY;
+      return;
     }
 
     /* 进入设施编辑时略加快锁焦，退出后仍用常规平滑回到玩家 */
@@ -669,14 +1060,27 @@
       : turretManned
         ? CAM_SMOOTH * 0.72
         : CAM_SMOOTH;
-    const t = 1 - Math.exp(-focusEase * dt);
-    camFocus.x += (targetX - camFocus.x) * t;
-    camFocus.y += (targetY - camFocus.y) * t;
+    let yEase = focusEase;
+    if (onPlat && !facilityFocus) {
+      const absDy = Math.abs(dy);
+      if (absDy > PLAT_CAM_Y_CATCHUP) {
+        /* |ΔY| 越大追得越紧，全层高差时约 2.2×，不硬切 */
+        yEase =
+          focusEase * (1.2 + Math.min(1.0, (absDy - PLAT_CAM_Y_CATCHUP) / 520));
+      }
+    }
+    const tx = 1 - Math.exp(-focusEase * dt);
+    const ty = 1 - Math.exp(-yEase * dt);
+    camFocus.x += dx * tx;
+    camFocus.y += dy * ty;
   }
 
-  /** 查询某 x 处最高的可走平台顶边（世界 Y）。月台场景用月台地板。 */
+  /** 查询某 x 处最高的可走平台顶边（世界 Y）。月台场景用月台/地牢地板。 */
   function floorAt(x) {
-    if (window.LpPlatform?.getScene?.() === 'platform') {
+    if (isPlatformScene()) {
+      if (window.LpPlatform.platformFloorAt) {
+        return window.LpPlatform.platformFloorAt(x);
+      }
       return window.LpPlatform.getPlatformWalkBounds?.().floorY ?? Spec.FLOOR_Y;
     }
     let best = null;
@@ -695,6 +1099,27 @@
       if (b) return { left: b.left, right: b.right };
     }
     return { left: worldLeft, right: worldRight };
+  }
+
+  /**
+   * 小型地牢实心墙碰撞：把门洞以外的隔断挡住，只能经走廊进出房间。
+   */
+  function applyDungeonWallCollision() {
+    if (window.LpPlatform?.getScene?.() !== 'platform') return;
+    if (window.LpPlatform?.getPlatformKind?.() !== 'small') return;
+    const dungeon = window.LpPlatform?.getDungeon?.();
+    if (!dungeon?.walls?.length || !window.LpDungeon?.resolveBody) return;
+    const floorY = floorAt(local.x);
+    if (floorY == null || !Number.isFinite(floorY)) return;
+    const out = window.LpDungeon.resolveBody(dungeon, {
+      x: local.x,
+      physicsY: local.y,
+      vy: local.vy,
+      floorY,
+    });
+    local.x = out.x;
+    local.y = out.physicsY;
+    local.vy = out.vy;
   }
 
   function approach(value, target, maxStep) {
@@ -787,6 +1212,7 @@
     } else {
       local.onGround = false;
     }
+    applyDungeonWallCollision();
     Entity.updateEntityMotion(avatar, dt);
     window.LpPlayerDeath?.applyDownedPose?.(avatar, dt);
     local.kneel = avatar.kneel || 0;
@@ -832,6 +1258,7 @@
     } else {
       local.onGround = false;
     }
+    applyDungeonWallCollision();
     Entity.updateEntityMotion(avatar, dt);
     syncAvatarPose();
   }
@@ -953,14 +1380,15 @@
     const autoRun = Boolean(window.LpInputBindings?.getAutoRun?.());
     let wantRun = false;
     if (direction !== 0 && !kneel) {
-      if (isCoarsePointer() || autoRun) {
-        /* 触控 / 自动奔跑：共用锁定；进房时 applyAutoRunPreference 已按偏好置位。 */
+      if (isCoarsePointer()) {
+        /* 触控：跑/走按钮锁定；进房时 applyAutoRunPreference 已按偏好置位。 */
         wantRun = Boolean(
           window.LpTouchControls?.isSprintOn?.() ?? touch.sprintToggle
         );
       } else {
-        /* 桌面且未开自动奔跑：按住奔跑键。 */
-        wantRun = Boolean(window.LpInputBindings?.isPressed('sprint', keys));
+        /* 桌面：默认步态 XOR 按住奔跑键（自动奔跑时按住改为行走）。 */
+        const sprintHeld = Boolean(window.LpInputBindings?.isPressed('sprint', keys));
+        wantRun = autoRun !== sprintHeld;
       }
     }
     avatar.gait = wantRun ? 'run' : 'walk';
@@ -998,6 +1426,8 @@
     } else {
       local.onGround = false;
     }
+
+    applyDungeonWallCollision();
 
     Entity.updateEntityMotion(avatar, dt);
     syncAvatarPose();
@@ -1071,7 +1501,36 @@
     if (onPlatformScene) {
       window.LpPlatform.draw?.(ctx);
       window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
-      Entity.drawAvatar(ctx, avatar, view, dpr);
+      const heldItem = window.LpCombat?.getHeldVisibleItem?.()
+        || window.LpCombat?.getHeldWeaponItem?.();
+      const holdingVisible =
+        Boolean(heldItem) &&
+        !isUiOpen() &&
+        !window.LpPlayerDeath?.isIncapacitated?.();
+      const holdingGun =
+        holdingVisible && window.LpItemCatalog?.isWeapon?.(heldItem.id);
+      Entity.drawAvatar(ctx, avatar, view, dpr, holdingGun ? { skipBackArm: true } : {});
+      if (holdingVisible) {
+        const weaponAim = getWeaponAimWorld();
+        window.LpWeaponHold?.drawHeldWeapon?.(ctx, avatar, weaponAim, heldItem);
+        if (holdingGun) {
+          window.LpReloadAction?.draw?.(ctx, avatar, weaponAim);
+          Entity.drawBackArm?.(ctx, avatar);
+        }
+      }
+      /* 灭火器水雾叠在手持贴图之上 */
+      window.LpFireExtinguisher?.draw?.(ctx);
+      if (window.LpPlatform?.getPlatformKind?.() === 'small') {
+        window.LpMobs?.draw?.(ctx);
+        window.LpMobDeathFx?.draw?.(ctx);
+      }
+      /* 伴飞无人机：月台/地牢与列车同逻辑，须在场景 return 前绘制 */
+      window.LpHummingbirdDrone?.draw?.(ctx);
+      window.LpHummingbirdDrone?.drawRemotes?.(ctx);
+      if (window.LpPlatform?.getPlatformKind?.() === 'small') {
+        window.LpCombat?.draw?.(ctx);
+        window.LpImpactFx?.draw?.(ctx);
+      }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       window.LiminalInteract?.drawActivePrompt(ctx, local, view, dpr, formatInteractKey(), {
         showPrompt: !isCoarsePointer() && !isUiOpen(),
@@ -1089,7 +1548,6 @@
     Spec.CARRIAGES.forEach((car, i) => drawCarriage(car, i));
     window.LpFacilityEdit?.draw?.(ctx);
     window.LpCarriageFire?.draw?.(ctx);
-    window.LpFireExtinguisher?.draw?.(ctx);
     window.LpGuardTurret?.drawFx?.(ctx);
     window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
     const heldItem = window.LpCombat?.getHeldVisibleItem?.()
@@ -1113,6 +1571,8 @@
         Entity.drawBackArm?.(ctx, avatar);
       }
     }
+    /* 灭火器水雾叠在手持贴图之上，避免被罐身挡住 */
+    window.LpFireExtinguisher?.draw?.(ctx);
     window.LpGroundLoot?.draw?.(ctx);
     /* 小怪在车厢之上，避免被贴图完全挡住；轨面怪仍可见于底盘外 */
     window.LpMobs?.draw?.(ctx);
@@ -1134,12 +1594,56 @@
     });
   }
 
+  /** 隐藏页签，或电脑端窗口失焦时，跳过重负载模拟/绘制。 */
+  function shouldThrottleBackground() {
+    if (document.hidden) return true;
+    if (!isCoarsePointer() && !windowFocused) return true;
+    return false;
+  }
+
+  /** 取消已排队的 rAF。 */
+  function cancelScheduledFrame() {
+    if (frameRafId) {
+      cancelAnimationFrame(frameRafId);
+      frameRafId = 0;
+    }
+    frameScheduled = false;
+  }
+
+  /**
+   * 续跑主循环：前台用 rAF；后台（hidden / 电脑失焦）停调度，
+   * 由 focus / visibilitychange 唤醒。WS ping 不依赖本循环。
+   */
+  function scheduleFrame() {
+    if (!loopStarted || frameScheduled) return;
+    if (shouldThrottleBackground()) return;
+    frameScheduled = true;
+    frameRafId = requestAnimationFrame((ts) => {
+      frameRafId = 0;
+      frameScheduled = false;
+      frame(ts);
+    });
+  }
+
+  /** 前台恢复时清巨 dt 并立刻踢一帧。 */
+  function kickLoopIfRunning() {
+    if (!loopStarted) return;
+    lastTs = 0;
+    cancelScheduledFrame();
+    scheduleFrame();
+  }
+
   /** 主循环。 */
   function frame(ts) {
+    /* 后台：跳过物理/绘制并停 rAF；恢复时清 lastTs 避免巨 dt */
+    if (shouldThrottleBackground()) {
+      lastTs = 0;
+      return;
+    }
     if (!lastTs) lastTs = ts;
     const dt = Math.min((ts - lastTs) / 1000, 0.05);
     lastTs = ts;
-    syncTouchAimPointer();
+    syncTouchAimPointer(dt);
     stepPhysics(dt);
     window.LpPlayerDeath?.tick?.(dt, {
       avatar,
@@ -1178,7 +1682,9 @@
     {
       const avatarH = Entity.AVATAR_SIZE * Entity.AVATAR_DRAW_SCALE * (avatar.heightScale || 1);
       const incap = Boolean(window.LpPlayerDeath?.isIncapacitated?.());
-      if (window.LpPlatform?.getScene?.() !== 'platform') {
+      const onPlat = window.LpPlatform?.getScene?.() === 'platform';
+      const smallPlat = onPlat && window.LpPlatform?.getPlatformKind?.() === 'small';
+      if (!onPlat || smallPlat) {
         window.LpMobs?.tick?.(dt, {
           player: {
             x: local.x,
@@ -1211,11 +1717,15 @@
     window.LpBoilerPanel?.syncFromState?.();
     window.LpTrainAudio?.tick(dt);
     window.LpPlatformAmbience?.tick?.(dt);
+    window.LpPlatformDockMusic?.tick?.(dt);
     window.LpFunEgg?.tick?.(dt);
     window.LpTrainMinimap?.syncFromWorldX?.(local.x);
     window.LpTrainMap?.syncFromWorldX?.(local.x);
+    window.LpDungeonFow?.tick?.();
+    window.LpDungeonMinimap?.tick?.();
+    window.LpDungeonMap?.tick?.();
     drawFrame();
-    requestAnimationFrame(frame);
+    scheduleFrame();
   }
 
   /** 电脑端：头看向鼠标（身后或仰角过大则回正）。 */
@@ -1240,10 +1750,10 @@
       viewW,
       viewH,
     });
-    requestAnimationFrame(frame);
+    scheduleFrame();
   }
 
-  /** 首次按键/触控时解锁音频，预热武器/点火 SFX，并开启列车行驶与月台环境音通道。 */
+  /** 首次按键/触控时解锁音频，预热武器/点火 SFX，并开启列车行驶与月台环境/停靠 BGM 通道。 */
   function bindAudioUnlock() {
     const unlockOnce = () => {
       const sfxReady = window.LpSfx?.unlock?.() || Promise.resolve();
@@ -1274,6 +1784,9 @@
       window.LpPlatformAmbience?.unlock?.()
         .then(() => window.LpPlatformAmbience?.setAmbient?.(true))
         .catch(() => {});
+      window.LpPlatformDockMusic?.unlock?.()
+        .then(() => window.LpPlatformDockMusic?.setMusic?.(true))
+        .catch(() => {});
       window.removeEventListener('pointerdown', unlockOnce);
       window.removeEventListener('keydown', unlockOnce);
     };
@@ -1281,10 +1794,14 @@
     window.addEventListener('keydown', unlockOnce);
   }
 
-  /** 关闭燃料/驾驶台/弹药箱/雷达/列车地图等操作台；若有关闭则返回 true。 */
+  /** 关闭燃料/驾驶台/弹药箱/雷达/列车·地牢地图等操作台；若有关闭则返回 true。 */
   function closeConsoleUi() {
     if (window.LpTrainMap?.isOpen()) {
       window.LpTrainMap.close();
+      return true;
+    }
+    if (window.LpDungeonMap?.isOpen?.()) {
+      window.LpDungeonMap.close();
       return true;
     }
     if (window.LpFuelFeed?.isOpen()) {
@@ -1342,6 +1859,7 @@
       event.preventDefault();
       if (window.LpFacilityEdit?.isOpen()) window.LpFacilityEdit.exit(true);
       if (window.LpTrainMap?.isOpen()) window.LpTrainMap.close();
+      if (window.LpDungeonMap?.isOpen?.()) window.LpDungeonMap.close();
       if (window.LpBoilerPanel?.isOpen()) window.LpBoilerPanel.close();
       if (window.LpFuelFeed?.isOpen()) window.LpFuelFeed.close();
       if (window.LpGuardCrateUi?.isOpen()) window.LpGuardCrateUi.close();
@@ -1351,11 +1869,15 @@
       return;
     }
 
-    /* 列车地图：可与其它操作台互关；不与物品栏抢 Tab */
+    /* 地图：小型月台 → 地牢图；列车 → 编组图；可与其它操作台互关；不与物品栏抢 Tab */
     if (window.LpInputBindings?.matchesKeyEvent('trainMap', event)) {
       event.preventDefault();
       if (window.LpInventory?.isOpen()) return;
       if (window.LpFacilityEdit?.isOpen()) window.LpFacilityEdit.exit(true);
+      if (window.LpDungeonMap?.isOpen?.()) {
+        window.LpDungeonMap.close();
+        return;
+      }
       if (window.LpTrainMap?.isOpen()) {
         window.LpTrainMap.close();
         return;
@@ -1365,7 +1887,11 @@
       if (window.LpGuardCrateUi?.isOpen()) window.LpGuardCrateUi.close();
       if (window.LpRadarScope?.isOpen()) window.LpRadarScope.close();
       if (window.LpAutoConsole?.isOpen()) window.LpAutoConsole.close();
-      window.LpTrainMap?.open?.(local.x);
+      if (window.LpDungeonMap?.shouldHandle?.()) {
+        window.LpDungeonMap.open();
+      } else {
+        window.LpTrainMap?.open?.(local.x);
+      }
       return;
     }
 
@@ -1385,6 +1911,7 @@
       if (
         window.LpInputBindings?.matchesKeyEvent('interact', event) &&
         !window.LpTrainMap?.isOpen() &&
+        !window.LpDungeonMap?.isOpen?.() &&
         closeConsoleUi()
       ) {
         event.preventDefault();
@@ -1427,11 +1954,8 @@
       requestReload();
     }
     if (window.LpInputBindings?.matchesKeyEvent('sprint', event)) {
-      /* 自动奔跑（或触控）下 Shift 边沿切换锁定；未开自动奔跑时桌面仍靠按住。 */
-      if (
-        isCoarsePointer() ||
-        Boolean(window.LpInputBindings?.getAutoRun?.())
-      ) {
+      /* 触控：奔跑键边沿切换锁定。桌面只用按住（见 wantRun XOR），不在此 toggle。 */
+      if (isCoarsePointer()) {
         event.preventDefault();
         window.LpTouchControls?.toggleSprint?.();
       }
@@ -1486,10 +2010,17 @@
     syncAimCursor();
   });
   window.addEventListener('blur', () => {
+    windowFocused = false;
     keys.clear();
     if (!isCoarsePointer()) pointer.known = false;
     desktopFireHeld = false;
     syncAimCursor();
+    lastTs = 0;
+    cancelScheduledFrame();
+  });
+  window.addEventListener('focus', () => {
+    windowFocused = true;
+    kickLoopIfRunning();
   });
   window.addEventListener('resize', resizeStage);
   coarsePointer.addEventListener('change', () => {
@@ -1498,15 +2029,22 @@
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+      windowFocused =
+        typeof document.hasFocus === 'function' ? document.hasFocus() : true;
       window.LpTrainAudio?.resume();
       window.LpPlatformAmbience?.resume?.();
+      window.LpPlatformDockMusic?.resume?.();
       window.LpSfx?.resume?.();
       loadWornAppearance().then(syncAvatarPose);
+      kickLoopIfRunning();
     } else {
       keys.clear();
       window.LpTrainAudio?.suspend();
       window.LpPlatformAmbience?.suspend?.();
+      window.LpPlatformDockMusic?.suspend?.();
       window.LpSfx?.suspend?.();
+      lastTs = 0;
+      cancelScheduledFrame();
     }
   });
 
@@ -1610,6 +2148,10 @@
       syncAvatarPose();
     }
   });
+  /** 进出月台/地牢时立刻锁焦，避免列车坐标慢追导致角色卡在角落。 */
+  window.addEventListener('liminal:platform-scene', () => {
+    snapCameraToLocal();
+  });
   window.addEventListener('lp:interact', () => {
     window.LpPressure?.noteAction?.();
     if (closeConsoleUi()) return;
@@ -1624,13 +2166,25 @@
     window.LpInventory?.toggle(local.x);
   });
   resizeStage();
+  /** 车厢首帧就绪后收起启动遮罩。 */
+  function hideBootSplash() {
+    const splash = document.getElementById('lpBootSplash');
+    if (!splash || splash.classList.contains('is-done')) return;
+    splash.classList.add('is-done');
+    splash.setAttribute('aria-busy', 'false');
+    const remove = () => splash.remove();
+    splash.addEventListener('transitionend', remove, { once: true });
+    window.setTimeout(remove, 400);
+  }
   // 车厢与皮套分开加载：皮套失败不阻断进关，也不误报「车厢素材失败」
   loadCarImages()
     .then(() => {
+      hideBootSplash();
       startLoop();
       return loadWornAppearance();
     })
     .catch(() => {
+      hideBootSplash();
       const hint = document.getElementById('lpLoadError');
       if (hint) hint.hidden = false;
       window.LpTouchControls?.setEnabled(false);

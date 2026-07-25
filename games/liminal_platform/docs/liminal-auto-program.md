@@ -148,7 +148,7 @@
   - 持续 / 锅炉燃料 < 20 → 设置速度 $撤退速度
 ```
 
-**自动驾驶**不在枢机目录：在**动力驾驶台**顶栏「离开」左侧开关接通。接通后 `LpAutoAutopilot` 独占节流（满档巡航 → `platformAhead` 按 `distanceAhead` 降档 → `atPlatform` 停车 → 汽笛上升沿恢复）；关闭开关交还手动拉杆（不改当前档）。制动阀仍可手动急刹。汽笛：下拉驾驶台右上角绳索至「鸣」。月台未落地前传感恒假 → 仅巡航。枢机 `set_speed` 在自动驾驶接通时不执行。
+**自动驾驶**不在枢机目录：在**动力驾驶台**顶栏「离开」左侧开关接通。接通后 `LpAutoAutopilot` 独占节流（满档巡航 → `platformAhead` 按 `distanceAhead` 降档 → `atPlatform` 停车 → 汽笛上升沿且全员在车厢时 `LpPlatform.beginDepart` 驶向下站）；有人仍在月台则 toast「还有玩家在月台上」并保持停车。关闭开关交还手动拉杆（不改当前档）。制动阀仍可手动急刹。汽笛：下拉驾驶台右上角绳索至「鸣」。枢机 `set_speed` 在自动驾驶接通时不执行。
 
 计数器自增必须用 **持续判定**，否则瞬时触发永远到不了阈值。  
 若两条 `lock_unit` 同帧都匹配，只执行更靠上的那条（冲突域 `lock`）。
@@ -275,7 +275,7 @@
 - 运行时：主循环 `LpAutoSensors.tick` 后 `LpAutoExecutors.tick`；`rulesForRuntime` 返回统一数组；按序求值，冲突域 claim 后跳过低优先级；edge 上升沿仍更新 `edgePrev`。控制台打开时暂停调度。  
 - 条件求值：`LpAutoSensors.evaluateCondition(cond, carId)`；比较类走 `Catalog.compare`；`car_on_fire` 经 `isCarOnFire` / `setCarOnFire` 钩子，着火系统未接入前恒为假。  
 - 月台 stub：`getPlatformSensor` / `setPlatformStub` / `platform_ahead` / `at_platform`；正式月台接入前恒假。  
-- 自动驾驶：驾驶台开关 → `LpAutoAutopilot.setEngaged`；主循环 `LpAutoExecutors.tick` 末尾 `LpAutoAutopilot.tick`（接通时写节流；与枢机规则无关，控制台打开时仍跑）。汽笛：`LpWhistleAudio.isSounding` 上升沿离开 `stopped`。  
+- 自动驾驶：驾驶台开关 → `LpAutoAutopilot.setEngaged`；主循环 `LpAutoExecutors.tick` 末尾 `LpAutoAutopilot.tick`（接通时写节流；与枢机规则无关，控制台打开时仍跑）。停靠态汽笛上升沿武装 `WHISTLE_DEPART_DELAY_SEC`（3s）等待，期满再 `canDepart` / `beginDepart`（全员在车厢则驶向下站，否则 toast「还有玩家在月台上」）；离站或关自动驾驶则取消等待。  
 - `select_ammo`：`LpAutoExecutors.executeAction` → `LpArmedAmmo.applyAmmoSelection` 写入内存 `autoByCar`（自动装载；不改弹药箱本机弹链）。卫士无人开火：`tryFireTurrets` → `peekFireTypeId('guard')` / `advanceFireCursor('guard')` → `spawnProjectile({ ammoType })`（T=绿曳光）。入座 `activate` 清 `autoByCar` 并拒绝再写；离席 `deactivate` 重置 ammo 域边沿闩并允许再写。持续规则同 pattern 保留 cursor。  
 - 程序弹链编辑：卫兵侧栏 `LpAutoProgramBelts`（UX 对齐弹药箱底栏；槽长/组数取车厢配置）。  
 - 传感器局部变量：`LpAutoSensors.tick` → `applySensorVars` 写入卫兵 `范围内目标数` / `剩余弹药数`，绘轨 `大型目标数` / `小型目标集群数`（不刷 localStorage）。  

@@ -11,6 +11,10 @@
   const TRAIL_LINGER_LIFE = 0.35;
   /** 滞空尾迹条数上限（双塔连射时丢弃最旧，避免拖垮帧率）。 */
   const MAX_LINGERING_TRAILS = 32;
+  /** 飞行弹体上限（卡顿/穿透连射时丢最旧，避免 shots 无限涨）。 */
+  const MAX_SHOTS = 96;
+  /** 弹壳粒子上限（落地滞留 CASING_REST_LIFE 秒；超限丢最旧）。 */
+  const MAX_CASINGS = 160;
   /**
    * 弹道射程兜底（世界像素）。优先 style.maxRange / item.maxRange / options.range。
    * 旧值 560 过短，炮弹约 0.3s 即消失。
@@ -361,6 +365,9 @@
     const sideSign = Math.random() < 0.5 ? -1 : 1;
     const alongJ = jitter * (0.82 + Math.random() * 0.28);
     const sideJ = jitter * (0.7 + Math.random() * 0.45);
+    while (state.casings.length >= MAX_CASINGS) {
+      state.casings.shift();
+    }
     state.casings.push({
       x: originX,
       y: originY,
@@ -728,13 +735,21 @@
     return !shot.penetrates;
   }
 
-  /** 生成飞行弹实体（本地或远端回放；不占用冷却、不检查持枪）。 */
+  /** 生成飞行弹实体（本地或远端回放；不占用冷却、不检查持枪）。
+   * 卫士机炮弹在停靠/月台场景下丢弃，避免列车弹道渗入月台。
+   */
   function spawnProjectile(options = {}) {
     const facing = options.facing >= 0 ? 1 : -1;
     const originX = options.originX ?? options.x ?? 0;
     const originY = options.originY ?? options.y ?? 0;
     const dir = normalizeDir(options.dirX ?? facing, options.dirY ?? 0, facing);
     const weaponId = options.weaponId || state.weaponId;
+    if (
+      weaponId === 'guard_turret' &&
+      window.LpGuardTurret?.isTrainWeaponSuppressed?.()
+    ) {
+      return null;
+    }
     const styleKey = resolveProjectileStyleKey({ ...options, weaponId });
     const style = PROJECTILE_STYLE[styleKey] || PROJECTILE_STYLE.bullet;
     const range = resolveProjectileRange(options, style);
@@ -769,6 +784,9 @@
       originX,
       originY,
     };
+    while (state.shots.length >= MAX_SHOTS) {
+      removeShotAt(0);
+    }
     state.shots.push(shot);
     return {
       originX,
@@ -837,6 +855,15 @@
     if (!shot) return;
     releaseLingeringTrail(shot);
     state.shots.splice(index, 1);
+  }
+
+  /**
+   * 清空飞行弹 / 弹壳 / 滞空尾迹（月台进出等场景切换时调用，避免跨场景残留涨内存）。
+   */
+  function clearWorldFx() {
+    state.shots.length = 0;
+    state.casings.length = 0;
+    state.lingeringTrails.length = 0;
   }
 
   /** 推进冷却、后坐衰减、弹实体飞行、滞空尾迹与弹壳物理。 */
@@ -925,7 +952,7 @@
   }
 
   /**
-   * 绘制枪口火光：短促 additive 环境照亮 + 橙晕星爆 + 白核焰舌（约三拍）。
+   * 绘制枪口火光：additive 环境照亮 + Kenney 调色精灵（未就绪时回退程序化焰舌）。
    * opts.t 为剩余寿命比例 1→0；lightR 照亮周围半径；flashR 星爆尺度。
    */
   function drawMuzzleFlash(ctx, opts) {
@@ -940,12 +967,13 @@
     const tongue = Math.pow(t, 0.8);
     const coreFade = punch * 0.55 + t * t * 0.45;
     const jitter = opts.jitter || 0;
+    const useSprites = window.LpMuzzleFlash?.isReady?.();
 
     ctx.save();
     ctx.translate(opts.x, opts.y);
     ctx.globalCompositeOperation = 'lighter';
 
-    /* 拍 1–2：大半径暖光软晕，短暂照亮甲板 / 炮管 / 附近精灵 */
+    /* 大半径暖光软晕：短暂照亮甲板 / 炮管（与精灵叠加） */
     const glowR = lightR * (0.9 + 0.22 * (1 - punch));
     const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowR);
     glow.addColorStop(0, `rgba(255, 236, 190, ${0.52 * ambient})`);
@@ -957,10 +985,22 @@
     ctx.arc(0, 0, glowR, 0, Math.PI * 2);
     ctx.fill();
 
+    if (useSprites) {
+      window.LpMuzzleFlash.drawSprites(ctx, {
+        angle: opts.angle || 0,
+        t,
+        flashR,
+        jitter,
+        scale: 1,
+      });
+      ctx.restore();
+      return;
+    }
+
+    /* 精灵未加载：程序化橙晕星爆 + 焰舌（与旧版一致） */
     ctx.rotate(opts.angle || 0);
     const r = flashR * (0.72 + 0.42 * punch + 0.22 * t);
 
-    /* 拍 2：沿枪口轴向的橙晕星爆 */
     const bloom = ctx.createRadialGradient(r * 0.15, 0, 0, r * 0.15, 0, r * 1.45);
     bloom.addColorStop(0, `rgba(255, 252, 235, ${0.95 * coreFade})`);
     bloom.addColorStop(0.28, `rgba(255, 190, 70, ${0.82 * tongue})`);
@@ -971,7 +1011,6 @@
     ctx.ellipse(r * 0.28, 0, r * 1.5, r * 0.92, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    /* 拍 3：前伸焰舌 + 上下叉 */
     ctx.rotate(jitter * 0.1);
     ctx.fillStyle = `rgba(255, 245, 200, ${0.92 * tongue})`;
     ctx.beginPath();
@@ -1695,6 +1734,7 @@
     ARTILLERY_FIRE_SFX,
     tick,
     draw,
+    clearWorldFx,
     setWeapon,
     canFire,
     isHeldWeaponFullAuto,

@@ -3,6 +3,7 @@
  *
  * 上限：默认 200；同车厢有队友时有效上限 160（硬钳制，增益与每帧均 clamp）。
  * 来源：同车小怪（p&lt;20 时 +5，冷却 2.5s）、受击 +5、同车开火（p&lt;20 时 +10 后中速回落到 20）、
+ * 地牢同房未标记小怪（气球 +3 / 保龄球 +7，每只本地只计一次）、
  * 附近友军最终死亡 +100、附近友军重新部署 +20（半径见 LpPlayerDeath.allyDeathRadius；进入濒死 / 医箱复活不加）。
  * 衰减：无有效动作一段时间后缓慢下降；开火余晖优先于闲置衰减。
  * 效果带（相对绝对值，不随上限 2×）：0 无；(0,20] → 线性至 +5%；(20,25] +5% 平台；&gt;25 线性至有效上限处 −10%。
@@ -26,6 +27,11 @@
   const ALLY_DEATH_DELTA = 100;
   /** 附近友军从濒死重新部署一次加压。 */
   const ALLY_REDEPLOY_DELTA = 20;
+  /** 地牢同房：按物种一次加压（未列出则为 0）。 */
+  const ROOM_PRESSURE_BY_SPECIES = Object.freeze({
+    balloon: 3,
+    bowling: 7,
+  });
   /** 同车小怪加压冷却（秒）——边沿式间隔，避免每帧叠。 */
   const MOB_PRESENCE_COOLDOWN = 2.5;
   /** 无有效动作多久后开始闲置衰减（秒）。 */
@@ -41,6 +47,10 @@
   let fireAfterglow = false;
   let mobPresenceCd = 0;
   let chromaEl = null;
+  /** 本机已对哪些 mob id 施加过地牢同房压力（离台 / 新访清空）。 */
+  let roomPressureAppliedIds = new Set();
+  /** 当前地牢访问键，换站时重置标记。 */
+  let roomPressureVisitKey = null;
 
   /** 钳到 [0, max]。 */
   function clampPressure(value, max) {
@@ -187,6 +197,107 @@
     return n;
   }
 
+  /** 清空地牢同房加压标记（离台 / 新访）。 */
+  function clearRoomPressureMarks() {
+    roomPressureAppliedIds = new Set();
+    roomPressureVisitKey = null;
+  }
+
+  /**
+   * 按物种查地牢同房加压量；未知物种为 0。
+   * @param {{ species?: string, kind?: string } | null | undefined} m
+   * @returns {number}
+   */
+  function roomPressureDeltaForMob(m) {
+    if (!m) return 0;
+    const species = String(m.species || '');
+    if (Object.prototype.hasOwnProperty.call(ROOM_PRESSURE_BY_SPECIES, species)) {
+      return ROOM_PRESSURE_BY_SPECIES[species];
+    }
+    if (m.kind === 'air') return ROOM_PRESSURE_BY_SPECIES.balloon || 0;
+    if (m.kind === 'ground') return ROOM_PRESSURE_BY_SPECIES.bowling || 0;
+    return 0;
+  }
+
+  /**
+   * 小怪用于房间判定的楼层 Y（地牢贴地优先 floorY）。
+   * @param {object} m
+   * @returns {number}
+   */
+  function mobFloorY(m) {
+    if (Number.isFinite(m.floorY)) return m.floorY;
+    const r = Number(m.radius) || 0;
+    return Number(m.y) + r * 0.42;
+  }
+
+  /**
+   * 若本机与该怪同处地牢房间且尚未标记：按物种加压并本地标记，避免同怪重复。
+   * @param {object} m
+   * @param {string} playerRoomId
+   * @param {object} dungeon
+   * @param {number} localX
+   * @returns {boolean} 是否本次施加了压力
+   */
+  function tryApplyRoomPressureFromMob(m, playerRoomId, dungeon, localX) {
+    if (!m || m.alive === false) return false;
+    const id = String(m.id || '');
+    if (!id || roomPressureAppliedIds.has(id)) return false;
+    const delta = roomPressureDeltaForMob(m);
+    if (!(delta > 0)) return false;
+    const Fow = window.LpDungeonFow;
+    if (!Fow?.roomAt) return false;
+    const mobRoom = Fow.roomAt(dungeon, Number(m.x), mobFloorY(m));
+    if (!mobRoom || String(mobRoom.id) !== String(playerRoomId)) return false;
+    roomPressureAppliedIds.add(id);
+    noteAction();
+    setPressure(pressure + delta, localX);
+    return true;
+  }
+
+  /**
+   * 本机在小型地牢某房间内时：对同房未标记怪一次性加压（玩家进房 / 怪进房共用）。
+   * @param {number} localX
+   */
+  function tickDungeonRoomPressure(localX) {
+    const scene = window.LpPlatform?.getScene?.();
+    const kind = window.LpPlatform?.getPlatformKind?.();
+    const dungeon = window.LpPlatform?.getDungeon?.();
+    if (scene !== 'platform' || kind !== 'small' || !dungeon || dungeon.kind !== 'small') {
+      if (roomPressureVisitKey != null) clearRoomPressureMarks();
+      return;
+    }
+    const visitKey = `${dungeon.seed ?? ''}:${dungeon.stationIndex ?? ''}`;
+    if (visitKey !== roomPressureVisitKey) {
+      roomPressureAppliedIds = new Set();
+      roomPressureVisitKey = visitKey;
+    }
+    const Fow = window.LpDungeonFow;
+    if (!Fow?.roomAt || !Number.isFinite(localX)) return;
+    const floorY =
+      window.LpPlatform?.platformFloorAt?.(localX) ??
+      dungeon.spawnFloorY ??
+      dungeon.bounds?.floorY;
+    const playerRoom = Fow.roomAt(dungeon, localX, floorY);
+    if (!playerRoom) return;
+    const mobs = window.LpMobs?.getMobs?.() || [];
+    for (const m of mobs) {
+      tryApplyRoomPressureFromMob(m, playerRoom.id, dungeon, localX);
+    }
+  }
+
+  /**
+   * 响应月台场景：进小型地牢新访清空标记；离台清空。
+   * @param {CustomEvent} ev
+   */
+  function onPlatformSceneForRoomPressure(ev) {
+    const detail = ev?.detail || {};
+    if (detail.scene === 'platform' && detail.kind === 'small') {
+      clearRoomPressureMarks();
+      return;
+    }
+    clearRoomPressureMarks();
+  }
+
   /** 确保色差层挂在 .lp-stage 上且不挡触控。 */
   function ensureChromaEl() {
     if (chromaEl && chromaEl.isConnected) return chromaEl;
@@ -268,6 +379,10 @@
       mobPresenceCd = MOB_PRESENCE_COOLDOWN;
     }
 
+    if (localX != null) {
+      tickDungeonRoomPressure(localX);
+    }
+
     syncChroma();
   }
 
@@ -279,6 +394,7 @@
   }
 
   window.addEventListener('lp:weapon-fired', onWeaponFired);
+  window.addEventListener('liminal:platform-scene', onPlatformSceneForRoomPressure);
 
   window.LpPressure = {
     MAX_ALONE,
@@ -290,6 +406,7 @@
     CHROMA_START,
     ALLY_DEATH_DELTA,
     ALLY_REDEPLOY_DELTA,
+    ROOM_PRESSURE_BY_SPECIES,
     MOB_PRESENCE_COOLDOWN,
     IDLE_DELAY,
     IDLE_DECAY_PER_SEC,
@@ -312,6 +429,8 @@
     noteAllyDeathNearby,
     noteAllyRedeployNearby,
     noteWeaponFireInCarriage,
+    clearRoomPressureMarks,
+    roomPressureDeltaForMob,
     setPressure,
     tick,
     hasTeammateInSameCarriage,

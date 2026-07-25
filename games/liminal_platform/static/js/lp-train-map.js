@@ -247,9 +247,21 @@
     toggleFromMinimap();
   });
 
-  /* 移动端地图钮 */
+  /* 移动端地图钮：小型月台开地牢图，否则开列车编组图 */
   document.getElementById('lpMobileMapButton')?.addEventListener('click', () => {
     if (window.LpInventory?.isOpen?.()) return;
+    if (window.LpDungeonMap?.isOpen?.()) {
+      window.LpDungeonMap.close();
+      return;
+    }
+    if (open) {
+      closeMap();
+      return;
+    }
+    if (window.LpDungeonMap?.shouldHandle?.()) {
+      window.LpDungeonMap.open();
+      return;
+    }
     toggle();
   });
 

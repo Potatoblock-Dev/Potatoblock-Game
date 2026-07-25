@@ -263,11 +263,13 @@
   /**
    * 卫兵空闲炮塔对各自的分塔锁定：每帧再验 canEngageHostile(敌, 塔)；
    * 各塔用自己的提前点瞄准，仅 canTurretFire 通过的塔开火。本机入座的塔不接管。
+   * 停靠/月台场景下整段跳过（列车武器抑制，避免自动机炮向月台抛壳）。
    */
   function engageGuardFromLock() {
     const combat = Combat();
     const gt = Guard();
     if (!combat?.getLockedHostile || !gt?.getAutoEngageTurretIds) return;
+    if (gt.isTrainWeaponSuppressed?.()) return;
 
     const free = gt.getAutoEngageTurretIds() || [];
     if (!free.length) return;

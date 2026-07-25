@@ -28,6 +28,7 @@ HP 伤害仍主要是本地小怪逻辑；`pose.hp` / `lifeState` 为队友条�
 |--|--|--|--|
 | 闲置衰减 | 无有效动作 ≥ **3.5s** | −**4**/秒 | `noteAction` |
 | 同车小怪 | 压力 **&lt; 20** 且同车舱内有怪 | **+5** | 冷却 **2.5s** |
+| **地牢同房小怪** | 本机与怪同处地牢房间，且该 `mob.id` 本访未标记 | 气球 **+3** / 保龄球 **+7** | 本地 `Set` 标记；离台 / 新访清空；其它物种 0；重进同房不重复 |
 | 被怪打中 | 触碰命中 | **+5** | 无条件 |
 | 同车开火 | 枪口与本机同车厢且压力 **&lt; 20** | **+10** | 余晖降至 20 |
 | **附近友军最终死亡** | 远端 `lifeState`→`dead` 且 `deathCause≠redeploy`，`|Δx|≤` 加压半径 | **+100** | **仅计时耗尽等最终死亡**；进入濒死不加 |
@@ -66,6 +67,8 @@ HP 伤害仍主要是本地小怪逻辑；`pose.hp` / `lifeState` 为队友条�
 |--|--|
 | `noteAllyDeathNearby(x)` | 附近最终死亡 +100 |
 | `noteAllyRedeployNearby(x)` | 附近重新部署 +20 |
+| `ROOM_PRESSURE_BY_SPECIES` | `{ balloon: 3, bowling: 7 }` |
+| `clearRoomPressureMarks()` | 清空地牢同房加压标记 |
 | `noteAction` / `noteMobHit` / `setPressure` / `tick` | 既有钩子 |
 
 ## 常量对照

@@ -1,7 +1,7 @@
 /**
  * 可编辑车厢设施摆放：P 进入/退出；底栏从仓储拖设施到舱内格子；退出时本地持久化布局。
  * 首通仅仓储 / 空车厢；布局存 localStorage（联机不同步）。
- * 设施仅视觉、不参与走道碰撞；联机时不扣/不还权威仓储，避免共享库存错乱。
+ * 编辑中 R 水平镜像（flip）；设施仅视觉、不参与走道碰撞；联机时不扣/不还权威仓储。
  */
 (() => {
   const Spec = window.LiminalCarriageSpec;
@@ -24,21 +24,56 @@
   const ghostEl = document.getElementById('lpFacilityGhost');
   if (!root || !trayEl) return;
 
-  /** @type {Record<string, Array<{ id: string, itemId: string, col: number, row: number }>>} */
+  /** @type {Record<string, Array<{ id: string, itemId: string, col: number, row: number, flip?: boolean }>>} */
   let layouts = loadLayouts();
   let editing = false;
   /** @type {string|null} */
   let editCarId = null;
-  /** @type {{ itemId: string, fromPlacedId: string|null }|null} */
+  /** @type {{ itemId: string, fromPlacedId: string|null, flip: boolean }|null} */
   let drag = null;
   /** @type {{ col: number, row: number, ok: boolean }|null} */
   let hoverCell = null;
+  /** 最近交互的已放设施 id（供未命中时 R 镜像）。 */
+  let selectedId = null;
+  /** 编辑态最近指针（客户端坐标），用于 R 命中检测。 */
+  const lastPointer = { x: 0, y: 0 };
   let dirty = false;
   let onlineHintShown = false;
 
   /** 联机权威库存是否生效（此时禁止本地改仓储）。 */
   function isOnlineAuthority() {
     return Boolean(window.LpInventoryNet?.isActive?.());
+  }
+
+  /**
+   * 规范化一条放置记录；仅在水平镜像时保留 flip:true（旧存档无该字段视为未翻转）。
+   * @param {object} e
+   * @param {string} fallbackId
+   */
+  function normalizePlacement(e, fallbackId) {
+    const out = {
+      id: typeof e.id === 'string' ? e.id : fallbackId,
+      itemId: e.itemId,
+      col: Math.max(0, e.col | 0),
+      row: Math.max(0, e.row | 0),
+    };
+    if (e.flip) out.flip = true;
+    return out;
+  }
+
+  /** 放置是否水平镜像。 */
+  function isFlipped(placement) {
+    return Boolean(placement?.flip);
+  }
+
+  /**
+   * 写入或清除放置上的水平镜像标记。
+   * @param {{ flip?: boolean }} target
+   * @param {boolean} flip
+   */
+  function applyFlipFlag(target, flip) {
+    if (flip) target.flip = true;
+    else delete target.flip;
   }
 
   /** 从 localStorage 读取各车布局。 */
@@ -53,12 +88,7 @@
         if (!Array.isArray(list)) continue;
         out[carId] = list
           .filter((e) => e && typeof e.itemId === 'string')
-          .map((e, i) => ({
-            id: typeof e.id === 'string' ? e.id : `f_${carId}_${i}`,
-            itemId: e.itemId,
-            col: Math.max(0, e.col | 0),
-            row: Math.max(0, e.row | 0),
-          }));
+          .map((e, i) => normalizePlacement(e, `f_${carId}_${i}`));
       }
       return out;
     } catch {
@@ -513,24 +543,26 @@
     }
   }
 
-  /** 更新幽灵跟随指针。 */
+  /** 更新幽灵跟随指针；拖拽镜像时水平翻转幽灵。 */
   function syncGhost(clientX, clientY) {
     if (!ghostEl || !drag) {
       if (ghostEl) ghostEl.hidden = true;
       return;
     }
     const item = Catalog?.getItem?.(drag.itemId);
+    const scaleX = drag.flip ? -1 : 1;
     ghostEl.hidden = false;
-    ghostEl.style.transform = `translate(${clientX}px, ${clientY}px)`;
+    ghostEl.style.transform = `translate(${clientX}px, ${clientY}px) scaleX(${scaleX})`;
     ghostEl.style.setProperty('--lp-fac-color', item?.color || '#64748b');
     ghostEl.style.setProperty('--lp-fac-accent', item?.accent || '#94a3b8');
     ghostEl.textContent = item?.short || item?.name?.slice(0, 1) || '?';
   }
 
-  /** 从底栏开始拖拽。 */
+  /** 从底栏开始拖拽（默认未镜像）。 */
   function beginDragFromTray(itemId, event) {
     if (!editing || storageCount(itemId) < 1) return;
-    drag = { itemId, fromPlacedId: null };
+    selectedId = null;
+    drag = { itemId, fromPlacedId: null, flip: false };
     hoverCell = null;
     syncGhost(event.clientX, event.clientY);
     try {
@@ -540,9 +572,14 @@
     }
   }
 
-  /** 从已放置设施开始拖拽（移动或收回）。 */
+  /** 从已放置设施开始拖拽（移动或收回）；继承原镜像。 */
   function beginDragPlaced(placed, event) {
-    drag = { itemId: placed.itemId, fromPlacedId: placed.id };
+    selectedId = placed.id;
+    drag = {
+      itemId: placed.itemId,
+      fromPlacedId: placed.id,
+      flip: isFlipped(placed),
+    };
     hoverCell = null;
     syncGhost(event.clientX, event.clientY);
   }
@@ -610,17 +647,31 @@
         if (p) {
           p.col = hoverCell.col;
           p.row = hoverCell.row;
+          applyFlipFlag(p, Boolean(drag.flip));
+          selectedId = p.id;
           dirty = true;
         }
       } else if (takeFromStorage(itemId)) {
-        placementsFor(editCarId).push({
+        const entry = {
           id: `f_${editCarId}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
           itemId,
           col: hoverCell.col,
           row: hoverCell.row,
-        });
+        };
+        applyFlipFlag(entry, Boolean(drag.flip));
+        placementsFor(editCarId).push(entry);
+        selectedId = entry.id;
         dirty = true;
         renderTray();
+      }
+    } else if (fromId) {
+      /* 未落到有效格 / 未收回：仍写回拖拽中改过的镜像 */
+      const list = placementsFor(editCarId);
+      const p = list.find((e) => e.id === fromId);
+      if (p && Boolean(drag.flip) !== isFlipped(p)) {
+        applyFlipFlag(p, Boolean(drag.flip));
+        selectedId = p.id;
+        dirty = true;
       }
     }
 
@@ -633,6 +684,7 @@
   function closeOtherUi() {
     window.LpInventory?.close?.();
     window.LpTrainMap?.close?.();
+    window.LpDungeonMap?.close?.();
     window.LpBoilerPanel?.close?.();
     window.LpFuelFeed?.close?.();
     window.LpGuardCrateUi?.close?.();
@@ -659,6 +711,7 @@
     editCarId = car.id;
     drag = null;
     hoverCell = null;
+    selectedId = null;
     dirty = false;
     document.body.classList.add('lp-facility-edit-open');
     root.hidden = false;
@@ -668,12 +721,12 @@
     if (hintEl) {
       if (online) {
         hintEl.textContent = coarse
-          ? `${car.label} · 联机仅本机可见 · 点「完成」保存退出`
-          : `${car.label} · 联机布局仅本机可见（不挡路、不扣仓储）· 再按 P 或点「完成」保存退出`;
+          ? `${car.label} · 联机仅本机可见 · R 镜像 · 点「完成」保存退出`
+          : `${car.label} · 联机布局仅本机可见 · R 镜像 · 再按 P 或点「完成」保存退出`;
       } else {
         hintEl.textContent = coarse
-          ? `${car.label} · 拖底栏设施到格子 · 点「完成」保存 · 拖回底栏收回`
-          : `${car.label} · 拖底栏设施到格子 · 再按 P 或点「完成」保存退出 · 拖回底栏收回`;
+          ? `${car.label} · 拖底栏到格子 · R 镜像 · 点「完成」保存 · 拖回底栏收回`
+          : `${car.label} · 拖底栏到格子 · R 镜像 · 再按 P 或点「完成」保存退出 · 拖回底栏收回`;
       }
     }
     if (online && !onlineHintShown) {
@@ -696,6 +749,7 @@
     }
     drag = null;
     hoverCell = null;
+    selectedId = null;
     if (ghostEl) ghostEl.hidden = true;
     if (save) saveLayouts();
     editing = false;
@@ -720,7 +774,7 @@
 
   /**
    * 绘制单件设施块：有 icon 时只 drawImage（保留 PNG alpha，不垫黑/色底）；
-   * 贴图按占格 AABB contain、贴地底对齐，禁止非等比拉伸。
+   * 贴图按占格 AABB contain、贴地底对齐，禁止非等比拉伸；flip 时水平镜像。
    */
   function drawFacilityBlock(ctx, grid, placement, fillAlpha = 0.92) {
     const item = Catalog?.getItem?.(placement.itemId);
@@ -731,6 +785,13 @@
     const h = size.h * grid.cell;
     const pad = 2;
     ctx.save();
+    if (isFlipped(placement)) {
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      ctx.translate(cx, cy);
+      ctx.scale(-1, 1);
+      ctx.translate(-cx, -cy);
+    }
     if (item?.icon) {
       const img = getFacilityImage(item.icon);
       if (img?.complete && img.naturalWidth > 0) {
@@ -851,6 +912,7 @@
         col: hoverCell.col,
         row: hoverCell.row,
       };
+      applyFlipFlag(preview, Boolean(drag.flip));
       ctx.save();
       ctx.globalAlpha = hoverCell.ok ? 0.55 : 0.28;
       if (!hoverCell.ok) {
@@ -868,14 +930,42 @@
     }
   }
 
+  /**
+   * 编辑态按 R：水平镜像当前拖拽件，或指针下 / 最近选中的已放设施。
+   * @returns {boolean} 是否处理了按键
+   */
+  function toggleMirror() {
+    if (!editing || !editCarId) return false;
+    if (drag) {
+      drag.flip = !drag.flip;
+      syncGhost(lastPointer.x, lastPointer.y);
+      return true;
+    }
+    const world = pointerWorld(lastPointer.x, lastPointer.y);
+    let target = world ? hitPlaced(editCarId, world.x, world.y) : null;
+    if (!target && selectedId) {
+      target = placementsFor(editCarId).find((p) => p.id === selectedId) || null;
+    }
+    if (!target) return false;
+    applyFlipFlag(target, !isFlipped(target));
+    selectedId = target.id;
+    dirty = true;
+    return true;
+  }
+
   document.addEventListener('pointermove', (event) => {
-    if (!editing || !drag) return;
+    if (!editing) return;
+    lastPointer.x = event.clientX;
+    lastPointer.y = event.clientY;
+    if (!drag) return;
     syncGhost(event.clientX, event.clientY);
     updateHoverFromPointer(event.clientX, event.clientY);
   });
 
   document.addEventListener('pointerup', (event) => {
     if (!editing || !drag) return;
+    lastPointer.x = event.clientX;
+    lastPointer.y = event.clientY;
     updateHoverFromPointer(event.clientX, event.clientY);
     finishDrag(event);
   });
@@ -889,6 +979,8 @@
 
   window.addEventListener('pointerdown', (event) => {
     if (!editing || !editCarId || event.button !== 0) return;
+    lastPointer.x = event.clientX;
+    lastPointer.y = event.clientY;
     if (event.target?.closest?.('#lpFacilityEditRoot')) return;
     if (event.target?.closest?.('.lp-inventory-root, .lp-train-map-root')) return;
     const world = pointerWorld(event.clientX, event.clientY);
@@ -899,6 +991,28 @@
     beginDragPlaced(placed, event);
     updateHoverFromPointer(event.clientX, event.clientY);
   }, true);
+
+  /** 仅设施编辑态占用 R（镜像）；捕获阶段抢在换弹绑定之前，且编辑时 isUiOpen 已挡住换弹。 */
+  window.addEventListener(
+    'keydown',
+    (event) => {
+      if (!editing) return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (event.repeat) return;
+      const isR =
+        event.code === 'KeyR' || event.key === 'r' || event.key === 'R';
+      if (!isR) return;
+      if (!toggleMirror()) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true
+  );
 
   window.addEventListener('lp:inventory-changed', () => {
     if (editing) renderTray();

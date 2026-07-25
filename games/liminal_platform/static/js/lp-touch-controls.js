@@ -28,7 +28,7 @@
     interactQueued: false,
     fire: false,
     fireQueued: false,
-    /** 奔跑锁定（点按 / 桌面 Shift 边沿切换；进房时跟自动奔跑偏好）。 */
+    /** 奔跑锁定（触控点按切换；进房时跟自动奔跑偏好；桌面不用此锁）。 */
     sprintToggle: false,
     /** 情境键：inventory | interact */
     actionMode: 'inventory',
@@ -139,7 +139,7 @@
     applyLookFromStick(lookStick, lookKnob, clientX, clientY);
   }
 
-  /** 同步奔跑切换按钮（图标 + aria；文案不写进 DOM 以免冲掉 Kenney 图标）。 */
+  /** 同步奔跑切换按钮（文字占位 + aria）。 */
   function syncSprintButton() {
     if (!sprintButton) return;
     sprintButton.setAttribute('aria-pressed', state.sprintToggle ? 'true' : 'false');
@@ -151,9 +151,11 @@
       'aria-label',
       state.sprintToggle ? '切换为行走' : '切换为奔跑'
     );
+    const icon = sprintButton.querySelector('.lp-mc-icon');
+    if (icon) icon.textContent = state.sprintToggle ? '跑' : '走';
   }
 
-  /** 将奔跑锁定设为指定状态（进房 / 自动奔跑偏好 / 桌面 Shift 共用）。 */
+  /** 将奔跑锁定设为指定状态（进房 / 自动奔跑偏好 / 触控按钮）。 */
   function setSprintToggle(on) {
     state.sprintToggle = Boolean(on);
     syncSprintButton();
@@ -169,20 +171,25 @@
     setSprintToggle(Boolean(window.LpInputBindings?.getAutoRun?.()));
   }
 
-  /** 同步物品/交互共用键外观。 */
+  /** 同步物品/交互共用键外观（文字占位：包 / 互 / 离）。 */
   function syncActionButton() {
     if (!actionButton) return;
     const interact = state.actionMode === 'interact';
     actionButton.dataset.mode = state.actionMode;
     actionButton.classList.toggle('is-interact-mode', interact);
     actionButton.classList.toggle('is-storage-hint', !interact && storageHint);
+    const icon = actionButton.querySelector('.lp-mc-icon');
     if (interact) {
       const label = actionButton.dataset.interactLabel || '交互';
       actionButton.title = label;
       actionButton.setAttribute('aria-label', label);
+      if (icon) {
+        icon.textContent = label.includes('离开') || label.includes('离') ? '离' : '互';
+      }
     } else {
       actionButton.title = storageHint ? '打开背包（仓库）' : '打开背包';
       actionButton.setAttribute('aria-label', '背包');
+      if (icon) icon.textContent = '包';
     }
   }
 

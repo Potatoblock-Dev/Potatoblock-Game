@@ -2,6 +2,8 @@
  * 小怪：地面「保龄球」沿轨跑到车头/车尾再跳入车厢；空中「气球」经连接处进入后在舱内漂浮。
  * 封闭图形填充经 LpMobBubbleFill（半透明泡泡/流动 + 流动彩虹描边）；视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路。
  * 命中半径即 profile.radius（弹道 / 玩家碰撞随放大同步）。kind 仍为 ground|air（战斗/传感）。
+ * 月台前后缓冲（LpPlatform.isNearPlatformMobSafeZone）：轨面/俯冲不朝火车靠拢，波次不刷列车怪；地牢追逐不受影响。
+ * 地牢：敌房刷保龄球（贴地穿门追）+ 气球（房内漂浮）；走 LpDungeon.resolveBody，不穿实心墙。
  */
 (() => {
   /** 地面保龄球：战斗角色 ground；显示名 / 物种 id 供雷达与调试。 */
@@ -699,18 +701,198 @@
     spawnTimer = wavePhase === 'wave' ? WAVE.waveLeadIn : 0;
   }
 
+  /** 清除列车波次怪（保留地牢怪）。 */
+  function clearTrainWaveMobs() {
+    const kept = mobs.filter((m) => m.dungeon);
+    if (!mobs.length) return;
+    if (!kept.length) {
+      mobs = [];
+      window.LpAutoSensors?.setHostiles?.([]);
+      return;
+    }
+    if (kept.length === mobs.length) return;
+    mobs = kept;
+    window.LpAutoSensors?.setHostiles?.(listHostiles());
+  }
+
+  /** 清除地牢怪。 */
+  function clearDungeonMobs() {
+    const before = mobs.length;
+    mobs = mobs.filter((m) => !m.dungeon);
+    if (mobs.length !== before) {
+      window.LpAutoSensors?.setHostiles?.(listHostiles());
+    }
+  }
+
+  /**
+   * 地牢怪相对房间可走内区的左右界（避开侧墙厚度）。
+   * @param {ReturnType<typeof createMob>} m
+   * @returns {{ left: number, right: number } | null}
+   */
+  function dungeonRoomInnerX(m) {
+    const left = Number(m.roomLeft);
+    const right = Number(m.roomRight);
+    if (!Number.isFinite(left) || !Number.isFinite(right) || right - left < 8) {
+      return null;
+    }
+    const wall = window.LpDungeon?.WALL_THICK ?? 20;
+    const pad = wall + m.radius * 0.85;
+    return { left: left + pad, right: right - pad };
+  }
+
+  /**
+   * 地牢怪位移后与实心墙解算（与玩家同一套 LpDungeon.resolveBody）。
+   * @param {ReturnType<typeof createMob>} m
+   */
+  function resolveDungeonMobWalls(m) {
+    const dungeon = window.LpPlatform?.getDungeon?.();
+    if (!dungeon?.walls?.length || !window.LpDungeon?.resolveBody) return;
+    const floorY = Number(m.floorY);
+    if (!Number.isFinite(floorY)) return;
+    const halfW = Math.max(8, m.radius * 0.72);
+    const height = Math.max(24, m.radius * 1.55);
+    let physicsY = 0;
+    if (m.kind === 'air') {
+      const feet = m.y + m.radius * 0.85;
+      physicsY = feet - floorY;
+    }
+    const out = window.LpDungeon.resolveBody(dungeon, {
+      x: m.x,
+      physicsY,
+      vy: 0,
+      floorY,
+      halfW,
+      height,
+    });
+    m.x = out.x;
+    if (m.kind === 'air') {
+      const feet = floorY + out.physicsY;
+      m.y = feet - m.radius * 0.85;
+    }
+  }
+
+  /**
+   * 气球悬停高度：房间净空约 38% 处（门洞之上，仍在房内）。
+   * @param {number} floorY
+   * @param {number} ceilingY
+   * @param {number} radius
+   */
+  function dungeonBalloonHoverY(floorY, ceilingY, radius) {
+    const top = Number.isFinite(ceilingY) ? ceilingY : floorY - (window.LpDungeon?.ROOM_H || 634);
+    const span = Math.max(80, floorY - top);
+    return top + span * 0.38 + radius * 0.2;
+  }
+
+  /**
+   * 按地牢布局刷敌房怪（保龄球贴地 / 气球房内漂；均追逐玩家）。
+   * @param {object} layout LpDungeon.generate 结果
+   */
+  function spawnDungeonFromLayout(layout) {
+    clearDungeonMobs();
+    clearTrainWaveMobs();
+    if (!layout?.spawns?.length) return;
+    const roomById = new Map();
+    for (const room of layout.rooms || []) {
+      if (room?.id != null) roomById.set(String(room.id), room);
+    }
+    for (const spot of layout.spawns) {
+      const room = roomById.get(String(spot.roomId || ''));
+      const floorY =
+        Number(spot.floorY) ||
+        Number(room?.floorY) ||
+        layout.baseFloorY ||
+        720;
+      const ceilingY =
+        Number(spot.ceilingY) ||
+        Number(room?.ceilingY) ||
+        floorY - (window.LpDungeon?.ROOM_H || 634);
+      const x = Number(spot.x) || 0;
+      const species = String(spot.species || 'bowling');
+      const isBalloon = species === 'balloon' || species === 'air';
+      const profile = isBalloon ? AIR : GROUND;
+      const y = isBalloon
+        ? dungeonBalloonHoverY(floorY, ceilingY, profile.radius)
+        : bowlingCenterY(floorY, profile.radius);
+      const m = createMob(profile, x, y, {
+        phase: 'dungeon',
+        dungeon: true,
+        floorY,
+        ceilingY,
+        roomId: spot.roomId || room?.id || null,
+        roomLeft: room?.left ?? null,
+        roomRight: room?.right ?? null,
+        targetX: x,
+        targetY: y,
+        vfxSeed: (spot.x || 0) * 0.13 + (spot.floorY || 0) * 0.07,
+      });
+      mobs.push(m);
+    }
+    window.LpAutoSensors?.setHostiles?.(listHostiles());
+  }
+
+  /**
+   * 地牢怪：保龄球贴地穿门追；气球锁房漂浮追；均经墙体解算。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {number} dt
+   * @param {object|null} player
+   */
+  function tickDungeon(m, dt, player) {
+    const floorY = m.floorY != null ? m.floorY : m.y + m.radius * 0.42;
+    if (!player) {
+      if (m.kind === 'ground' || m.species === 'bowling') {
+        m.y = bowlingCenterY(floorY, m.radius);
+      }
+      return;
+    }
+    const tx = player.x;
+    if (m.kind === 'air' || m.species === 'balloon') {
+      const hover = dungeonBalloonHoverY(
+        floorY,
+        m.ceilingY,
+        m.radius
+      );
+      const bobY = hover + Math.sin(m.bob) * 6;
+      m.bob += dt * 1.7;
+      m.targetX = tx;
+      m.targetY = hover;
+      glideToward(m, tx, bobY, m.speed * 0.72, dt, tx, hover);
+      const inner = dungeonRoomInnerX(m);
+      if (inner && inner.right > inner.left) {
+        m.x = Math.min(inner.right, Math.max(inner.left, m.x));
+      }
+      resolveDungeonMobWalls(m);
+      return;
+    }
+    m.y = bowlingCenterY(floorY, m.radius);
+    m.targetX = tx;
+    m.targetY = m.y;
+    moveToward(m, tx, m.y, m.speed * 0.85, dt);
+    resolveDungeonMobWalls(m);
+    m.y = bowlingCenterY(floorY, m.radius);
+  }
+
   /**
    * 波次导演：推进 wave/calm，仅在 wave 内按间隔尝试刷怪（受 caps 限制）。
    * 每次尝试按 SPAWN_RANGE 权重在近/中/远刷簇，偏雷达中外环。
+   * 月台前后缓冲区内不刷列车接近怪（场上已有怪由 AI 门控改缓退）。
    * @param {object} S
    * @param {number} dt
    */
   function tickWaveDirector(S, dt) {
-    /* 停靠月台：清场并暂停刷怪，敌方不接近火车 */
+    /* 停靠月台：清列车波次；大型全程暂停；小型仅在列车侧暂停（地牢怪另管） */
     if (window.LpPlatform?.isAtPlatform?.()) {
-      if (mobs.length) {
-        mobs = [];
-        window.LpAutoSensors?.setHostiles?.([]);
+      const onSmallDungeon =
+        window.LpPlatform?.getScene?.() === 'platform' &&
+        window.LpPlatform?.getPlatformKind?.() === 'small';
+      if (!onSmallDungeon) {
+        clearTrainWaveMobs();
+      } else {
+        /* 去掉非地牢怪，保留 dungeon 标记 */
+        const kept = mobs.filter((m) => m.dungeon);
+        if (kept.length !== mobs.length) {
+          mobs = kept;
+          window.LpAutoSensors?.setHostiles?.(listHostiles());
+        }
       }
       return;
     }
@@ -720,6 +902,9 @@
       enterWavePhase(wavePhase === 'wave' ? 'calm' : 'wave');
     }
     if (wavePhase !== 'wave') return;
+
+    /* 月台前后缓冲：推进波次时钟但不刷接近火车的怪 */
+    if (inPlatformTrainSafeZone()) return;
 
     spawnTimer -= dt;
     if (spawnTimer > 0) return;
@@ -731,6 +916,54 @@
     if (countKind('air') < WAVE.maxAir) {
       spawnAirCluster(S);
     }
+  }
+
+  /**
+   * 列车是否处于月台前后禁近区（LpPlatform.MOB_TRAIN_SAFE_DIST）。
+   * @returns {boolean}
+   */
+  function inPlatformTrainSafeZone() {
+    return !!window.LpPlatform?.isNearPlatformMobSafeZone?.();
+  }
+
+  /**
+   * 编组中心世界 X（侧翼中点），供禁近区缓退方向。
+   * @param {object} S
+   * @returns {number}
+   */
+  function trainMidX(S) {
+    const flanks = trainFlankXs(S, 0);
+    return (flanks.left + flanks.right) * 0.5;
+  }
+
+  /**
+   * 轨面禁近：不朝车头/车尾跳点移动，沿轨缓慢远离编组。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object} S
+   * @param {number} dt
+   */
+  function tickGroundRailSafeHold(m, S, dt) {
+    const ry = bowlingCenterY(railY(S), m.radius);
+    m.y = ry;
+    m.bob += dt * 3.4;
+    const away = m.x < trainMidX(S) ? -1 : 1;
+    const retreatX = m.x + away * S.scaleArt(120);
+    moveToward(m, retreatX, ry, m.speed * 0.32, dt);
+    m.y = ry;
+  }
+
+  /**
+   * 空中禁近：取消俯冲进缝，原地高度微漂并缓慢外飘。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object} S
+   * @param {number} dt
+   */
+  function tickAirDiveSafeHold(m, S, dt) {
+    if (m.holdY == null) m.holdY = m.targetY != null ? m.targetY : m.y;
+    const away = m.x < trainMidX(S) ? -1 : 1;
+    const tx = m.x + away * S.scaleArt(90);
+    const hover = m.holdY + Math.sin(m.bob) * 9;
+    glideToward(m, tx, hover, m.speed * 0.28, dt);
   }
 
   /** 向目标点匀速靠近（瞬时转向）；到达返回 true。保龄球等仍用此路径。 */
@@ -849,11 +1082,16 @@
 
   /**
    * 地面：轨面横移到车头/车尾 → 跳入走道 → 舱内游荡。
+   * 月台前后缓冲区内轨面阶段不向火车接近（缓退）。
    * @param {ReturnType<typeof createMob>} m
    */
   function tickGround(m, S, dt) {
     const ry = bowlingCenterY(railY(S), m.radius);
     if (m.phase === 'rail') {
+      if (inPlatformTrainSafeZone()) {
+        tickGroundRailSafeHold(m, S, dt);
+        return;
+      }
       m.y = ry;
       // 轨面横移时推进 bob，供爬行周期慢速循环。
       m.bob += dt * 5.2;
@@ -901,11 +1139,16 @@
   /**
    * 空中：飞向连接缝 → 钻入舱空 → 在相邻车厢空气里漂浮游荡（不贴地）。
    * 位移经 glideToward（惯性），正弦 bob 幅度略大以增强漂浮感。
+   * 月台前后缓冲区内俯冲阶段不朝连接缝接近（外飘微漂）。
    * @param {ReturnType<typeof createMob>} m
    */
   function tickAir(m, S, dt) {
     m.bob += dt * 3.6;
     if (m.phase === 'dive') {
+      if (inPlatformTrainSafeZone()) {
+        tickAirDiveSafeHold(m, S, dt);
+        return;
+      }
       const hover = m.targetY + Math.sin(m.bob) * 9;
       if (glideToward(m, m.targetX, hover, m.speed, dt)) {
         m.phase = 'enter';
@@ -972,11 +1215,15 @@
    */
   function tick(dt, ctx = {}) {
     const S = spec();
-    if (!S?.CARRIAGES?.length) return;
+    const dungeonMode =
+      window.LpPlatform?.getScene?.() === 'platform' &&
+      window.LpPlatform?.getPlatformKind?.() === 'small';
+    if (!dungeonMode && !S?.CARRIAGES?.length) return;
     lastDt = dt > 0 ? dt : lastDt;
     rememberView(ctx);
     purgeDeadMobs();
-    tickWaveDirector(S, dt);
+    if (!dungeonMode) tickWaveDirector(S, dt);
+    else tickWaveDirector(S, dt); /* 仍走停靠分支清理列车怪 */
 
     const player = ctx.player || null;
     const onHit = ctx.onHit;
@@ -987,7 +1234,8 @@
       if (m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
       const px = m.x;
       const py = m.y;
-      if (m.kind === 'ground') tickGround(m, S, dt);
+      if (m.dungeon || m.phase === 'dungeon') tickDungeon(m, dt, player);
+      else if (m.kind === 'ground') tickGround(m, S, dt);
       else tickAir(m, S, dt);
       if (dt > 1e-6) {
         m.vx = (m.x - px) / dt;
@@ -1138,10 +1386,10 @@
     // 不传不透明 base，让 clip 内只剩半透明洗/流/泡。
     const fillOpts = {
       palette: BOWLING_PALETTE,
-      alpha: 0.05,
-      flowAlpha: 0.07,
-      bubbleAlpha: 0.18,
-      bubblePulse: 0.14,
+      alpha: 0.04,
+      flowAlpha: 0.4,
+      bubbleAlpha: 0.14,
+      bubblePulse: 0.1,
     };
 
     const tailCx = m.x - f * r * 0.55;
@@ -1277,10 +1525,10 @@
     const sid = m.id || 'balloon';
     const fillOpts = {
       palette: BALLOON_PALETTE,
-      alpha: 0.05,
-      flowAlpha: 0.08,
-      bubbleAlpha: 0.2,
-      bubblePulse: 0.15,
+      alpha: 0.04,
+      flowAlpha: 0.42,
+      bubbleAlpha: 0.15,
+      bubblePulse: 0.11,
     };
 
     // sats 已按 depth 升序；depth<0 在后，插在主体之前。
@@ -1547,6 +1795,9 @@
     damageMob,
     probeSegmentHit,
     getWaveState,
+    spawnDungeonFromLayout,
+    clearDungeonMobs,
+    clearTrainWaveMobs,
     /** 可调波次参数（就地改数字即可热调；改 duration 等需等下阶段切换生效）。 */
     WAVE,
     /** 可调刷怪距带（近/中/远外扩与权重；热调后下次刷怪生效）。 */

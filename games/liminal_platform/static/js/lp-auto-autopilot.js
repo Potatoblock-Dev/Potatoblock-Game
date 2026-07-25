@@ -1,8 +1,8 @@
 /**
  * 动力车厢「自动驾驶」状态机。
- * 由驾驶台开关接通/释放；接通时独占节流阀（巡航→接近减速→近站急刹→到站停车→汽笛上升沿恢复）。
+ * 由驾驶台开关接通/释放；接通时独占节流阀（巡航→接近减速→近站急刹→到站停车→汽笛上升沿离站）。
  * 月台距离由 LpPlatform → LpAutoSensors.setPlatformStub 写入；读 getPlatformSensor。
- * 汽笛：动力驾驶台绳索 → LpWhistleAudio.isSounding()；停车态上升沿恢复。
+ * 汽笛：动力驾驶台绳索 → LpWhistleAudio.isSounding()；停靠态上升沿起 3s 后再做全员在车检测，通过则 beginDepart。
  */
 (() => {
   /** 满档前进（LpTrainDrive 最高正档）。 */
@@ -18,6 +18,8 @@
   const DIST_SLOW = 700;
   /** 进入此距离后触发急刹，避免冲过停靠窗。 */
   const DIST_EMERGENCY = 280;
+  /** 汽笛上升沿后，等待此时长再跑 canDepart / beginDepart。 */
+  const WHISTLE_DEPART_DELAY_SEC = 3;
 
   /**
    * @typedef {'cruise'|'approach'|'stopped'} AutopilotPhase
@@ -29,6 +31,11 @@
   let engaged = false;
   /** 上一帧汽笛是否在鸣（上升沿检测）。 */
   let whistleWasSounding = false;
+  /**
+   * 汽笛上升沿武装发车检测的时刻（performance.now）；null 表示未等待。
+   * 等待中不再因每帧汽笛状态重武装。
+   */
+  let departCheckArmedAtMs = null;
 
   /**
    * 按距月台距离选取减速档；无距离时用默认中档。
@@ -57,6 +64,19 @@
   /** 当前汽笛是否在鸣（驾驶台拉绳）。 */
   function whistleSounding() {
     return Boolean(window.LpWhistleAudio?.isSounding?.());
+  }
+
+  /** 取消汽笛发车等待（离站 / 关自动驾驶 / 离开停靠态）。 */
+  function clearDepartArm() {
+    departCheckArmedAtMs = null;
+  }
+
+  /**
+   * 武装 3s 发车检测；已在等待则忽略（避免每帧或重复拉笛重置）。
+   */
+  function armDepartCheck() {
+    if (departCheckArmedAtMs != null) return;
+    departCheckArmedAtMs = performance.now();
   }
 
   /**
@@ -112,6 +132,7 @@
     const next = Boolean(on);
     if (next === engaged) return engaged;
     engaged = next;
+    clearDepartArm();
     if (engaged) {
       phase = 'cruise';
       whistleWasSounding = whistleSounding();
@@ -131,6 +152,53 @@
   }
 
   /**
+   * 跑发车校验：全员在车厢则离站并恢复巡航；否则 toast 并保持停车。
+   * 在汽笛上升沿武装后满 WHISTLE_DEPART_DELAY_SEC 才调用。
+   * @returns {boolean} 是否已发车
+   */
+  function tryWhistleDepart() {
+    clearDepartArm();
+    const plat = window.LpPlatform;
+    if (plat && !plat.canDepart?.()) {
+      const reason = plat.getDepartBlockReason?.() || '还有玩家在月台上';
+      window.LiminalInteract?.showToast?.(reason, 1400);
+      return false;
+    }
+    /* 立刻离站，避免下一帧仍读到 atPlatform 又急刹回去 */
+    if (plat?.beginDepart && !plat.beginDepart()) {
+      window.LiminalInteract?.showToast?.('还有玩家在月台上', 1400);
+      return false;
+    }
+    phase = 'cruise';
+    releaseStationBrake();
+    applyThrottle(CRUISE_THROTTLE);
+    window.LiminalInteract?.showToast?.('自动驾驶：驶向下一个月台', 1200);
+    return true;
+  }
+
+  /**
+   * 停靠态：汽笛上升沿武装等待；满延时后跑 tryWhistleDepart。
+   * 离站 / 离开月台则取消等待。
+   * @param {{ atPlatform?: boolean }} plat
+   * @param {boolean} whistleEdge
+   */
+  function tickStoppedDepart(plat, whistleEdge) {
+    applyThrottle(0);
+    if (!plat.atPlatform) {
+      clearDepartArm();
+      return;
+    }
+    if (whistleEdge) {
+      armDepartCheck();
+    }
+    if (departCheckArmedAtMs == null) return;
+    const elapsedSec = (performance.now() - departCheckArmedAtMs) / 1000;
+    if (elapsedSec >= WHISTLE_DEPART_DELAY_SEC) {
+      tryWhistleDepart();
+    }
+  }
+
+  /**
    * 每帧推进：仅在接通时写节流；关闭时为 no-op。
    * @returns {boolean} 本帧是否执行了自动驾驶
    */
@@ -143,20 +211,11 @@
     whistleWasSounding = sounding;
 
     if (phase === 'stopped') {
-      applyThrottle(0);
-      if (whistleEdge) {
-        /* 仍有人在月台时不许发车：保持停车 */
-        if (window.LpPlatform && !window.LpPlatform.canDepart?.()) {
-          const reason = window.LpPlatform.getDepartBlockReason?.();
-          if (reason) window.LiminalInteract?.showToast?.(reason, 1400);
-          return true;
-        }
-        phase = 'cruise';
-        releaseStationBrake();
-        applyThrottle(CRUISE_THROTTLE);
-      }
+      tickStoppedDepart(plat, whistleEdge);
       return true;
     }
+
+    clearDepartArm();
 
     if (plat.atPlatform) {
       phase = 'stopped';
@@ -188,6 +247,7 @@
       active: engaged,
       phase,
       whistleSounding: whistleSounding(),
+      departCheckArmed: departCheckArmedAtMs != null,
       platform: readPlatform(),
     };
   }
@@ -199,6 +259,7 @@
   function setPhaseForDebug(next) {
     if (next === 'cruise' || next === 'approach' || next === 'stopped') {
       phase = next;
+      if (next !== 'stopped') clearDepartArm();
     }
   }
 
@@ -208,6 +269,7 @@
     DIST_CREEP,
     DIST_SLOW,
     DIST_EMERGENCY,
+    WHISTLE_DEPART_DELAY_SEC,
     isEngaged,
     setEngaged,
     toggleEngaged,

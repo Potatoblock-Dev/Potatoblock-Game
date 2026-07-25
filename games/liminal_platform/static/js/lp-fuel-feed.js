@@ -61,16 +61,7 @@
 
         const icon = document.createElement('span');
         icon.className = 'lp-fuel-item-icon';
-        icon.style.setProperty('--item-color', item.color);
-        icon.style.setProperty('--item-accent', item.accent);
-        if (item.icon) {
-          icon.classList.add('has-image');
-          icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-          icon.style.backgroundImage = '';
-          icon.textContent = '';
-        } else {
-          icon.textContent = item.short;
-        }
+        Catalog.applyItemIcon(icon, item);
         icon.setAttribute('aria-hidden', 'true');
 
         const qty = document.createElement('span');
@@ -96,21 +87,7 @@
       if (!item || !button) continue;
       const count = countFuel(itemId);
       if (qty) qty.textContent = String(count);
-      if (icon) {
-        icon.style.setProperty('--item-color', item.color);
-        icon.style.setProperty('--item-accent', item.accent);
-        if (item.icon) {
-          icon.classList.add('has-image');
-          icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-          icon.style.backgroundImage = '';
-          icon.textContent = '';
-        } else {
-          icon.classList.remove('has-image');
-          icon.style.removeProperty('--lp-item-icon');
-          icon.style.backgroundImage = '';
-          icon.textContent = item.short;
-        }
-      }
+      if (icon) Catalog.applyItemIcon(icon, item);
       button.classList.toggle('is-empty', count <= 0);
       button.disabled = count <= 0;
       const caption = wrap.querySelector('.lp-fuel-source-caption');
@@ -327,21 +304,7 @@
     ghost.style.width = `${Math.max(24, Math.round(gw))}px`;
     ghost.style.height = `${Math.max(24, Math.round(gh))}px`;
     const icon = ghost.querySelector('.lp-fuel-item-icon');
-    if (icon && item) {
-      icon.style.setProperty('--item-color', item.color);
-      icon.style.setProperty('--item-accent', item.accent);
-      if (item.icon) {
-        icon.classList.add('has-image');
-        icon.style.setProperty('--lp-item-icon', `url("${item.icon}")`);
-        icon.style.backgroundImage = '';
-        icon.textContent = '';
-      } else {
-        icon.classList.remove('has-image');
-        icon.style.removeProperty('--lp-item-icon');
-        icon.style.backgroundImage = '';
-        icon.textContent = item.short;
-      }
-    }
+    if (icon && item) Catalog.applyItemIcon(icon, item);
     ghost.hidden = false;
     ghost.style.transform = `translate(${clientX}px, ${clientY}px) translate(-50%, -50%)`;
   }

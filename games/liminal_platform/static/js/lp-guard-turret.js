@@ -1036,11 +1036,23 @@
   }
 
   /**
+   * 停靠月台或本地在月台场景时抑制列车武器（机炮入座/自动/远端回放 FX）。
+   * 手持枪械与灭火器不走此门，仍可在月台使用。
+   */
+  function isTrainWeaponSuppressed() {
+    const P = window.LpPlatform;
+    if (!P) return false;
+    if (P.isAtPlatform?.()) return true;
+    return P.getScene?.() === 'platform';
+  }
+
+  /**
    * 开火许可：传入 pivotId 时只查该塔；否则本机控制塔中任一可开火即 true。
-   * 不检查弹药/冷却（由 tryFire 负责）。
+   * 不检查弹药/冷却（由 tryFire 负责）。停靠/月台场景下恒 false。
    */
   function canFire(aimX, aimY, pivotId) {
     if (!state.manned) return false;
+    if (isTrainWeaponSuppressed()) return false;
     if (pivotId != null) return canTurretFire(aimX, aimY, pivotId);
     return getControlledTurretIds().some((id) => canTurretFire(aimX, aimY, id));
   }
@@ -1094,6 +1106,7 @@
   /**
    * 对指定炮塔开火（入座 / 自动化共用）：耗弹、射界、弹链、抛壳、T 精准与原先 tryFire 一致。
    * 无一塔就绪时只更新瞄准、不开火不耗弹。
+   * 停靠或月台场景下直接拒绝（避免弹壳/弹道漏进月台场景）。
    * opts.aimsByTurret：多塔各锁不同敌时按塔准星验开火门并保持分塔瞄准（不覆盖为单一点）。
    * @param {number} aimX
    * @param {number} aimY
@@ -1105,6 +1118,7 @@
    * }} [opts]
    */
   function tryFireTurrets(aimX, aimY, turretIds, opts = {}) {
+    if (isTrainWeaponSuppressed()) return null;
     if (state.fireCooldown > 0) return null;
     const ids = Array.isArray(turretIds) ? turretIds : [];
     if (!ids.length) return null;
@@ -1476,8 +1490,10 @@
    * 远端炮塔开火反馈：后坐与炮口火光；回收箱已满时按 shots[] 每枪口补抛壳 FX。
    * 弹道已由 session 生成；有空时库存由服务端权威写入（本机不重复入箱）。
    * 每发按枪口近邻踢后坐（双联 shots[] 时左右塔都会晃，不单靠 seat turretId）。
+   * 停靠/月台场景下跳过，避免列车战斗 FX 渗入月台画面。
    */
   function noteRemoteFire(detail) {
+    if (isTrainWeaponSuppressed()) return;
     const shots = Array.isArray(detail?.shots) && detail.shots.length > 0
       ? detail.shots
       : [
@@ -1581,6 +1597,11 @@
       state.flashes[i].life -= dt;
       if (state.flashes[i].life <= 0) state.flashes.splice(i, 1);
     }
+  }
+
+  /** 清空活动炮口火光列表（场景切换时调用）。 */
+  function clearFlashes() {
+    state.flashes.length = 0;
   }
 
   /**
@@ -1704,6 +1725,7 @@
     aimTurrets,
     tryFire,
     tryFireTurrets,
+    isTrainWeaponSuppressed,
     canFire,
     canTurretFire,
     canTurretEngageAim,
@@ -1722,6 +1744,7 @@
     tick,
     draw,
     drawFx,
+    clearFlashes,
     getAimLeadScale,
     ammoCount,
     casingCount,

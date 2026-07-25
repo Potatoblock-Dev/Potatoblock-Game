@@ -292,7 +292,8 @@
   }
 
   /**
-   * 在交战半径内按锚点选最近敌人（射程原点为无人机；同节或相邻节舱内；选中用准星锚、未选中用玩家锚）。
+   * 在交战半径内按锚点选最近敌人。
+   * 车厢场景：同节或相邻节舱内；月台/地牢无车厢时仅按射程（不套舱内规则）。
    * @param {number} anchorX 选敌距离优先锚点 X
    * @param {number} anchorY 选敌距离优先锚点 Y
    * @param {number} playerX 无人机无车厢时交战参照回退用
@@ -305,15 +306,16 @@
       drone?.x != null && Number.isFinite(Number(drone.x))
         ? Number(drone.x)
         : Number(playerX);
-    const refCarId = engageRefCarId(playerX);
-    if (!refCarId) return null;
+    const onPlatform = window.LpPlatform?.getScene?.() === 'platform';
+    const refCarId = onPlatform ? null : engageRefCarId(playerX);
+    if (!onPlatform && !refCarId) return null;
     let best = null;
     let bestD2 = Infinity;
     for (const h of hostiles) {
       if (!h || h.x == null || !Number.isFinite(Number(h.x))) continue;
       const hx = Number(h.x);
       if (Math.abs(hx - originX) > rangeX) continue;
-      if (!isDroneCabinEngageTarget(h, refCarId)) continue;
+      if (!onPlatform && !isDroneCabinEngageTarget(h, refCarId)) continue;
       const hy =
         h.y != null && Number.isFinite(Number(h.y)) ? Number(h.y) : anchorY;
       const d2 = (hx - anchorX) ** 2 + (hy - anchorY) ** 2;
@@ -1037,11 +1039,18 @@
   }
 
   /**
-   * 绘制其它玩家的伴飞无人机。
+   * 绘制其它玩家的伴飞无人机（仅与本机同场景的主人；避免月台/列车异场景幽灵机）。
    * @param {CanvasRenderingContext2D} ctx
    */
   function drawRemotes(ctx) {
-    for (const remote of remotes.values()) {
+    const localScene =
+      window.LpPlatform?.getScene?.() === 'platform' ? 'platform' : 'train';
+    const owners = window.LiminalSession?.remotes?.();
+    for (const [id, remote] of remotes.entries()) {
+      const owner = owners?.get?.(id);
+      if (owner?._lpDisconnected) continue;
+      const ownerScene = owner?._lpScene === 'platform' ? 'platform' : 'train';
+      if (ownerScene !== localScene) continue;
       drawEntity(ctx, remote);
     }
   }
@@ -1066,6 +1075,19 @@
       playerY: ctx.playerY,
       facing: ctx.facing >= 0 ? 1 : -1,
     });
+
+    /* 下月台/进地牢后世界坐标跳变：过远则瞬移到身旁，避免“有装备但看不见” */
+    if (
+      drone &&
+      window.LpPlatform?.getScene?.() === 'platform' &&
+      Math.hypot(drone.x - ctx.playerX, drone.y - ctx.playerY) > 520
+    ) {
+      const face = ctx.facing >= 0 ? 1 : -1;
+      drone.x = ctx.playerX + face * 36;
+      drone.y = ctx.playerY - 78;
+      drone.vx = 0;
+      drone.vy = 0;
+    }
 
     const selected = isDroneSelected();
     const facing = ctx.facing >= 0 ? 1 : -1;

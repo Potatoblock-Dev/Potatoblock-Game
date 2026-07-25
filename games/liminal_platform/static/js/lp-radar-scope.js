@@ -106,17 +106,19 @@
   const PLATFORM_HALF_H_MAX_PX = 6.5;
   const PLATFORM_SCALE_BOOST = 80;
   /**
-   * 轨带半宽（CSS 像素）夹制；世界参考半宽 × scale 后再夹。
-   * 旧 max(3, 22×scale) 近距偏粗、远距贴下限。
+   * 轨距半宽（CSS 像素）夹制；世界参考半宽 × scale 后再夹。
+   * 双轨须在 1200–12000 量程都读得清（远距靠 MIN，近距靠 MAX）。
    */
-  const TRACK_WORLD_HALF = 15;
-  const TRACK_HALF_MIN_PX = 2.25;
-  const TRACK_HALF_MAX_PX = 5;
-  /** 折线轨填充描边夹制；中心亮线固定细线。 */
-  const TRACK_STROKE_MIN_PX = 2.75;
-  const TRACK_STROKE_MAX_PX = 5.5;
-  const TRACK_POLY_FILL_MULT = 1.3;
-  const TRACK_CENTERLINE_PX = 1.25;
+  const TRACK_WORLD_HALF = 28;
+  const TRACK_HALF_MIN_PX = 6;
+  const TRACK_HALF_MAX_PX = 10;
+  /** 单侧铁轨描边（像素）。 */
+  const TRACK_RAIL_STROKE_PX = 2.1;
+  /** 轨枕：世界间距 × scale 后夹到屏幕像素，保证远近量程可读。 */
+  const TRACK_SLEEPER_WORLD = 110;
+  const TRACK_SLEEPER_SPACING_MIN_PX = 11;
+  const TRACK_SLEEPER_SPACING_MAX_PX = 18;
+  const TRACK_SLEEPER_STROKE_PX = 1.6;
   /** 搜索雷达角速度（rad/s）；满圈约 2π/1.35 ≈ 4.65s。 */
   const SEARCH_SWEEP_RAD_PER_S = 1.35;
   /** 搜索雷达满圈周期（ms）；由角速度推导，扫速变更时自动同步。 */
@@ -304,7 +306,7 @@
   }
 
   /**
-   * 轨带半宽（像素）：世界参考半宽 × scale 后夹制，避免近粗远糊。
+   * 轨距半宽（像素）：世界参考半宽 × scale 后夹制，避免近粗远糊。
    * @param {number} scale
    */
   function trackHalfPx(scale) {
@@ -315,14 +317,148 @@
   }
 
   /**
-   * 折线轨底描边宽度（像素）。
-   * @param {number} trackHalf
+   * 轨枕屏幕间距（像素）：世界间距 × scale 后夹制，远近量程都保持可读密度。
+   * @param {number} scale
    */
-  function trackStrokePx(trackHalf) {
+  function trackSleeperSpacingPx(scale) {
     return Math.min(
-      TRACK_STROKE_MAX_PX,
-      Math.max(TRACK_STROKE_MIN_PX, trackHalf * TRACK_POLY_FILL_MULT),
+      TRACK_SLEEPER_SPACING_MAX_PX,
+      Math.max(TRACK_SLEEPER_SPACING_MIN_PX, TRACK_SLEEPER_WORLD * scale),
     );
+  }
+
+  /**
+   * 描画折线路径（调用方已设 strokeStyle / lineWidth）。
+   * @param {Array<{ x: number, y: number }>} points
+   */
+  function strokePolyline(points) {
+    if (points.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+  }
+
+  /**
+   * 沿中心折线生成左右铁轨屏幕点（法向偏移半轨距）。
+   * @param {Array<{ x: number, y: number }>} screen
+   * @param {number} halfPx
+   * @returns {{ left: Array<{ x: number, y: number }>, right: Array<{ x: number, y: number }> }}
+   */
+  function offsetRailPolylines(screen, halfPx) {
+    const left = [];
+    const right = [];
+    for (let i = 0; i < screen.length; i += 1) {
+      let dx;
+      let dy;
+      if (i === 0) {
+        dx = screen[1].x - screen[0].x;
+        dy = screen[1].y - screen[0].y;
+      } else if (i === screen.length - 1) {
+        dx = screen[i].x - screen[i - 1].x;
+        dy = screen[i].y - screen[i - 1].y;
+      } else {
+        dx = screen[i + 1].x - screen[i - 1].x;
+        dy = screen[i + 1].y - screen[i - 1].y;
+      }
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      left.push({ x: screen[i].x + nx * halfPx, y: screen[i].y + ny * halfPx });
+      right.push({ x: screen[i].x - nx * halfPx, y: screen[i].y - ny * halfPx });
+    }
+    return { left, right };
+  }
+
+  /**
+   * 沿中心折线弧长铺轨枕短横（夹在双轨之间）；间距随量程夹制。
+   * @param {Array<{ x: number, y: number }>} screen
+   * @param {number} halfPx
+   * @param {number} scale
+   */
+  function paintTrackSleepers(screen, halfPx, scale) {
+    if (screen.length < 2) return;
+    const spacing = trackSleeperSpacingPx(scale);
+    const tieHalf = halfPx * 0.92;
+    ctx.strokeStyle = 'rgba(90, 215, 120, 0.5)';
+    ctx.lineWidth = TRACK_SLEEPER_STROKE_PX;
+    ctx.lineCap = 'butt';
+    let carry = 0;
+    let nextAt = spacing * 0.45;
+    for (let i = 1; i < screen.length; i += 1) {
+      const a = screen[i - 1];
+      const b = screen[i];
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (segLen < 0.5) continue;
+      const ux = (b.x - a.x) / segLen;
+      const uy = (b.y - a.y) / segLen;
+      const nx = -uy;
+      const ny = ux;
+      while (nextAt <= carry + segLen) {
+        const t = nextAt - carry;
+        const x = a.x + ux * t;
+        const y = a.y + uy * t;
+        ctx.beginPath();
+        ctx.moveTo(x - nx * tieHalf, y - ny * tieHalf);
+        ctx.lineTo(x + nx * tieHalf, y + ny * tieHalf);
+        ctx.stroke();
+        nextAt += spacing;
+      }
+      carry += segLen;
+    }
+  }
+
+  /**
+   * 在 PPI 圆内绘制双轨 + 轨枕（磷光绿）；不盖过后续接触标。
+   * @param {Array<{ x: number, y: number }>} screen
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} radius
+   * @param {number} trackHalf
+   * @param {number} scale
+   */
+  function paintTrackOnScreen(screen, cx, cy, radius, trackHalf, scale) {
+    if (screen.length < 2) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+
+    /* 道碴底带：极淡，只衬轨距，不糊成单条亮带 */
+    ctx.strokeStyle = 'rgba(40, 130, 65, 0.1)';
+    ctx.lineWidth = trackHalf * 2 + 1.5;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    strokePolyline(screen);
+
+    paintTrackSleepers(screen, trackHalf, scale);
+
+    const rails = offsetRailPolylines(screen, trackHalf);
+    ctx.strokeStyle = 'rgba(125, 255, 155, 0.9)';
+    ctx.lineWidth = TRACK_RAIL_STROKE_PX;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    strokePolyline(rails.left);
+    strokePolyline(rails.right);
+    ctx.restore();
+
+    let labelPt = null;
+    let bestY = Infinity;
+    for (const p of screen) {
+      if (Math.hypot(p.x - cx, p.y - cy) > radius) continue;
+      if (p.y < bestY) {
+        bestY = p.y;
+        labelPt = p;
+      }
+    }
+    if (!labelPt) return;
+    ctx.fillStyle = 'rgba(120, 255, 160, 0.55)';
+    ctx.font = `${SCOPE_LEGEND_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TRACK', labelPt.x + trackHalf + 5, Math.max(cy - radius + 10, labelPt.y));
   }
 
   /**
@@ -415,45 +551,45 @@
   }
 
   /**
-   * 绘制可拐弯铁轨折线（世界点 → PPI）；双线轨 guage。
+   * 绘制可拐弯铁轨折线（世界点 → PPI）：双轨 + 轨枕，圆内裁剪。
    * @param {Array<{ x: number, y: number }>} points
    * @param {number} cx
    * @param {number} cy
+   * @param {number} radius
    * @param {number} scale
    * @param {number} forwardSign
    * @param {number} trackHalf
    */
-  function paintTrackPolyline(points, cx, cy, scale, forwardSign, trackHalf) {
+  function paintTrackPolyline(points, cx, cy, radius, scale, forwardSign, trackHalf) {
     const screen = [];
     for (const p of points) {
       const sc = worldToScope(p.x, p.y);
-      if (Math.hypot(sc.x, sc.y) > rangeWorld * 1.35) continue;
       screen.push(scopeToPpi(sc.x, sc.y, cx, cy, scale, forwardSign));
     }
-    if (screen.length < 2) return;
-    ctx.strokeStyle = 'rgba(60, 200, 100, 0.18)';
-    ctx.lineWidth = trackStrokePx(trackHalf);
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(screen[0].x, screen[0].y);
-    for (let i = 1; i < screen.length; i += 1) {
-      ctx.lineTo(screen[i].x, screen[i].y);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(100, 255, 140, 0.62)';
-    ctx.lineWidth = TRACK_CENTERLINE_PX;
-    ctx.beginPath();
-    ctx.moveTo(screen[0].x, screen[0].y);
-    for (let i = 1; i < screen.length; i += 1) {
-      ctx.lineTo(screen[i].x, screen[i].y);
-    }
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(120, 255, 160, 0.42)';
-    ctx.font = `${SCOPE_LEGEND_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('TRACK', screen[screen.length - 1].x + 6, screen[screen.length - 1].y);
+    paintTrackOnScreen(screen, cx, cy, radius, trackHalf, scale);
+  }
+
+  /**
+   * 无折线时的直线轨带：沿 PPI 前进轴（竖向）画双轨 + 轨枕。
+   * @param {number} cx
+   * @param {number} cy
+   * @param {number} radius
+   * @param {number} trackHalf
+   * @param {number} scale
+   */
+  function paintStraightTrackAxis(cx, cy, radius, trackHalf, scale) {
+    const pad = 4;
+    paintTrackOnScreen(
+      [
+        { x: cx, y: cy - radius - pad },
+        { x: cx, y: cy + radius + pad },
+      ],
+      cx,
+      cy,
+      radius,
+      trackHalf,
+      scale,
+    );
   }
 
   /**
@@ -1457,27 +1593,13 @@
     ctx.strokeStyle = 'rgba(80, 255, 120, 0.18)';
     ctx.stroke();
 
-    /* 铁轨：优先画可拐弯折线；无折线时回退直线轨带 */
+    /* 铁轨：优先可拐弯折线双轨；无折线时沿前进轴直线双轨 */
     const trackPoly = window.LpPlatform?.getRadarTrackPolyline?.() || [];
     const trackHalf = trackHalfPx(scale);
     if (trackPoly.length >= 2) {
-      paintTrackPolyline(trackPoly, cx, cy, scale, forwardSign, trackHalf);
+      paintTrackPolyline(trackPoly, cx, cy, radius, scale, forwardSign, trackHalf);
     } else {
-      ctx.fillStyle = 'rgba(60, 200, 100, 0.1)';
-      ctx.fillRect(cx - trackHalf, cy - radius, trackHalf * 2, radius * 2);
-      ctx.strokeStyle = 'rgba(100, 255, 140, 0.5)';
-      ctx.lineWidth = TRACK_CENTERLINE_PX;
-      ctx.beginPath();
-      ctx.moveTo(cx - trackHalf, cy - radius);
-      ctx.lineTo(cx - trackHalf, cy + radius);
-      ctx.moveTo(cx + trackHalf, cy - radius);
-      ctx.lineTo(cx + trackHalf, cy + radius);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(120, 255, 160, 0.4)';
-      ctx.font = `${SCOPE_LEGEND_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('TRACK', cx + trackHalf + 5, cy - radius + 12);
+      paintStraightTrackAxis(cx, cy, radius, trackHalf, scale);
     }
 
     /* 搜索雷达扫描线（满圈 ~4.65s） */

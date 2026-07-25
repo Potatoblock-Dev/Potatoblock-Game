@@ -15,6 +15,7 @@ import asyncio
 import logging
 import math
 import random
+import secrets
 import string
 import time
 import uuid
@@ -55,7 +56,21 @@ FUEL_MAX = 100.0
 FUEL_PER_ADD = 18.0
 CHAT_MAX_LEN = 40
 INV_OP_MIN_INTERVAL = 0.04
-ROOM_BAGS = frozenset({"storage", "storage_facility", "ground", "crate_ammo", "crate_recycle"})
+ROOM_BAGS = frozenset(
+    {
+        "storage",
+        "storage_facility",
+        "platform_storage",
+        "ground",
+        "crate_ammo",
+        "crate_recycle",
+    }
+)
+# 月台/地牢场景位姿钳制（与客户端 LpDungeon 宽度上界对齐）。
+PLATFORM_SCENE_X_MIN = 0.0
+PLATFORM_SCENE_X_MAX = 5600.0
+PLATFORM_SCENE_Y_MIN = -1200.0
+PLATFORM_SCENE_Y_MAX = 200.0
 
 CLOSE_REPLACED = 4002
 CLOSE_ROOM_FULL = 4005
@@ -296,12 +311,16 @@ class LiminalRoom:
         self.running = False
         self.train = {"throttle": 0.0, "brake": 0.0, "speed": 0.0, "emergency": False}
         self.fuel_level = DEFAULT_FUEL
+        # JS Number 安全整数范围内的房间世界种子（月台类型 / 地牢 / 月台仓）。
+        self.world_seed = secrets.randbits(53)
         self.inventories = Inv.RoomInventories()
         self._fuel_add_times: Dict[str, float] = {}
         self._train_set_times: Dict[str, float] = {}
         self._inv_op_times: Dict[str, float] = {}
         self._fire_times: Dict[str, float] = {}
         self._heal_times: Dict[str, float] = {}
+        # 已按站填装过的月台仓库 stationIndex。
+        self._platform_loot_station: Optional[int] = None
 
     def connected_count(self) -> int:
         return sum(1 for player in self.players.values() if player.connected)
@@ -352,6 +371,7 @@ class LiminalRoom:
                     "emergencyActive": bool(self.train.get("emergency")),
                 },
                 "fuel": {"level": round(self.fuel_level, 2)},
+                "seed": int(self.world_seed),
             },
         }
 
@@ -547,9 +567,15 @@ class LiminalLobbyManager:
         sequence = int(payload.get("sequence") or 0)
         if sequence < player.ack_sequence:
             return
+        scene_hint = str(payload.get("scene") or getattr(player, "scene", "train") or "train").strip().lower()
+        on_platform = scene_hint == "platform"
+        x_lo = PLATFORM_SCENE_X_MIN if on_platform else WORLD_LEFT
+        x_hi = PLATFORM_SCENE_X_MAX if on_platform else WORLD_RIGHT
+        y_lo = PLATFORM_SCENE_Y_MIN if on_platform else -800.0
+        y_hi = PLATFORM_SCENE_Y_MAX if on_platform else 80.0
         try:
-            player.x = _clamp(float(payload.get("x") or player.x), WORLD_LEFT, WORLD_RIGHT)
-            player.y = _clamp(float(payload.get("y") or 0.0), -800.0, 80.0)
+            player.x = _clamp(float(payload.get("x") or player.x), x_lo, x_hi)
+            player.y = _clamp(float(payload.get("y") or 0.0), y_lo, y_hi)
             player.vx = _clamp(float(payload.get("vx") or 0.0), -800.0, 800.0)
             player.vy = _clamp(float(payload.get("vy") or 0.0), -1200.0, 1200.0)
             player.head_look = _clamp(float(payload.get("headLook") or 0.0), -0.6, 0.6)
@@ -565,8 +591,11 @@ class LiminalLobbyManager:
         player.sync_held_from_inv()
         if "aimX" in payload and "aimY" in payload:
             try:
-                player.aim_x = _clamp(float(payload["aimX"]), WORLD_LEFT - 400.0, WORLD_RIGHT + 400.0)
-                player.aim_y = _clamp(float(payload["aimY"]), -900.0, 200.0)
+                aim_pad = 400.0
+                player.aim_x = _clamp(
+                    float(payload["aimX"]), x_lo - aim_pad, x_hi + aim_pad
+                )
+                player.aim_y = _clamp(float(payload["aimY"]), y_lo - 100.0, y_hi + 100.0)
             except (TypeError, ValueError):
                 player.aim_x = None
                 player.aim_y = None
@@ -753,7 +782,10 @@ class LiminalLobbyManager:
         )
 
     async def handle_fire(self, user_id: str, payload: Dict[str, Any]) -> None:
-        """开火：炮塔扣箱弹并写入回收弹壳，否则扣手持弹匣，再广播曳光。"""
+        """开火：炮塔扣箱弹并写入回收弹壳，否则扣手持弹匣，再广播曳光。
+
+        机炮在射击者位于月台、或房内任一人在月台时直接拒绝（防伪造与发车锁一致）。
+        """
         room, player = self._room_player(user_id)
         if room is None or player is None or not player.connected:
             return
@@ -766,6 +798,11 @@ class LiminalLobbyManager:
         weapon_id: Optional[str] = None
         room_changed = False
         if source == "turret":
+            # 月台场景或房内有人在月台：拒绝列车机炮（与客户端 isTrainWeaponSuppressed 对齐）
+            if str(getattr(player, "scene", "train")) == "platform":
+                return
+            if self._any_player_on_platform(room):
+                return
             # 须已占炮位；若 fire 先于 pose 到达，用 payload.turretId 尝试认领
             if player.turret_id not in ("left", "right"):
                 self._apply_turret_claim(room, player, payload.get("turretId"))
@@ -984,6 +1021,8 @@ class LiminalLobbyManager:
             room_changed = self._inv_sort(room, player, payload)
         elif action == "set_ammo":
             self._inv_set_ammo(room, player, payload)
+        elif action == "ensure_platform_storage":
+            room_changed = self._inv_ensure_platform_storage(room, payload)
         else:
             return
         overflow = Inv.sync_player_to_equip(player.inventories.player, player.inventories.equip)
@@ -996,6 +1035,25 @@ class LiminalLobbyManager:
         await player.connection.enqueue(player.inv_message(room))
         if room_changed:
             await self._broadcast_inv_room(room, exclude_id=user_id)
+
+    def _inv_ensure_platform_storage(
+        self, room: LiminalRoom, payload: Dict[str, Any]
+    ) -> bool:
+        """按站首次用 world_seed 填装小型月台仓库袋。"""
+        try:
+            station_index = int(payload.get("stationIndex") or 0)
+        except (TypeError, ValueError):
+            station_index = 0
+        station_index = max(0, station_index)
+        if room._platform_loot_station == station_index:
+            return False
+        Inv.fill_platform_storage(
+            room.inventories.platform_storage,
+            int(room.world_seed),
+            station_index,
+        )
+        room._platform_loot_station = station_index
+        return True
 
     async def handle_chat(self, user_id: str, payload: Dict[str, Any]) -> None:
         room, player = self._room_player(user_id)
@@ -1304,7 +1362,7 @@ class LiminalLobbyManager:
         if not isinstance(bag_ref, dict):
             return False
         name = str(bag_ref.get("bag") or bag_ref.get("inv") or "").strip()
-        if name not in ("player", "storage", "storage_facility"):
+        if name not in ("player", "storage", "storage_facility", "platform_storage"):
             return False
         inv = self._resolve_bag(room, player, bag_ref)
         if inv is None:

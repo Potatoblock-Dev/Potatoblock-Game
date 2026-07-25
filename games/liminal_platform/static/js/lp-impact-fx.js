@@ -64,12 +64,23 @@
   }
 
   /**
+   * 轨面 / 道砟尘土随 LpTrack 卷动；车底 underside 与敌方命中等保持世界坐标。
+   * @param {string|undefined} surface
+   * @param {{ trackFrame?: boolean }} opts
+   */
+  function resolveTrackFrame(surface, opts) {
+    if (opts.trackFrame != null) return Boolean(opts.trackFrame);
+    return surface === 'ground';
+  }
+
+  /**
    * 在世界坐标生成短促尘土喷溅。
    * opts.surface: 'underside' | 'ground' | 'generic'
    * opts.dirX/dirY: 入射方向（喷溅沿法线反弹侧散开）
    * opts.scale: 整体缩放（数量/尺寸/速度）
    * opts.count: 覆盖粒子数
    * opts.intensity: 0–1，缩放数量与速度
+   * opts.trackFrame: 覆盖是否随轨卷动（默认仅 ground）
    */
   function spawnDust(x, y, opts = {}) {
     const preset = resolvePreset(opts.surface);
@@ -80,6 +91,7 @@
       opts.count != null
         ? Math.max(0, Math.floor(opts.count))
         : Math.max(1, Math.round(preset.count * scale * (0.55 + 0.45 * intensity)));
+    const trackFrame = resolveTrackFrame(opts.surface, opts);
 
     let nx = 0;
     let ny = -1;
@@ -119,12 +131,15 @@
         g: rgb[1],
         b: rgb[2],
         alpha: 0.55 + Math.random() * 0.35,
+        /** 轨面坐标系：与轨枕同相平移（车厢固定、轨卷动）。 */
+        trackFrame,
       });
     }
   }
 
-  /** 推进尘土粒子寿命与运动。 */
+  /** 推进尘土粒子寿命与运动；轨面粒子先叠本帧轨卷动。 */
   function tick(dt) {
+    const applyScroll = window.LpTrack?.applyTrackScroll;
     for (let i = particles.length - 1; i >= 0; i -= 1) {
       const p = particles[i];
       p.age += dt;
@@ -132,6 +147,7 @@
         particles.splice(i, 1);
         continue;
       }
+      if (p.trackFrame && applyScroll) applyScroll(p);
       p.vy += p.gravity * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -139,9 +155,14 @@
     }
   }
 
-  /** 在世界坐标层绘制尘土（径向软点）。 */
+  /** 在世界坐标层绘制尘土（径向软点）；视口外跳过。 */
   function draw(ctx) {
+    if (!particles.length) return;
+    const view = worldViewBounds(ctx, 32);
     for (const p of particles) {
+      if (view && (p.x < view.left || p.x > view.right || p.y < view.top || p.y > view.bot)) {
+        continue;
+      }
       const t = p.age / p.life;
       const fade = (1 - t) * (t < 0.08 ? t / 0.08 : 1);
       const a = p.alpha * fade;
@@ -155,6 +176,28 @@
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  /**
+   * 从当前世界变换求可视世界矩形。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {number} [margin]
+   */
+  function worldViewBounds(ctx, margin = 40) {
+    try {
+      const m = ctx.getTransform();
+      const sx = m.a;
+      const sy = m.d;
+      if (!(sx > 0) || !(sy > 0) || !ctx.canvas) return null;
+      return {
+        left: (0 - m.e) / sx - margin,
+        right: (ctx.canvas.width - m.e) / sx + margin,
+        top: (0 - m.f) / sy - margin,
+        bot: (ctx.canvas.height - m.f) / sy + margin,
+      };
+    } catch {
+      return null;
     }
   }
 

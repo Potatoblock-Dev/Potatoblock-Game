@@ -1,0 +1,15 @@
+Dock calm BGM (LpPlatformDockMusic)
+
+ASCII filenames (Chinese paths break URLs / deploy):
+
+  dock-anchor.mp3  ← 动摇的锚点.mp3
+  dock-passby.mp3  ← 经过.mp3
+
+Source: Desktop/B站＆大素材/素材/suno/ (2026-07-25)
+
+Play: random one track per dock visit; loop while local player is on
+platform scene, train atPlatform, and not in combat.
+
+Fades (first-class API on window.LpPlatformDockMusic):
+  fadeIn(sec?) / fadeOut(sec?) / setFadeDuration(sec?)
+  Default ~1.2s, clamped to 0.8–1.5s. No hard cuts on start/stop.

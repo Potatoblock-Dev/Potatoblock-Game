@@ -105,6 +105,9 @@
   closeButton.addEventListener('click', closeEditor);
   window.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || editor.classList.contains('hidden')) return;
+    // UV 画板打开时由画板自己处理 Esc，避免误关编辑器。
+    const paint = document.getElementById('skinUvPaint');
+    if (paint && !paint.classList.contains('hidden')) return;
     // 全屏裁剪时 Esc 先退出全屏，再按一次才关闭编辑器。
     if (cropFullscreen) {
       setCropFullscreen(false);
@@ -163,6 +166,44 @@
     setStatus('已下载 UV 模板（可直接「导入完整 UV」解析）');
   });
 
+  /**
+   * 把一整张 UV 图集拆进各部位 assignment（与文件导入、画板导出共用）。
+   * @returns {boolean} 尺寸合法并已应用时为 true
+   */
+  function applyAtlasImage(image, sourceName = '完整 UV') {
+    const squareLegacy = image.width === 512 && image.height === 512;
+    const matchesLayout = image.width === layout.ATLAS_WIDTH && image.height === layout.ATLAS_HEIGHT;
+    if (!matchesLayout && !squareLegacy) {
+      setStatus(`完整 UV 须为 ${layout.ATLAS_WIDTH}×${layout.ATLAS_HEIGHT}（4:3）或旧版 512×512`, true);
+      return false;
+    }
+
+    const sourceId = nextSourceId;
+    sources.push({ id: sourceId, name: `${sourceName}`, image });
+    activeSourceId = sourceId;
+    nextSourceId += 1;
+    cropRect = null;
+    cropRectDirty = false;
+    const importParts = layout.resolveParts(image);
+    for (const [partId, part] of Object.entries(importParts)) {
+      const [sx, sy, sw, sh] = part.rect;
+      assignments[partId] = {
+        sourceId, sx, sy, sw, sh,
+        offsetX: 0, offsetY: 0,
+        scale: 1, stretchX: 1, stretchY: 1,
+        fitMode: 'exact',
+      };
+    }
+    activePartId = null;
+    renderSources();
+    renderParts();
+    drawCropCanvas();
+    composeAndPreview();
+    setStatus(`已载入完整 UV：${sourceName}（${image._uvLayoutId || 'auto'}）`);
+    partHint.textContent = '完整 UV 已按图集版式自动分配到全部部位，可直接预览或生成皮套';
+    return true;
+  }
+
   // 完整 UV 已经包含各部位槽位，不再走手动裁剪；拆成各槽 assignment
   // 可继续使用现有平移、预览和导出流程。
   atlasImportInput.addEventListener('change', () => {
@@ -170,37 +211,9 @@
     if (!file) return;
     const image = new Image();
     image.onload = () => {
-      const squareLegacy = image.width === 512 && image.height === 512;
-      const matchesLayout = image.width === layout.ATLAS_WIDTH && image.height === layout.ATLAS_HEIGHT;
-      if (!matchesLayout && !squareLegacy) {
-        setStatus(`完整 UV 须为 ${layout.ATLAS_WIDTH}×${layout.ATLAS_HEIGHT}（4:3）或旧版 512×512`, true);
+      if (!applyAtlasImage(image, `${file.name}（完整 UV）`)) {
         URL.revokeObjectURL(image.src);
-        return;
       }
-
-      const sourceId = nextSourceId;
-      sources.push({ id: sourceId, name: `${file.name}（完整 UV）`, image });
-      activeSourceId = sourceId;
-      nextSourceId += 1;
-      cropRect = null;
-      cropRectDirty = false;
-      const importParts = layout.resolveParts(image);
-      for (const [partId, part] of Object.entries(importParts)) {
-        const [sx, sy, sw, sh] = part.rect;
-        assignments[partId] = {
-          sourceId, sx, sy, sw, sh,
-          offsetX: 0, offsetY: 0,
-          scale: 1, stretchX: 1, stretchY: 1,
-          fitMode: 'exact',
-        };
-      }
-      activePartId = null;
-      renderSources();
-      renderParts();
-      drawCropCanvas();
-      composeAndPreview();
-      setStatus(`已载入完整 UV：${file.name}（${image._uvLayoutId || 'auto'}）`);
-      partHint.textContent = '完整 UV 已按图集版式自动分配到全部部位，可直接预览或生成皮套';
     };
     image.src = URL.createObjectURL(file);
     atlasImportInput.value = '';
@@ -714,4 +727,11 @@
   updateHeightPreview();
   composeAndPreview();
   drawCropCanvas();
+
+  /** 供 UV 画板等外部模块调用的皮套编辑器公开接口。 */
+  window.SkinEditorApi = {
+    ensureOpen: openEditor,
+    applyAtlasImage,
+    close: closeEditor,
+  };
 })();

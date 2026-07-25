@@ -17,9 +17,13 @@ CONSUMABLE_TYPES = frozenset({"fuel", "ammo"})
 STORAGE_BAG_ID = "storage"
 # 设施专用仓库（可摆放 facility_*）；与物资仓并列，房间共享。
 FACILITY_STORAGE_BAG_ID = "storage_facility"
+# 小型月台地牢仓库房本地仓（与列车 storage 分离）。
+PLATFORM_STORAGE_BAG_ID = "platform_storage"
 # 仓储可叠加物叠加上限；背包/手部仍用物品 maxStack（与 LpItemCatalog.maxStackIn 对齐）。
 STORAGE_MAX_STACK = 9999
-STORAGE_BAG_IDS = frozenset({STORAGE_BAG_ID, FACILITY_STORAGE_BAG_ID})
+STORAGE_BAG_IDS = frozenset(
+    {STORAGE_BAG_ID, FACILITY_STORAGE_BAG_ID, PLATFORM_STORAGE_BAG_ID}
+)
 
 STORAGE_SEED: List[Tuple[int, Dict[str, Any]]] = [
     (0, {"itemId": "coal", "qty": 100}),
@@ -908,6 +912,97 @@ def create_default_facility_storage() -> Inventory:
     return inv
 
 
+def create_empty_platform_storage() -> Inventory:
+    """小型月台地牢仓库房本地空仓（进站按种子填装；不连通车辆仓）。"""
+    return Inventory(PLATFORM_STORAGE_BAG_ID, 6, 6)
+
+
+def _mulberry32(seed: int):
+    """与客户端 LpDungeon.mulberry32 对齐的确定性 RNG。"""
+    state = [seed & 0xFFFFFFFF]
+
+    def rng() -> float:
+        state[0] = (state[0] + 0x6D2B79F5) & 0xFFFFFFFF
+        t = state[0]
+        t = Math_imul(t ^ (t >> 15), t | 1) & 0xFFFFFFFF
+        t = (t ^ ((t + Math_imul(t ^ (t >> 7), t | 61)) & 0xFFFFFFFF)) & 0xFFFFFFFF
+        return ((t ^ (t >> 14)) & 0xFFFFFFFF) / 4294967296.0
+
+    return rng
+
+
+def Math_imul(a: int, b: int) -> int:
+    """模拟 JS Math.imul（32 位有符号乘法结果再按无符号用）。"""
+    a = ctypes_c_int32(a)
+    b = ctypes_c_int32(b)
+    return (a * b) & 0xFFFFFFFF
+
+
+def ctypes_c_int32(v: int) -> int:
+    v = v & 0xFFFFFFFF
+    return v - 0x100000000 if v >= 0x80000000 else v
+
+
+def hash_seed_station(world_seed: int, station_index: int) -> int:
+    """与客户端 LpDungeon.hash2 对齐。"""
+    h = (int(world_seed) ^ Math_imul(int(station_index) + 1, 0x9E3779B9)) & 0xFFFFFFFF
+    h = Math_imul(h ^ (h >> 16), 0x85EBCA6B) & 0xFFFFFFFF
+    h = Math_imul(h ^ (h >> 13), 0xC2B2AE35) & 0xFFFFFFFF
+    return (h ^ (h >> 16)) & 0xFFFFFFFF
+
+
+# 月台仓库战利品表（itemId, minQty, maxQty）；与客户端 LpDungeon.PLATFORM_LOOT_TABLE 对齐。
+PLATFORM_LOOT_TABLE: List[Tuple[str, int, int]] = [
+    ("coal", 8, 32),
+    ("lumber", 6, 24),
+    ("iron_ingot", 4, 16),
+    ("scrap", 4, 20),
+    ("small_caliber_ammo", 24, 90),
+    ("turret_ammo", 10, 40),
+    ("medkit", 1, 1),
+    ("first_aid_kit", 1, 2),
+]
+
+
+def fill_platform_storage(
+    inv: Inventory, world_seed: int, station_index: int
+) -> Inventory:
+    """清空并按种子填装月台仓库（确定性）。"""
+    if inv is None:
+        inv = create_empty_platform_storage()
+    for i in range(inv.size()):
+        if inv.is_covered(i):
+            continue
+        if inv.get_slot(i):
+            inv.take_slot(i)
+    rng = _mulberry32(hash_seed_station(world_seed, station_index) ^ 0xA11CE)
+    pile_count = 4 + int(rng() * 5)
+    for _ in range(pile_count):
+        entry = PLATFORM_LOOT_TABLE[int(rng() * len(PLATFORM_LOOT_TABLE)) % len(PLATFORM_LOOT_TABLE)]
+        item_id, lo, hi = entry
+        qty = lo + int(rng() * (hi - lo + 1))
+        if qty < 1:
+            continue
+        stack: Dict[str, Any] = {"itemId": item_id, "qty": qty}
+        item = ITEMS.get(item_id) or {}
+        if item.get("magazineSize") is not None:
+            stack["mag"] = int(item["magazineSize"])
+        if item.get("maxDurability") is not None:
+            stack["dur"] = int(item["maxDurability"])
+        if item.get("maxAmmo") is not None:
+            stack["ammo"] = int(item["maxAmmo"])
+        placed = False
+        for i in range(inv.size()):
+            if inv.is_covered(i) or inv.get_slot(i):
+                continue
+            if inv.place_stack(i, dict(stack)):
+                placed = True
+                break
+        if not placed:
+            inv.add_item(item_id, qty)
+    return inv
+
+
 def migrate_facilities_to_facility_storage(
     storage: Inventory, facility_storage: Inventory
 ) -> int:
@@ -1071,11 +1166,12 @@ class PlayerInventories:
 
 
 class RoomInventories:
-    """房间共享：物资仓、设施仓、地面、炮塔箱。"""
+    """房间共享：物资仓、设施仓、月台仓、地面、炮塔箱。"""
 
     def __init__(self) -> None:
         self.storage = create_default_storage()
         self.storage_facility = create_default_facility_storage()
+        self.platform_storage = create_empty_platform_storage()
         # 兼容旧默认/热重载：若物资仓仍含设施则迁入设施仓。
         migrate_facilities_to_facility_storage(self.storage, self.storage_facility)
         ensure_placeable_facility_seeds(self.storage_facility)
@@ -1087,6 +1183,7 @@ class RoomInventories:
         return {
             "storage": self.storage.to_json(),
             "storage_facility": self.storage_facility.to_json(),
+            "platform_storage": self.platform_storage.to_json(),
             "crates": {
                 "ammo": self.crates["ammo"].to_json(),
                 "recycle": self.crates["recycle"].to_json(),
@@ -1114,6 +1211,8 @@ class RoomInventories:
             return self.storage
         if name == FACILITY_STORAGE_BAG_ID or name == "storage_facility":
             return self.storage_facility
+        if name == PLATFORM_STORAGE_BAG_ID or name == "platform_storage":
+            return self.platform_storage
         if name == "crate_ammo":
             return self.crates["ammo"]
         if name == "crate_recycle":
