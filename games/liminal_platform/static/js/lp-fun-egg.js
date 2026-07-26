@@ -11,7 +11,7 @@
   const FUN_MAX = 10000;
   const EGG_FUN_8BIT = 630;
   const NOISE_SFX =
-    '/static/games/liminal-platform/audio/fun-8bit-noise.wav?v=2';
+    '/static/games/liminal-platform/audio/fun-8bit-noise.wav?v=3';
 
   /** @type {number|null} 最近一次掷出的 fun；未掷过为 null */
   let fun = null;

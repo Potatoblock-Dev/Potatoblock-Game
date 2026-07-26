@@ -644,8 +644,11 @@ def main() -> None:
                 retries=max(UPLOAD_RETRIES, 5),
             )
             if not ok:
-                print("❌ 大文件上传失败，终止部署。", file=sys.stderr)
-                sys.exit(1)
+                print(
+                    f"⚠️  大文件上传失败（已跳过，继续部署）: {rel}",
+                    file=sys.stderr,
+                )
+                continue
 
         print("\n✅ 全部上传完成")
 
