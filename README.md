@@ -1,69 +1,76 @@
-# Potatoblock-Game
+# Potatoblock Game
 
-镜像线上实例的 Python 包目录（MCS 路径 `/app`）。
+[土豆方块](https://game.potatoblock.com) 的线上游戏门户与部署镜像。
 
-- 日常发布：本地 `push-github.py` 一次推送
-- 服务器：`git pull --ff-only` 增量更新（见 `auto_update.py`）
-- 未纳入本仓库的文件（`main.py`、`routers/`、`var/` 等）保留在服务器本地
-- **CD 流水线**：push 到 `main` 分支自动部署到 MCSManager（见下方）
-- **SoT vendor**：其它仓（如 [Liminal-Platform](https://github.com/Potatoblock-Dev/Liminal-Platform)）经各自 `potatoblock-vendor.json` 写入本仓 `games/*`；本仓 **不** 为某个游戏写死特例，只负责整树 → `/app`
-- **音效授权**：[THIRD_PARTY_AUDIO.md](./THIRD_PARTY_AUDIO.md)（游戏音效均为 CC0）
+玩家在这里登录、选游戏、断线重连；本仓库对应服务器上的应用目录（`/app`），由 CD 推送到 MCSManager。
+
+**游玩：** [game.potatoblock.com](https://game.potatoblock.com)
 
 ---
 
-## CD 流水线
+## 现在有什么
 
-`.github/workflows/deploy.yml` 在 `main` 分支有推送时，自动将项目文件打包上传到 MCSManager 实例并重启。
+| 入口 | 说明 |
+|------|------|
+| 阈限月台 | 合作多人平台 / 设施向玩法（源码在 [Liminal-Platform](https://github.com/Potatoblock-Dev/Liminal-Platform)） |
+| 皮套大厅 | 装扮与大厅 |
+| 你画我猜 | 经典你画我猜 |
+| 画画接龙 | 轮流接画 |
 
-### 前置准备
+音效授权见 [THIRD_PARTY_AUDIO.md](./THIRD_PARTY_AUDIO.md)（游戏音效均为 CC0）。
 
-1. **获取 API 密钥**：MCSManager 面板 → 用户管理 → API 密钥
-2. **获取实例信息**：面板 → 实例详情 → 复制「守护进程 ID」和「实例 UUID」
-3. **配置 GitHub Secrets**（仓库 Settings → Secrets and variables → Actions）：
+---
 
-**必填 Secrets：**
+## 仓库角色（简要）
+
+```
+玩法 SoT（如 Liminal-Platform）──vendor──► 本仓 games/*
+本仓 main ──CD──► MCS /app ──► game.potatoblock.com
+```
+
+- **本仓**：门户、挂载、整树部署；不把某个游戏的完整开发流程绑死在这里。
+- **玩法源仓**：改月台 / 皮套等，先推 SoT，再 vendor 进 `games/`。
+- **服务器本地、不进本仓：** `main.py`、`routers/`、`var/`、`.env` 等（实例入口与运行时数据）。
+
+日常开发约定见各游戏目录的 `SOURCE.md`，以及协作侧的 deploy skill。
+
+---
+
+## 维护者：CD 与部署
+
+`main` 有推送时，[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) 会跑 `deploy.py`：分包上传到 MCS、解压、重启实例。
+
+### GitHub Secrets
 
 | Secret | 说明 |
-| --- | --- |
-| `MCSM_PANEL_URL` | 面板地址，如 `http://10.0.0.1:23333` |
-| `MCSM_API_KEY` | API 密钥 |
+|--------|------|
+| `MCSM_PANEL_URL` | 面板地址 |
+| `MCSM_API_KEY` | API 密钥（面板须 `enableApiKey: true`） |
 | `MCSM_DAEMON_ID` | 守护进程 UUID |
 | `MCSM_INSTANCE_UUID` | 实例 UUID |
 
-**可选 Variables：**
+可选 Variables：`MCSM_UPLOAD_DIR`（默认 `/app`）、`MCSM_MAX_PART_BYTES` / `MCSM_UPLOAD_RETRIES` / `MCSM_UPLOAD_TIMEOUT`（大包分包与重试）。
 
-| Variable | 默认值 | 说明 |
-| --- | --- | --- |
-| `MCSM_UPLOAD_DIR` | `/app` | 上传目标目录（与线上 Python 包根一致） |
-
-线上游戏示例路径：`/app/games/liminal_platform`、`/app/games/avatar_lobby`（由 SoT vendor 写入，非本仓 CD 特例）。
-
-### 内网部署
-
-如果 MCSManager 面板位于内网，GitHub Actions 无法直接访问，有两种方案：
-
-- **使用 Self-hosted Runner**：将 `runs-on: ubuntu-latest` 改为 `runs-on: self-hosted`，在内网机器上运行 runner
-- **手动部署**：在能访问面板的机器上执行 `python deploy.py`
+面板 → 用户中心拿 API 密钥；实例详情复制 daemon / instance UUID。
 
 ### 手动部署
 
 ```bash
-# 设置环境变量后直接运行
 export MCSM_PANEL_URL="http://your-panel:23333"
-export MCSM_API_KEY="your-api-key"
-export MCSM_DAEMON_ID="your-daemon-id"
-export MCSM_INSTANCE_UUID="your-instance-uuid"
+export MCSM_API_KEY="…"
+export MCSM_DAEMON_ID="…"
+export MCSM_INSTANCE_UUID="…"
 python deploy.py
 
-# 仅检查连接（不实际部署）
-MCSM_DRY_RUN=1 python deploy.py
+MCSM_DRY_RUN=1 python deploy.py   # 只测连接
 ```
 
-### 部署流程
+面板在内网时：用 self-hosted runner，或在能访问面板的机器上跑 `deploy.py`。
 
-1. `git ls-files` 获取仓库跟踪文件，排除服务器本地文件（`var/`、`.env` 等）
-2. 打包为 zip
-3. 通过 MCSManager API 上传到实例
-4. 在服务器上解压覆盖
-5. 清理临时文件
-6. 重启实例
+大包易被 daemon 掐断时，脚本会按体积分包；超限单文件（多为音频）直传。排障细节以协作文档 / `deploy.py` 注释为准。
+
+### 不要做的事
+
+- 用本地 stub 覆盖已有的 `deploy.py`、`.github/`、合作者维护的说明
+- 把服务器独有文件强行塞进仓库
+- 在玩法 SoT 尚未更新时，把本仓 `games/liminal_platform` 当唯一编辑面长期改
