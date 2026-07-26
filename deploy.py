@@ -11,12 +11,19 @@ CD 部署脚本：将项目文件上传到 MCSManager 并重启实例。
 
 环境变量（可选）:
   MCSM_UPLOAD_DIR     上传目标目录，默认 /app
-  MCSM_DEPLOY_ARCHIVE 上传的 zip 文件名，默认 __deploy_package__.zip
+  MCSM_DEPLOY_ARCHIVE 上传的 zip 文件名（单包兜底名），默认 __deploy_package__.zip
+  MCSM_MAX_PART_BYTES 分包上限（压缩后目标），默认 2621440（2.5MiB）
+  MCSM_UPLOAD_RETRIES 单次上传重试次数，默认 4
+  MCSM_UPLOAD_TIMEOUT 单次上传超时秒数，默认 180
   MCSM_DRY_RUN        设为 1 仅校验连接与参数，不实际部署
 
 用法:
   python deploy.py          # 直接部署
   MCSM_DRY_RUN=1 python deploy.py  # 仅检查连接
+
+说明:
+  MCS daemon 上传通道对大包不稳（约 >3MB 易 408 / RemoteDisconnected）。
+  脚本会把仓库打成多个小 zip；超过分包上限的单个大文件改为直传目标目录。
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import time
 import tempfile
 import zipfile
 import subprocess
@@ -40,6 +48,9 @@ INSTANCE_UUID = os.environ.get("MCSM_INSTANCE_UUID", "").strip()
 UPLOAD_DIR = os.environ.get("MCSM_UPLOAD_DIR", "/app").strip()
 DEPLOY_ARCHIVE = os.environ.get("MCSM_DEPLOY_ARCHIVE", "__deploy_package__.zip").strip()
 DRY_RUN = os.environ.get("MCSM_DRY_RUN", "0").strip() in {"1", "true", "yes"}
+MAX_PART_BYTES = int(os.environ.get("MCSM_MAX_PART_BYTES", str(2621440)))
+UPLOAD_RETRIES = max(1, int(os.environ.get("MCSM_UPLOAD_RETRIES", "4")))
+UPLOAD_TIMEOUT = max(30, int(os.environ.get("MCSM_UPLOAD_TIMEOUT", "180")))
 
 APP_ROOT = Path(__file__).resolve().parent
 
@@ -220,13 +231,19 @@ class MCSMClient:
 
     # ---- 文件操作 ----
 
-    def request_upload(self) -> dict:
+    def request_upload(self, upload_dir: str | None = None) -> dict:
         """请求上传配置（第一步），返回 {password, addr}。
 
         此版本 MCSM 的 validator 要求所有参数均为 query 参数。
         """
-        resp = self._post("api/files/upload", body=None,
-                          daemonId=DAEMON_ID, uuid=INSTANCE_UUID, upload_dir=UPLOAD_DIR)
+        target_dir = (upload_dir or UPLOAD_DIR).rstrip("/") or "/"
+        resp = self._post(
+            "api/files/upload",
+            body=None,
+            daemonId=DAEMON_ID,
+            uuid=INSTANCE_UUID,
+            upload_dir=target_dir,
+        )
         # 兼容嵌套与平铺两种响应格式
         cfg = resp.get("data", resp)
         if "addr" not in cfg or "password" not in cfg:
@@ -234,16 +251,13 @@ class MCSMClient:
             sys.exit(2)
         return cfg
 
-    def upload_file(self, file_path: str, upload_config: dict, *, remote_name: str) -> bool:
-        """将本地 zip 上传到 daemon；multipart 文件名必须为远端解压路径上的 basename。"""
+    def _daemon_upload_url(self, upload_config: dict) -> str:
+        """把 daemon 返回的 addr 解析成可从外网访问的 upload URL。"""
         addr: str = upload_config.get("addr", "")
         password: str = upload_config.get("password", "")
-
         if not addr or not password:
-            print(f"❌ 上传配置缺失 addr 或 password: {upload_config}", file=sys.stderr)
-            return False
+            raise MCSMError(0, "upload", f"缺失 addr/password: {upload_config}")
 
-        # 分离协议与 host:port；addr 通常为 host:port（如 localhost:24444）
         if "://" in addr:
             protocol = "https" if addr.startswith("https://") else "http"
             host_port = addr.split("://", 1)[1]
@@ -251,27 +265,62 @@ class MCSMClient:
             protocol = "http"
             host_port = addr
 
-        # 如果 daemon 返回 localhost，替换为面板 host
-        panel_host = PANEL_URL.split("://", 1)[1].split("/")[0]  # 例: example.com:23333
+        panel_host = PANEL_URL.split("://", 1)[1].split("/")[0]
         daemon_host, _, daemon_port = host_port.partition(":")
         if daemon_host in ("localhost", "127.0.0.1", "0.0.0.0"):
-            # 保留原端口，host 从面板地址取
             panel_host_no_port = panel_host.split(":")[0]
             host_port = f"{panel_host_no_port}:{daemon_port}" if daemon_port else panel_host_no_port
             print(f"   🔧 daemon addr 是 {addr}，已替换为面板的 IP:PORT")
 
-        upload_url = f"{protocol}://{host_port}/upload/{password}"
+        return f"{protocol}://{host_port}/upload/{password}"
 
-        with open(file_path, "rb") as fh:
-            r = requests.post(
-                upload_url,
-                files={"file": (remote_name, fh, "application/zip")},
-            )
-        if r.status_code not in (200, 201, 204):
-            print(f"❌ 文件上传失败 HTTP {r.status_code}: {r.text[:500]}", file=sys.stderr)
-            return False
-        print(f"✅ 文件已上传: {remote_name} → {UPLOAD_DIR}/")
-        return True
+    def upload_file(
+        self,
+        file_path: str,
+        *,
+        remote_name: str,
+        upload_dir: str | None = None,
+        content_type: str = "application/zip",
+        timeout: int | None = None,
+        retries: int | None = None,
+    ) -> bool:
+        """上传本地文件到 daemon（可重试）；remote_name 为落到 upload_dir 下的 basename。"""
+        attempts = retries if retries is not None else UPLOAD_RETRIES
+        wait_s = timeout if timeout is not None else UPLOAD_TIMEOUT
+        target_dir = (upload_dir or UPLOAD_DIR).rstrip("/") or "/"
+        size_mb = Path(file_path).stat().st_size / (1024 * 1024)
+
+        for attempt in range(1, attempts + 1):
+            try:
+                upload_config = self.request_upload(target_dir)
+                upload_url = self._daemon_upload_url(upload_config)
+                with open(file_path, "rb") as fh:
+                    r = requests.post(
+                        upload_url,
+                        files={"file": (remote_name, fh, content_type)},
+                        timeout=wait_s,
+                    )
+                if r.status_code in (200, 201, 204):
+                    print(
+                        f"✅ 已上传: {remote_name} → {target_dir}/ "
+                        f"({size_mb:.2f} MiB, try {attempt}/{attempts})"
+                    )
+                    return True
+                print(
+                    f"⚠️  上传失败 HTTP {r.status_code} (try {attempt}/{attempts}): "
+                    f"{r.text[:200]}",
+                    file=sys.stderr,
+                )
+            except requests.RequestException as exc:
+                print(
+                    f"⚠️  上传异常 (try {attempt}/{attempts}): {exc}",
+                    file=sys.stderr,
+                )
+            if attempt < attempts:
+                time.sleep(min(8, attempt * 2))
+
+        print(f"❌ 文件上传失败: {remote_name} → {target_dir}/", file=sys.stderr)
+        return False
 
     def decompress(self, archive_path: str, target_dir: str) -> dict:
         """在服务器上解压 zip（type=2）；archive_path 须为实例内绝对路径。"""
@@ -353,13 +402,8 @@ class MCSMClient:
 MANIFEST_FILE = ".deploy-files.json"
 
 
-def build_archive() -> tuple[Path, list[str]]:
-    """将 git 跟踪的文件打成 zip，返回 (zip 路径, 部署文件列表)。
-
-    排除 .gitignore 中的文件和服务器本地文件。
-    zip 内同时包含 MANIFEST_FILE，用于下次部署时比对清理已删除的文件。
-    """
-    # 获取 git 跟踪的文件列表
+def collect_deploy_files() -> list[str]:
+    """收集 git 跟踪且非服务器本地的部署文件列表。"""
     result = subprocess.run(
         ["git", "-C", str(APP_ROOT), "ls-files", "-z"],
         capture_output=True,
@@ -371,13 +415,11 @@ def build_archive() -> tuple[Path, list[str]]:
 
     tracked = [f for f in result.stdout.split("\0") if f]
 
-    # 过滤服务器本地文件
     def _should_skip(rel: str) -> bool:
         parts = Path(rel).parts
         for part in parts:
             if part in SERVER_LOCAL_FILES:
                 return True
-        # 检查路径前缀
         for local in SERVER_LOCAL_FILES:
             if rel.startswith(local.rstrip("/") + "/") or rel == local.rstrip("/"):
                 return True
@@ -386,24 +428,99 @@ def build_archive() -> tuple[Path, list[str]]:
     deploy_files = [f for f in tracked if not _should_skip(f)] + [
         f for f in ALWAYS_INCLUDE if (APP_ROOT / f).exists()
     ]
+    return sorted(set(deploy_files))
 
+
+def _write_zip(members: list[str], *, include_manifest: list[str] | None = None) -> Path:
+    """把 members（相对 APP_ROOT）打成临时 zip；可选写入全量 manifest。"""
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
     zip_path = Path(tmp.name)
     tmp.close()
-
-    # 去重排序，并加入 manifest
-    deploy_files = sorted(set(deploy_files))
-    manifest = json.dumps(deploy_files, ensure_ascii=False, indent=2)
-
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel in deploy_files:
+        for rel in members:
             abs_path = APP_ROOT / rel
             if not abs_path.exists():
                 continue
             zf.write(abs_path, rel)
-        # 写入 manifest（不依赖 git 跟踪）
-        zf.writestr(MANIFEST_FILE, manifest)
+        if include_manifest is not None:
+            zf.writestr(
+                MANIFEST_FILE,
+                json.dumps(include_manifest, ensure_ascii=False, indent=2),
+            )
+    return zip_path
 
+
+def build_upload_plan(deploy_files: list[str]) -> tuple[list[Path], list[str]]:
+    """拆成「小 zip 分包」+「过大单文件直传」。
+
+    返回 (zip_paths, large_rel_paths)。超过 MCSM_MAX_PART_BYTES 的单文件不进 zip，
+    改为直传到 UPLOAD_DIR 下对应子目录（避免整包 20MB+ 被 daemon 掐断）。
+    """
+    large: list[str] = []
+    small: list[str] = []
+    for rel in deploy_files:
+        abs_path = APP_ROOT / rel
+        if not abs_path.is_file():
+            continue
+        size = abs_path.stat().st_size
+        if size > MAX_PART_BYTES:
+            large.append(rel)
+        else:
+            small.append(rel)
+
+    parts: list[Path] = []
+    batch: list[str] = []
+    batch_raw = 0
+    # 未压缩体积作粗估；已压缩媒体压缩率低，用 1.0；源码用 0.45
+    def _est(rel: str, raw: int) -> int:
+        ext = Path(rel).suffix.lower()
+        if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp3", ".wav", ".ogg", ".m4a", ".zip"}:
+            return raw
+        return max(256, int(raw * 0.45))
+
+    def flush_batch() -> None:
+        nonlocal batch, batch_raw
+        if not batch:
+            return
+        # 首包写入全量 manifest，便于下次清理
+        include = deploy_files if not parts else None
+        parts.append(_write_zip(batch, include_manifest=include))
+        batch = []
+        batch_raw = 0
+
+    for rel in small:
+        raw = (APP_ROOT / rel).stat().st_size
+        est = _est(rel, raw)
+        if batch and batch_raw + est > MAX_PART_BYTES:
+            flush_batch()
+        batch.append(rel)
+        batch_raw += est
+        # 单文件估得已经很大时立刻落盘，避免超限
+        if batch_raw >= MAX_PART_BYTES:
+            flush_batch()
+    flush_batch()
+
+    # 若没有任何小文件但有大文件，仍写一个只含 manifest 的空包
+    if not parts and large:
+        parts.append(_write_zip([], include_manifest=deploy_files))
+
+    total = sum(p.stat().st_size for p in parts)
+    print(
+        f"📦 分包完成: {len(deploy_files)} 个文件 → {len(parts)} 个 zip "
+        f"({total / 1024:.1f} KiB) + {len(large)} 个大文件直传 "
+        f"(上限 {MAX_PART_BYTES / 1024 / 1024:.2f} MiB)"
+    )
+    for i, p in enumerate(parts, 1):
+        print(f"   · part {i}: {p.stat().st_size / 1024:.1f} KiB")
+    for rel in large:
+        print(f"   · direct: {rel} ({(APP_ROOT / rel).stat().st_size / 1024 / 1024:.2f} MiB)")
+    return parts, large
+
+
+def build_archive() -> tuple[Path, list[str]]:
+    """兼容旧调用：打成单包（仅用于调试）。"""
+    deploy_files = collect_deploy_files()
+    zip_path = _write_zip(deploy_files, include_manifest=deploy_files)
     size_kb = zip_path.stat().st_size / 1024
     print(f"📦 打包完成: {len(deploy_files) + 1} 个条目 → {zip_path.name} ({size_kb:.1f} KB)")
     return zip_path, deploy_files
@@ -449,9 +566,10 @@ def main() -> None:
         print("\n✅ 连接与参数校验通过（试运行）。")
         return
 
-    # 3. 打包
+    # 3. 打包（分包 + 大文件直传列表）
     print("\n📦 打包项目文件 …")
-    archive_path, deploy_files = build_archive()
+    deploy_files = collect_deploy_files()
+    part_zips, large_files = build_upload_plan(deploy_files)
 
     try:
         # 4. 读取旧 manifest，清理已从仓库删除的文件
@@ -473,37 +591,63 @@ def main() -> None:
         else:
             print(f"   ℹ️  首次部署，无需清理")
 
-        # 5. 请求上传 URL
-        print("\n📤 请求上传配置 …")
-        try:
-            upload_cfg = client.request_upload()
-        except MCSMError as e:
-            print(f"❌ 获取上传令牌失败: {e}", file=sys.stderr)
-            sys.exit(2)
-        print(f"   获取到上传令牌: addr={upload_cfg.get('addr', '?')}")
-
-        # 6. 上传文件
-        print("\n📤 上传文件到 daemon …")
-        ok = client.upload_file(str(archive_path), upload_cfg, remote_name=DEPLOY_ARCHIVE)
-        if not ok:
-            print("❌ 上传失败，终止部署。", file=sys.stderr)
-            sys.exit(1)
-
-        # 远端 zip 路径
-        remote_zip = f"{UPLOAD_DIR.rstrip('/')}/{DEPLOY_ARCHIVE}"
-
-        # 7. 解压（覆盖已有文件 + 写入新 manifest）
-        print(f"\n📂 解压 {remote_zip} → {UPLOAD_DIR} …")
-        try:
-            client.decompress(remote_zip, UPLOAD_DIR)
-        except MCSMError as e:
-            print(f"❌ 解压失败: {e}", file=sys.stderr)
+        # 5–7. 逐包上传并解压
+        print("\n📤 分包上传到 daemon …")
+        for index, archive_path in enumerate(part_zips, 1):
+            remote_name = (
+                DEPLOY_ARCHIVE
+                if len(part_zips) == 1
+                else f"__deploy_part_{index:02d}__.zip"
+            )
+            print(f"\n—— part {index}/{len(part_zips)}: {remote_name} ——")
+            ok = client.upload_file(str(archive_path), remote_name=remote_name)
+            if not ok:
+                print("❌ 上传失败，终止部署。", file=sys.stderr)
+                sys.exit(1)
+            remote_zip = f"{UPLOAD_DIR.rstrip('/')}/{remote_name}"
+            print(f"📂 解压 {remote_zip} → {UPLOAD_DIR} …")
+            try:
+                client.decompress(remote_zip, UPLOAD_DIR)
+            except MCSMError as e:
+                print(f"❌ 解压失败: {e}", file=sys.stderr)
+                try:
+                    client.delete_file(remote_zip)
+                except Exception:
+                    pass
+                sys.exit(2)
             try:
                 client.delete_file(remote_zip)
+                print(f"✅ 已删除 {remote_name}")
             except Exception:
-                pass
-            sys.exit(2)
-        print("✅ 文件解压完成")
+                print(f"⚠️  清理 {remote_name} 失败（可忽略）")
+
+        # 5b. 超限单文件直传到目标子目录（音频等）
+        if large_files:
+            print(f"\n📤 大文件直传（{len(large_files)}）…")
+        for rel in large_files:
+            abs_path = APP_ROOT / rel
+            parent = str(Path(rel).parent).replace("\\", "/")
+            if parent in (".", ""):
+                target_dir = UPLOAD_DIR.rstrip("/") or "/"
+            else:
+                target_dir = f"{UPLOAD_DIR.rstrip('/')}/{parent}"
+            remote_name = Path(rel).name
+            # 大文件给更长超时
+            timeout = max(UPLOAD_TIMEOUT, 300)
+            print(f"\n—— direct: {rel} → {target_dir}/{remote_name} ——")
+            ok = client.upload_file(
+                str(abs_path),
+                remote_name=remote_name,
+                upload_dir=target_dir,
+                content_type="application/octet-stream",
+                timeout=timeout,
+                retries=max(UPLOAD_RETRIES, 5),
+            )
+            if not ok:
+                print("❌ 大文件上传失败，终止部署。", file=sys.stderr)
+                sys.exit(1)
+
+        print("\n✅ 全部上传完成")
 
         # 7.5 部署后校验：确认 PWA 模板已写入实例
         print("\n🔍 校验部署结果 …")
@@ -522,14 +666,6 @@ def main() -> None:
             sys.exit(2)
         print("✅ PWA 模板校验通过")
 
-        # 8. 清理远端 zip
-        print("\n🧹 清理远端临时文件 …")
-        try:
-            client.delete_file(remote_zip)
-            print(f"✅ 已删除 {DEPLOY_ARCHIVE}")
-        except (MCSMError, Exception):
-            print(f"⚠️  无法删除远端 zip（可能已自动清理）")
-
         # 9. 重启实例
         print("")
         try:
@@ -541,10 +677,11 @@ def main() -> None:
             sys.exit(2)
 
     finally:
-        # 清理本地临时文件
-        archive_path.unlink(missing_ok=True)
+        # 清理本地临时 zip
+        for archive_path in part_zips:
+            archive_path.unlink(missing_ok=True)
 
-    print(f"\n🎉 部署完成！")
+    print("\n🎉 部署完成！")
 
 
 if __name__ == "__main__":
