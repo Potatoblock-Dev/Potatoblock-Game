@@ -222,6 +222,49 @@
     .pwa-guide-actions { margin-top: 14px; display: flex; gap: 8px; }
     .pwa-guide-actions .pwa-action { margin-top: 0; }
     .hidden { display: none !important; }
+    .game-nav-loading {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgb(8 8 8 / .72);
+      backdrop-filter: blur(4px);
+      pointer-events: all;
+    }
+    html[data-theme='light'] .game-nav-loading {
+      background: rgb(15 23 42 / .45);
+    }
+    .game-nav-loading-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      text-align: center;
+    }
+    .game-nav-loading-spinner {
+      width: 28px;
+      height: 28px;
+      border: 2px solid rgb(163 163 163 / .28);
+      border-top-color: rgb(229 229 229 / .95);
+      border-radius: 999px;
+      animation: game-nav-spin .7s linear infinite;
+    }
+    html[data-theme='light'] .game-nav-loading-spinner {
+      border-color: rgb(15 23 42 / .18);
+      border-top-color: rgb(15 23 42 / .75);
+    }
+    .game-nav-loading-text {
+      margin: 0;
+      font-size: 14px;
+      letter-spacing: .06em;
+      opacity: .88;
+    }
+    @keyframes game-nav-spin {
+      to { transform: rotate(360deg); }
+    }
     /* 顶栏避开刘海/状态栏；手机端标题下移，避免与顶栏挤在一起 */
     .site-topbar {
       top: max(1rem, calc(env(safe-area-inset-top, 0px) + 0.5rem));
@@ -396,7 +439,7 @@
         {% if games %}
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
             {% for game in games %}
-            <a href="{{ game.url }}" class="block relative bg-gray-900 rounded-xl p-6 hover:bg-gray-800 transition-colors">
+            <a href="{{ game.url }}" class="game-entry block relative bg-gray-900 rounded-xl p-6 hover:bg-gray-800 transition-colors" data-game-name="{{ game.name }}">
                 {% if game.badge %}
                 <span class="absolute top-3 right-3 z-10 rounded-md px-2 py-0.5 text-xs font-semibold tracking-wide bg-amber-500/20 text-amber-300 border border-amber-400/40">{{ game.badge }}</span>
                 {% endif %}
@@ -410,6 +453,13 @@
             {% endfor %}
         </div>
         {% endif %}
+    </div>
+
+    <div id="gameNavLoading" class="game-nav-loading hidden" hidden aria-live="polite" aria-busy="false">
+      <div class="game-nav-loading-inner">
+        <div class="game-nav-loading-spinner" aria-hidden="true"></div>
+        <p id="gameNavLoadingText" class="game-nav-loading-text">正在加载游戏…</p>
+      </div>
     </div>
 
     <!-- 更新日志弹窗 -->
@@ -510,7 +560,7 @@
     <script src="/static/js/pwa.js?v=4"></script>
     <script src="/static/js/changelog.js?v=1"></script>
     <script src="/static/js/passport-login.js"></script>
-    <script src="/static/js/main.js?v=7"></script>
+    <script src="/static/js/main.js?v=8"></script>
     <script>
     // 系统设置弹窗 + 主题模式（与游戏页共用 pb-theme-mode / pb-theme 存储键）
     // 自动/系统用上方两个按钮；手动深浅色用白天黑夜动画开关。

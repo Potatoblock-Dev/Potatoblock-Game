@@ -1,0 +1,22 @@
+{
+  "name": "示例卡池 · 星海旅团",
+  "description": "演示用卡池",
+  "pullSizes": [1, 5, 10],
+  "rarities": [
+    { "id": "SSR", "name": "SSR", "weight": 6, "color": "#f0c14a" },
+    { "id": "SR", "name": "SR", "weight": 51, "color": "#c084fc" },
+    { "id": "R", "name": "R", "weight": 943, "color": "#7dd3fc" }
+  ],
+  "cards": [
+    { "id": "ssr_aurora", "name": "极光舰长", "rarity": "SSR", "imageKey": "ssr_aurora.png" },
+    { "id": "ssr_nebula", "name": "星云术士", "rarity": "SSR", "imageKey": "ssr_nebula.png" },
+    { "id": "sr_comet", "name": "彗星射手", "rarity": "SR", "imageKey": "sr_comet.png" },
+    { "id": "sr_orbit", "name": "轨道技师", "rarity": "SR", "imageKey": "sr_orbit.png" },
+    { "id": "sr_pulse", "name": "脉冲骑士", "rarity": "SR", "imageKey": "sr_pulse.png" },
+    { "id": "r_scout", "name": "见习侦察兵", "rarity": "R", "imageKey": "r_scout.png" },
+    { "id": "r_medic", "name": "后勤医员", "rarity": "R", "imageKey": "r_medic.png" },
+    { "id": "r_pilot", "name": "货运驾驶员", "rarity": "R", "imageKey": "r_pilot.png" },
+    { "id": "r_cook", "name": "舰桥厨师", "rarity": "R", "imageKey": "r_cook.png" },
+    { "id": "r_bot", "name": "维修机器人", "rarity": "R", "imageKey": "r_bot.png" }
+  ]
+}

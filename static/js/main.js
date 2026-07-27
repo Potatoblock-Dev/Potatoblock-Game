@@ -1,4 +1,4 @@
-/** 首页：顶栏昵称、断线重连跳转、移动端下拉刷新。 */
+/** 首页：顶栏昵称、断线重连跳转、移动端下拉刷新、进游戏加载提示。 */
 (function () {
   'use strict';
 
@@ -21,6 +21,55 @@
       .catch(function () {});
   }
 
+  /** 显示全屏「正在加载游戏」遮罩（点击卡片 / 自动重连跳转前）。 */
+  function showGameNavLoading(gameName) {
+    var overlay = document.getElementById('gameNavLoading');
+    var text = document.getElementById('gameNavLoadingText');
+    if (!overlay) {
+      return;
+    }
+    var label = String(gameName || '').trim();
+    if (text) {
+      text.textContent = label ? ('正在加载「' + label + '」…') : '正在加载游戏…';
+    }
+    overlay.hidden = false;
+    overlay.classList.remove('hidden');
+    overlay.setAttribute('aria-busy', 'true');
+  }
+
+  /** 从 bfcache 返回时收起遮罩，避免卡住。 */
+  function hideGameNavLoading() {
+    var overlay = document.getElementById('gameNavLoading');
+    if (!overlay) {
+      return;
+    }
+    overlay.hidden = true;
+    overlay.classList.add('hidden');
+    overlay.setAttribute('aria-busy', 'false');
+  }
+
+  window.addEventListener('pageshow', function (event) {
+    if (event.persisted) {
+      hideGameNavLoading();
+    }
+  });
+
+  document.querySelectorAll('a.game-entry[href]').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      if (event.defaultPrevented || event.button !== 0) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      var href = link.getAttribute('href') || '';
+      if (!href || href.charAt(0) === '#') {
+        return;
+      }
+      showGameNavLoading(link.getAttribute('data-game-name') || '');
+    });
+  });
+
   /** 页面顶部且无弹层遮挡时，允许下拉刷新。 */
   function canPullRefresh() {
     if (window.scrollY > 0) {
@@ -30,7 +79,7 @@
       return false;
     }
     var blocked = document.querySelector(
-      '.settings-overlay:not(.hidden), .pwa-guide-overlay:not(.hidden)'
+      '.settings-overlay:not(.hidden), .pwa-guide-overlay:not(.hidden), #gameNavLoading:not(.hidden)'
     );
     return !blocked;
   }
@@ -204,6 +253,17 @@
     .then(function (data) {
       var session = data && data.session;
       if (session && session.url) {
+        var reconnectLabel = session.game_name || '';
+        if (!reconnectLabel && session.game_id) {
+          var known = {
+            liminal_platform: '阈限月台',
+            'liminal-platform': '阈限月台',
+            avatar_lobby: '皮套大厅',
+            'avatar-lobby': '皮套大厅',
+          };
+          reconnectLabel = known[session.game_id] || '';
+        }
+        showGameNavLoading(reconnectLabel);
         window.location.replace(session.url);
       }
     })

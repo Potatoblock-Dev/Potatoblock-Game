@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#121212" />
+    <title>抽卡模拟器</title>
+    <script>
+      // 与平台 / 其他游戏共用 pb-theme-mode、pb-theme，避免刷新闪烁。
+      ;(function () {
+        let mode = localStorage.getItem('pb-theme-mode')
+        if (!mode) {
+          const legacy = localStorage.getItem('pb-theme')
+          mode = legacy === 'light' || legacy === 'dark' ? legacy : 'auto'
+          localStorage.setItem('pb-theme-mode', mode)
+        }
+        if (!['auto', 'system', 'light', 'dark'].includes(mode)) {
+          mode = 'auto'
+          localStorage.setItem('pb-theme-mode', mode)
+        }
+        let theme = mode
+        if (mode === 'system') {
+          theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        } else if (mode === 'auto') {
+          const h = new Date().getHours()
+          theme = h >= 7 && h < 19 ? 'light' : 'dark'
+        }
+        document.documentElement.dataset.theme = theme
+        localStorage.setItem('pb-theme', theme)
+        const meta = document.querySelector('meta[name="theme-color"]')
+        if (meta) meta.setAttribute('content', theme === 'light' ? '#eef1f6' : '#121212')
+      })()
+    </script>
+    <script type="module" crossorigin src="/static/games/gacha-simulator/assets/index-Dfo4qu7q.js"></script>
+    <link rel="stylesheet" crossorigin href="/static/games/gacha-simulator/assets/index-C4tEK5G_.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
