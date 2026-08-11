@@ -66,11 +66,15 @@ ROOM_BAGS = frozenset(
         "crate_recycle",
     }
 )
-# 月台/地牢场景位姿钳制（与客户端 LpDungeon 宽度上界对齐）。
+# 月台/地牢场景位姿钳制（X 与客户端 LpDungeon.MAX_WIDTH=48000 对齐）。
+# Y 为相对地板的物理高度（地面≈0，腾空为负），不是舞台绝对 Y。
 PLATFORM_SCENE_X_MIN = 0.0
-PLATFORM_SCENE_X_MAX = 5600.0
+PLATFORM_SCENE_X_MAX = 48000.0
 PLATFORM_SCENE_Y_MIN = -1200.0
 PLATFORM_SCENE_Y_MAX = 200.0
+# 无人机广播用世界舞台坐标（约 FLOOR_Y−80≈777；地牢上层可更小）。
+DRONE_WORLD_Y_MIN = -1200.0
+DRONE_WORLD_Y_MAX = 1400.0
 
 CLOSE_REPLACED = 4002
 CLOSE_ROOM_FULL = 4005
@@ -634,15 +638,17 @@ class LiminalLobbyManager:
         elif life == "alive":
             player.death_cause = None
             player.downed_remain = None
-        self._apply_drone_pose(player, payload)
-        scene = str(payload.get("scene") or "").strip().lower()
-        if scene in ("train", "platform"):
-            player.scene = scene
+        if scene_hint in ("train", "platform"):
+            player.scene = scene_hint
         elif not getattr(player, "scene", None):
             player.scene = "train"
+        self._apply_drone_pose(player, payload)
 
     def _apply_drone_pose(self, player: LiminalPlayer, payload: Dict[str, Any]) -> None:
-        """写入伴飞无人机位姿（客户端权威，仅回显广播；缺字段则清掉）。"""
+        """写入伴飞无人机位姿（客户端权威，仅回显广播；缺字段则清掉）。
+
+        droneX/Y 为世界舞台坐标（非玩家 physicsY）。月台地牢 X 可远超列车 WORLD_RIGHT。
+        """
         if "droneX" not in payload or "droneY" not in payload:
             player.drone_x = None
             player.drone_y = None
@@ -651,11 +657,14 @@ class LiminalLobbyManager:
             player.drone_aim = None
             player.drone_phase = None
             return
+        on_platform = str(getattr(player, "scene", "train") or "train") == "platform"
+        x_lo = PLATFORM_SCENE_X_MIN - 400.0 if on_platform else WORLD_LEFT - 400.0
+        x_hi = PLATFORM_SCENE_X_MAX + 400.0 if on_platform else WORLD_RIGHT + 400.0
         try:
-            player.drone_x = _clamp(
-                float(payload["droneX"]), WORLD_LEFT - 400.0, WORLD_RIGHT + 400.0
+            player.drone_x = _clamp(float(payload["droneX"]), x_lo, x_hi)
+            player.drone_y = _clamp(
+                float(payload["droneY"]), DRONE_WORLD_Y_MIN, DRONE_WORLD_Y_MAX
             )
-            player.drone_y = _clamp(float(payload["droneY"]), -900.0, 200.0)
         except (TypeError, ValueError):
             player.drone_x = None
             player.drone_y = None

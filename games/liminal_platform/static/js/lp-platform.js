@@ -261,7 +261,28 @@
     departedAtMs = performance.now();
     radarRevealSec = pickRadarRevealSec(from);
     syncSensorStub();
+    window.dispatchEvent(
+      new CustomEvent('liminal:platform-depart', {
+        detail: { stationIndex: from },
+      })
+    );
     return from;
+  }
+
+  /**
+   * 进站停靠上升沿：对齐站心并广播 arrive（供柱列 FX / BGM 等）。
+   */
+  function enterDockedState() {
+    atPlatform = true;
+    lockedStationIndex = stationIndexFromRoute();
+    routeX =
+      Math.floor(routeX / STATION_SPACING + 1e-9) * STATION_SPACING +
+      STATION_SPACING;
+    window.dispatchEvent(
+      new CustomEvent('liminal:platform-arrive', {
+        detail: { stationIndex: lockedStationIndex },
+      })
+    );
   }
 
   /**
@@ -285,20 +306,16 @@
   function beginDepart() {
     if (!atPlatform) return false;
     if (!canDepart()) return false;
-    const from = leavePlatformRoute();
-    window.dispatchEvent(
-      new CustomEvent('liminal:platform-depart', {
-        detail: { stationIndex: from },
-      })
-    );
+    leavePlatformRoute();
     return true;
   }
 
-  /** 写入房间世界种子（快照 / 离线本地种）；同步背景层重建。 */
+  /** 写入房间世界种子（快照 / 离线本地种）；同步背景与视差层重建。 */
   function setWorldSeed(seed) {
     if (seed == null || !Number.isFinite(Number(seed))) return;
     worldSeed = Number(seed) >>> 0;
     window.LpWorldBackground?.setSeed?.(worldSeed);
+    window.LpParallaxLayers?.setSeed?.(worldSeed);
   }
 
   /** 当前世界种子；无则本地生成一次。 */
@@ -388,21 +405,33 @@
 
   /**
    * 月台多楼层地板查询；无地牢时退回单层。
-   * 带 preferY 记忆，避免楼梯廊叠 x 时跳错层。
+   * 默认写入 lastPlatformFloorY（本机站立层记忆，防楼梯叠 x 跳层）。
+   * 队友/FoW/小地图只读时传 `{ remember: false }`，避免污染本机层记忆。
    * @param {number} x
+   * @param {{ preferY?: number, remember?: boolean } | number | null | undefined} [opts]
+   *        对象：preferY / remember；若传有限数字则视为 preferY 且不记忆。
    */
-  function platformFloorAt(x) {
+  function platformFloorAt(x, opts) {
+    let preferY = lastPlatformFloorY;
+    let remember = true;
+    if (opts != null && typeof opts === 'object') {
+      if (Number.isFinite(Number(opts.preferY))) preferY = Number(opts.preferY);
+      if (opts.remember === false) remember = false;
+    } else if (Number.isFinite(Number(opts))) {
+      preferY = Number(opts);
+      remember = false;
+    }
     if (platformKind === 'small' && dungeon) {
-      const y = window.LpDungeon?.floorAt?.(dungeon, x, lastPlatformFloorY);
+      const y = window.LpDungeon?.floorAt?.(dungeon, x, preferY);
       if (y != null) {
-        lastPlatformFloorY = y;
+        if (remember) lastPlatformFloorY = y;
         return y;
       }
       const fallback = dungeon.spawnFloorY || dungeon.bounds.floorY;
-      lastPlatformFloorY = fallback;
+      if (remember) lastPlatformFloorY = fallback;
       return fallback;
     }
-    lastPlatformFloorY = PLAT_FLOOR_Y;
+    if (remember) lastPlatformFloorY = PLAT_FLOOR_Y;
     return PLAT_FLOOR_Y;
   }
 
@@ -465,19 +494,25 @@
     };
   }
 
+  /** 离线：本会话已按此站序填过月台仓则不再清空重灌（对齐服务端 _platform_loot_station）。 */
+  let offlinePlatformLootStation = null;
+
   /** 确保月台仓库袋已按当前站种子填装（联机问服 / 离线本地）。 */
   function ensurePlatformLoot(stationIndex) {
     const seed = getWorldSeed();
+    const idx = stationIndex | 0;
     if (window.LpInventoryNet?.isActive?.()) {
       window.LpInventoryNet.sendOp?.({
         action: 'ensure_platform_storage',
-        stationIndex: stationIndex | 0,
+        stationIndex: idx,
       });
       return;
     }
+    if (offlinePlatformLootStation === idx) return;
     const inv = window.LpInventory?.getPlatformStorageInventory?.();
     if (inv && window.LpDungeon?.fillPlatformInventory) {
-      window.LpDungeon.fillPlatformInventory(inv, seed, stationIndex | 0);
+      window.LpDungeon.fillPlatformInventory(inv, seed, idx);
+      offlinePlatformLootStation = idx;
     }
   }
 
@@ -495,6 +530,8 @@
       window.LpDungeonFow?.bindDungeon?.(dungeon);
     } else {
       window.LpMobs?.clearDungeonMobs?.();
+      /* 大型月台主循环不 tick mobs，须在此清列车波次，否则回车后冻结怪复活 */
+      window.LpMobs?.clearTrainWaveMobs?.();
       window.LpDungeonFow?.reset?.();
     }
     clearSceneTransientFx();
@@ -960,10 +997,7 @@
         leavePlatformRoute();
       }
     } else if (stopped && dist <= DOCK_DIST) {
-      atPlatform = true;
-      lockedStationIndex = stationIndexFromRoute();
-      /* 对齐站心，传感 distanceAhead=0 */
-      routeX = Math.floor(routeX / STATION_SPACING + 1e-9) * STATION_SPACING + STATION_SPACING;
+      enterDockedState();
       window.LiminalInteract?.showToast?.('列车已停靠月台 — 连接处按 F 进入');
     }
 
@@ -1041,18 +1075,23 @@
 
   /**
    * 将路线剩余距离映射为雷达示波器上的世界距离。
-   * 近距用真实距离；更远压到默认量程内的外环，揭示后无需拉满档也能看见。
+   * 近距用真实距离；更远压到「当前量程」外环（非固定 4400），
+   * 短量程仍能看见远站，满档时拉开间距、避免全挤在内环。
    * @param {number} routeDist
    * @returns {number}
    */
   function radarBlipRouteDist(routeDist) {
     const d = Math.max(0, Number(routeDist) || 0);
     if (d <= 0) return 0;
-    /** 真实距离段；对齐默认量程 4800 以内。 */
-    const TRUE_UNTIL = 3600;
+    const rangeRaw = Number(window.LpRadarScope?.getRange?.());
+    const range =
+      Number.isFinite(rangeRaw) && rangeRaw > 0 ? rangeRaw : 4800;
+    /** 真实距离段：默认对齐 3600，短量程时压到量程的 75%。 */
+    const TRUE_UNTIL = Math.min(3600, range * 0.75);
     if (d <= TRUE_UNTIL) return d;
-    /** 远站外环（略低于默认量程，保证开雷达即可见）。 */
-    const FAR_EDGE = 4400;
+    /** 远站外环：贴当前量程 ~92%，随拉杆拉开。 */
+    const FAR_EDGE = range * 0.92;
+    if (FAR_EDGE <= TRUE_UNTIL) return Math.min(d, FAR_EDGE);
     const farSpan = Math.max(1, STATION_SPACING - TRUE_UNTIL);
     const t = Math.min(1, (d - TRUE_UNTIL) / farSpan);
     return TRUE_UNTIL + (FAR_EDGE - TRUE_UNTIL) * t;
@@ -1107,14 +1146,14 @@
     const dist = radarBlipRouteDist(routeDist);
     const forward = S.TRAIN_FORWARD_X >= 0 ? 1 : -1;
     return {
-      x: mid + forward * dist * 0.85,
+      x: mid + forward * dist,
       y: S.FLOOR_Y,
       label: '月台',
     };
   }
 
   /**
-   * 雷达铁轨折线（世界点，含拐弯）；以编组中心为原点沿前进轴延伸并侧向偏折。
+   * 雷达铁轨折线（世界点，含拐弯）；跨度随当前量程伸缩，满档仍铺满 PPI 作地图脊线。
    * @returns {Array<{ x: number, y: number }>}
    */
   function getRadarTrackPolyline() {
@@ -1127,15 +1166,19 @@
         S.MODULE_W) /
       2;
     const forward = S.TRAIN_FORWARD_X >= 0 ? 1 : -1;
-    const lateral = S.scaleArt?.(180) || 180;
-    const seg = S.scaleArt?.(520) || 520;
+    const rangeRaw = Number(window.LpRadarScope?.getRange?.());
+    const range =
+      Number.isFinite(rangeRaw) && rangeRaw > 0 ? rangeRaw : 4800;
+    const halfSpan = range * 0.95;
+    const artLat = S.scaleArt?.(180) || 180;
+    const lateral = Math.min(range * 0.1, Math.max(120, artLat * (range / 4800)));
     /* 前进轴 ≈ 世界 +X；俯视雷达里会再转到航向。折线含一段侧向弯。 */
     return [
-      { x: midX - forward * seg * 2.2, y: midY },
-      { x: midX - forward * seg * 0.6, y: midY },
-      { x: midX + forward * seg * 0.2, y: midY + lateral },
-      { x: midX + forward * seg * 1.4, y: midY + lateral },
-      { x: midX + forward * seg * 2.4, y: midY },
+      { x: midX - forward * halfSpan, y: midY },
+      { x: midX - forward * halfSpan * 0.28, y: midY },
+      { x: midX + forward * halfSpan * 0.08, y: midY + lateral },
+      { x: midX + forward * halfSpan * 0.55, y: midY + lateral },
+      { x: midX + forward * halfSpan, y: midY },
     ];
   }
 
@@ -1147,12 +1190,28 @@
     if (on == null) forceDock = !forceDock;
     else forceDock = Boolean(on);
     if (forceDock) {
+      const was = atPlatform;
       atPlatform = true;
       window.LpTrainDrive?.setThrottle?.(0);
+      if (!was) {
+        window.dispatchEvent(
+          new CustomEvent('liminal:platform-arrive', {
+            detail: { stationIndex: getStationIndex() },
+          })
+        );
+      }
     } else if (scene === 'platform') {
       /* 保持场景；仅解除强制 */
     } else {
+      const was = atPlatform;
       atPlatform = false;
+      if (was) {
+        window.dispatchEvent(
+          new CustomEvent('liminal:platform-depart', {
+            detail: { stationIndex: lockedStationIndex },
+          })
+        );
+      }
     }
     syncSensorStub();
     window.LiminalInteract?.showToast?.(

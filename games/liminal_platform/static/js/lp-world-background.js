@@ -1,12 +1,15 @@
 /**
  * 世界背景层：由 world.seed 派生调性（密度 / 色相 / 饱和度等）+ 多层远景（雾带 / 远形 / 尘星 / 中景泡）。
  * 绘于轨道/车厢之下；种子变化时才重建参数，避免每帧重算。仅柔边径向光晕，无硬 AABB 色块。
+ * stationMix：0=轨面阈限虚空，1=月台/站厅感（顶棚雾、远承重柱节奏）；由 LpStationTransit 驱动交叉。
  */
 (() => {
   /** FOV 外延（世界像素）。 */
   const FOV_MARGIN = 120;
   /** 与地牢/月台区分的背景子流盐。 */
   const BG_STREAM = 0xb6b61e;
+  /** 月台远柱子流盐。 */
+  const STATION_PILLAR_STREAM = 0xc01a71;
   /** 中景泡密度上下限。 */
   const BUBBLE_MIN = 8;
   const BUBBLE_MAX = 22;
@@ -38,10 +41,17 @@
   let hazeBands = [];
   /** @type {DustSpec[]} */
   let dust = [];
+  /**
+   * 月台远景承重柱规格（柔边竖带，种子驱动）。
+   * @type {{ u: number, widthN: number, alphaN: number, phase: number }[]}
+   */
+  let stationPillars = [];
   /** @type {MediaQueryList|null} */
   let coarseMq = null;
   /** 上次重建时使用的质量档，变化时按同一种子重建层密度。 */
   let appliedQuality = 1;
+  /** 0=轨面虚空，1=月台站感；可由 setStationMix 或 LpStationTransit 写入。 */
+  let stationMix = 0;
 
   /**
    * 画质系数：触控 / 低 DPR 降低尘星与中景泡数量。
@@ -322,6 +332,19 @@
       });
     }
 
+    const pillarRng = mulberry32(hash2(seed, STATION_PILLAR_STREAM));
+    const pillarCount = 5 + Math.floor(pillarRng() * 4);
+    /** @type {{ u: number, widthN: number, alphaN: number, phase: number }[]} */
+    const nextPillars = [];
+    for (let i = 0; i < pillarCount; i += 1) {
+      nextPillars.push({
+        u: (i + 0.15 + pillarRng() * 0.7) / pillarCount,
+        widthN: 0.028 + pillarRng() * 0.04,
+        alphaN: 0.45 + pillarRng() * 0.4,
+        phase: pillarRng() * Math.PI * 2,
+      });
+    }
+
     theme = {
       seed,
       palette,
@@ -346,6 +369,7 @@
     bubbles = nextBubbles;
     hazeBands = nextHaze;
     dust = nextDust;
+    stationPillars = nextPillars;
     appliedSeed = seed;
   }
 
@@ -381,6 +405,25 @@
   function setSeed(seed) {
     if (seed == null || !Number.isFinite(Number(seed))) return;
     rebuildFromSeed(Number(seed) >>> 0);
+  }
+
+  /**
+   * 设置月台主题混合：0=轨面虚空，1=站厅感。
+   * @param {number} mix
+   */
+  function setStationMix(mix) {
+    if (!Number.isFinite(mix)) return;
+    stationMix = mix <= 0 ? 0 : mix >= 1 ? 1 : mix;
+  }
+
+  /**
+   * 当前月台主题混合。
+   * @returns {number}
+   */
+  function getStationMix() {
+    const live = window.LpStationTransit?.getStationMix?.();
+    if (Number.isFinite(live)) return live;
+    return stationMix;
   }
 
   /** @returns {number|null} */
@@ -494,6 +537,95 @@
     well.addColorStop(1, `rgba(0, 0, 0,${0.36 + c * 0.12})`);
     ctx.fillStyle = well;
     ctx.fillRect(left, top + h * 0.58, w, h * 0.42);
+  }
+
+  /**
+   * 月台顶棚 / 站厅雾：更平、略亮的水平带，叠在虚空场上（alpha 随 stationMix）。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{ left: number, right: number, top: number, bot: number }} rect
+   * @param {BgTheme} th
+   * @param {number} mix
+   */
+  function paintStationCanopy(ctx, rect, th, mix) {
+    if (!(mix > 0.01)) return;
+    const { left, right, top, bot } = rect;
+    const w = right - left;
+    const h = bot - top;
+    if (!(w > 0) || !(h > 0)) return;
+    const tint = th.washTint;
+    const a = Math.min(0.55, mix);
+
+    /* 顶棚压板：上半更亮的冷灰混凝土感 */
+    const roof = ctx.createLinearGradient(0, top, 0, top + h * 0.38);
+    roof.addColorStop(
+      0,
+      `rgba(${Math.round(28 + tint[0] * 0.04)},${Math.round(30 + tint[1] * 0.04)},${Math.round(36 + tint[2] * 0.05)},${0.42 * a})`
+    );
+    roof.addColorStop(
+      0.55,
+      `rgba(${Math.round(18 + tint[0] * 0.03)},${Math.round(20 + tint[1] * 0.03)},${Math.round(26 + tint[2] * 0.04)},${0.22 * a})`
+    );
+    roof.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = roof;
+    ctx.fillRect(left, top, w, h * 0.4);
+
+    /* 站台高度附近的扁平雾（更「室内」） */
+    const deck = ctx.createLinearGradient(0, top + h * 0.42, 0, top + h * 0.72);
+    deck.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    deck.addColorStop(
+      0.45,
+      `rgba(${Math.round(40 + tint[0] * 0.05)},${Math.round(42 + tint[1] * 0.05)},${Math.round(48 + tint[2] * 0.06)},${0.14 * a})`
+    );
+    deck.addColorStop(
+      1,
+      `rgba(${Math.round(12 + tint[0] * 0.02)},${Math.round(13 + tint[1] * 0.02)},${Math.round(16 + tint[2] * 0.02)},${0.2 * a})`
+    );
+    ctx.fillStyle = deck;
+    ctx.fillRect(left, top + h * 0.42, w, h * 0.32);
+  }
+
+  /**
+   * 远景承重柱节奏：柔边竖带，避免硬矩形色块。
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{ left: number, right: number, top: number, bot: number }} rect
+   * @param {number} t
+   * @param {BgTheme} th
+   * @param {number} mix
+   */
+  function paintStationPillars(ctx, rect, t, th, mix) {
+    if (!(mix > 0.02) || !stationPillars.length) return;
+    const { left, right, top, bot } = rect;
+    const w = right - left;
+    const h = bot - top;
+    const aMul = Math.min(1, mix);
+    const tint = th.washTint;
+
+    for (let i = 0; i < stationPillars.length; i += 1) {
+      const p = stationPillars[i];
+      const drift =
+        Math.sin(t * 0.04 + p.phase) * w * 0.004 * th.drift;
+      const cx = left + p.u * w + drift;
+      const half = Math.max(10, w * p.widthN * 0.5);
+      const peak = Math.min(0.28, 0.12 * p.alphaN * aMul);
+      const g = ctx.createLinearGradient(cx - half * 1.6, 0, cx + half * 1.6, 0);
+      const r = Math.round(8 + tint[0] * 0.02);
+      const gC = Math.round(9 + tint[1] * 0.02);
+      const b = Math.round(12 + tint[2] * 0.025);
+      g.addColorStop(0, `rgba(${r},${gC},${b},0)`);
+      g.addColorStop(0.35, `rgba(${r},${gC},${b},${peak * 0.55})`);
+      g.addColorStop(0.5, `rgba(${r},${gC},${b},${peak})`);
+      g.addColorStop(0.65, `rgba(${r},${gC},${b},${peak * 0.55})`);
+      g.addColorStop(1, `rgba(${r},${gC},${b},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - half * 1.6, top, half * 3.2, h * 0.78);
+
+      /* 柱顶与顶棚衔接的软影 */
+      const cap = ctx.createLinearGradient(0, top, 0, top + h * 0.2);
+      cap.addColorStop(0, `rgba(4, 5, 8, ${peak * 0.45})`);
+      cap.addColorStop(1, 'rgba(4, 5, 8, 0)');
+      ctx.fillStyle = cap;
+      ctx.fillRect(cx - half * 1.2, top, half * 2.4, h * 0.2);
+    }
   }
 
   /**
@@ -940,22 +1072,41 @@
     if (!rect) return;
     if (!(timeSec > 0)) timeSec = performance.now() * 0.001;
     const t = timeSec;
+    const mix = getStationMix();
+    /* 站内压低尘星 / 漂泡，让结构雾与远柱更像月台 */
+    const voidLayerMul = 1 - mix * 0.72;
+    const stationLayerMul = mix;
 
     ctx.save();
     paintVoidField(ctx, rect, theme);
+    paintStationCanopy(ctx, rect, theme, stationLayerMul);
     paintHazeBands(ctx, rect, t, theme);
-    paintGlowShapes(ctx, rect, t, theme, farShapes, {
-      peakMul: 0.72,
-      strokeMul: 0.55,
-      driftScale: 0.7,
-    });
-    paintRibbons(ctx, rect, t, theme);
-    paintDust(ctx, rect, t, theme);
-    paintGlowShapes(ctx, rect, t, theme, bubbles, {
-      peakMul: 1,
-      strokeMul: 1,
-      driftScale: 1,
-    });
+    paintStationPillars(ctx, rect, t, theme, stationLayerMul);
+    if (voidLayerMul > 0.08) {
+      ctx.globalAlpha = voidLayerMul;
+      paintGlowShapes(ctx, rect, t, theme, farShapes, {
+        peakMul: 0.72 * (0.55 + voidLayerMul * 0.45),
+        strokeMul: 0.55,
+        driftScale: 0.7,
+      });
+      paintRibbons(ctx, rect, t, theme);
+      paintDust(ctx, rect, t, theme);
+      paintGlowShapes(ctx, rect, t, theme, bubbles, {
+        peakMul: 1 * voidLayerMul,
+        strokeMul: 1,
+        driftScale: 1,
+      });
+      ctx.globalAlpha = 1;
+    } else {
+      /* 站感主导：少量远形保留纵深，避免死平板 */
+      ctx.globalAlpha = 0.35 + mix * 0.2;
+      paintGlowShapes(ctx, rect, t, theme, farShapes, {
+        peakMul: 0.4,
+        strokeMul: 0.3,
+        driftScale: 0.45,
+      });
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
@@ -964,6 +1115,8 @@
     draw,
     setSeed,
     getSeed,
+    setStationMix,
+    getStationMix,
     /** @deprecated 调试用；主题重建后才有意义 */
     getTheme: () => theme,
   };

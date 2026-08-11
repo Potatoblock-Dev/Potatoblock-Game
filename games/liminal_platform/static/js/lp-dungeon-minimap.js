@@ -1,23 +1,21 @@
 /**
- * 小型月台地牢小地图（右上）：自绘 canvas HUD（暗色描边矩形 + 简单图标）。
- * 仅在 scene=platform 且 kind=small 时显示；编组小地图同时隐藏。
- * FoW：未探索房间隐藏；与已探索房间相连的走廊/楼梯可见。
- * 性能：房间/廊/梯进静态离屏层，仅 FoW/尺寸变化时重绘；每帧只叠玩家/队友标记。
- * 完整地图叠层（M）通过 paintInto 复用同一绘制路径。
+ * 小型月台地牢小地图（右上）：节点–连线侧视示意图。
+ * 房间为色块矩形（安全屋绿 / 敌区红 / 仓库黄），走廊为房间间连线；
+ * FoW 隐藏未探索；完整地图（M）复用 paintInto。
  */
 (() => {
   const COLORS = {
     bg: '#141418',
-    grid: 'rgb(255 255 255 / 0.04)',
-    roomFill: '#25252e',
-    roomStroke: 'rgb(163 163 163 / 0.55)',
-    corridor: '#3a3a48',
-    corridorStroke: 'rgb(163 163 163 / 0.35)',
-    stair: '#4a4a5c',
-    stairStroke: 'rgb(180 180 200 / 0.4)',
-    safe: '#6ee7b7',
+    link: 'rgb(163 163 163 / 0.55)',
+    linkDim: 'rgb(100 100 110 / 0.35)',
+    roomStroke: 'rgb(20 20 24 / 0.65)',
+    safe: '#34d399',
+    safeFill: 'rgb(52 211 153 / 0.85)',
     enemy: '#f87171',
+    enemyFill: 'rgb(248 113 113 / 0.82)',
     warehouse: '#fbbf24',
+    warehouseFill: 'rgb(251 191 36 / 0.85)',
+    unknownFill: '#25252e',
     player: '#e4e4e7',
     playerRing: '#38bdf8',
     teammate: '#a78bfa',
@@ -66,30 +64,62 @@
   }
 
   /**
-   * 世界坐标 → 小地图像素（楼层为纵轴，0 层在下）。
+   * 侧视世界包围盒（优先 dungeon.mapBounds，否则由房间推算）。
+   * @param {object} dungeon
+   */
+  function worldExtents(dungeon) {
+    const mb = dungeon.mapBounds;
+    if (
+      mb &&
+      Number.isFinite(mb.minX) &&
+      Number.isFinite(mb.maxX) &&
+      Number.isFinite(mb.minY) &&
+      Number.isFinite(mb.maxY)
+    ) {
+      return mb;
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const room of dungeon.rooms || []) {
+      minX = Math.min(minX, room.left);
+      maxX = Math.max(maxX, room.right);
+      minY = Math.min(minY, room.ceilingY);
+      maxY = Math.max(maxY, room.floorY);
+    }
+    if (!Number.isFinite(minX)) {
+      return {
+        minX: dungeon.bounds?.left ?? 0,
+        maxX: dungeon.bounds?.right ?? 1000,
+        minY: (dungeon.bounds?.floorY ?? 720) - 600,
+        maxY: dungeon.bounds?.floorY ?? 720,
+      };
+    }
+    return {
+      minX: minX - 40,
+      maxX: maxX + 40,
+      minY: minY - 40,
+      maxY: maxY + 40,
+    };
+  }
+
+  /**
+   * 世界坐标 → 小地图像素（连续侧视：X 横轴，floorY 纵轴向下）。
    * @param {object} dungeon
    * @param {number} worldX
-   * @param {number} floorY
+   * @param {number} worldY
    * @param {{ pad: number, mapW: number, mapH: number }} view
    */
-  function project(dungeon, worldX, floorY, view) {
-    const minX = dungeon.bounds.left;
-    const maxX = Math.max(minX + 1, dungeon.bounds.right);
-    const floors = dungeon.floors || [dungeon.bounds.floorY];
-    let fi = 0;
-    let best = Infinity;
-    for (let i = 0; i < floors.length; i += 1) {
-      const d = Math.abs(floors[i] - floorY);
-      if (d < best) {
-        best = d;
-        fi = i;
-      }
-    }
-    const nx = (worldX - minX) / (maxX - minX);
+  function project(dungeon, worldX, worldY, view) {
+    const ext = worldExtents(dungeon);
+    const spanX = Math.max(1, ext.maxX - ext.minX);
+    const spanY = Math.max(1, ext.maxY - ext.minY);
+    const nx = (worldX - ext.minX) / spanX;
+    const ny = (worldY - ext.minY) / spanY;
     const mx = view.pad + nx * (view.mapW - view.pad * 2);
-    const rowH = (view.mapH - view.pad * 2) / Math.max(1, floors.length);
-    const my = view.mapH - view.pad - (fi + 0.5) * rowH;
-    return { mx, my, fi, rowH };
+    const my = view.pad + ny * (view.mapH - view.pad * 2);
+    return { mx, my };
   }
 
   /**
@@ -109,6 +139,16 @@
     g.arcTo(x, y + h, x, y, rr);
     g.arcTo(x, y, x + w, y, rr);
     g.closePath();
+  }
+
+  /**
+   * 房间类型填充色。
+   * @param {string} type
+   */
+  function roomFill(type) {
+    if (type === 'safehouse') return COLORS.safeFill;
+    if (type === 'warehouse') return COLORS.warehouseFill;
+    return COLORS.enemyFill;
   }
 
   /**
@@ -190,26 +230,65 @@
   }
 
   /**
-   * 计算房间在小地图上的连续矩形（与走廊同高衔接）。
+   * 计算房间在小地图上的连续侧视矩形。
    * @param {object} dungeon
    * @param {object} room
    * @param {{ pad: number, mapW: number, mapH: number }} view
    */
   function roomRect(dungeon, room, view) {
-    const tl = project(dungeon, room.left, room.floorY, view);
+    const tl = project(dungeon, room.left, room.ceilingY, view);
     const br = project(dungeon, room.right, room.floorY, view);
-    const h = Math.max(14, tl.rowH * 0.58);
     const x = Math.min(tl.mx, br.mx);
-    const w = Math.max(16, Math.abs(br.mx - tl.mx));
+    const y = Math.min(tl.my, br.my);
+    const w = Math.max(10, Math.abs(br.mx - tl.mx));
+    const h = Math.max(8, Math.abs(br.my - tl.my));
     return {
       x,
-      y: tl.my - h * 0.5,
+      y,
       w,
       h,
       cx: x + w * 0.5,
-      cy: tl.my,
-      my: tl.my,
+      cy: y + h * 0.5,
     };
+  }
+
+  /**
+   * 线段与矩形边界的交点（从中心指向外侧，用于廊线贴边）。
+   * @param {{ x: number, y: number, w: number, h: number, cx: number, cy: number }} rect
+   * @param {number} tx
+   * @param {number} ty
+   */
+  function edgeToward(rect, tx, ty) {
+    const dx = tx - rect.cx;
+    const dy = ty - rect.cy;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
+      return { x: rect.cx, y: rect.cy };
+    }
+    const hx = rect.w * 0.5;
+    const hy = rect.h * 0.5;
+    const sx = dx !== 0 ? hx / Math.abs(dx) : Infinity;
+    const sy = dy !== 0 ? hy / Math.abs(dy) : Infinity;
+    const t = Math.min(sx, sy);
+    return { x: rect.cx + dx * t, y: rect.cy + dy * t };
+  }
+
+  /**
+   * 画两房间之间的连线（节点图走廊）。
+   * @param {{ cx: number, cy: number, x: number, y: number, w: number, h: number }} a
+   * @param {{ cx: number, cy: number, x: number, y: number, w: number, h: number }} b
+   * @param {boolean} strong
+   * @param {number} scale
+   */
+  function drawLink(a, b, strong, scale) {
+    const p0 = edgeToward(a, b.cx, b.cy);
+    const p1 = edgeToward(b, a.cx, a.cy);
+    g.strokeStyle = strong ? COLORS.link : COLORS.linkDim;
+    g.lineWidth = Math.max(1.5, 2.25 * scale);
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(p0.x, p0.y);
+    g.lineTo(p1.x, p1.y);
+    g.stroke();
   }
 
   /** 是否应显示地牢小地图（小型月台且有地牢数据）。 */
@@ -248,114 +327,63 @@
   }
 
   /**
-   * 画走廊：按世界 left/right 投影成水平条，并短距贴齐同层房间边。
+   * 收集用于连线的边（优先 links；否则由走廊/楼梯 from–to 去重）。
    * @param {object} dungeon
-   * @param {object} corridor
-   * @param {Map<string, ReturnType<typeof roomRect>>} roomRects
-   * @param {{ pad: number, mapW: number, mapH: number }} view
+   * @returns {Array<{ fromRoomId: string, toRoomId: string }>}
    */
-  function drawCorridor(dungeon, corridor, roomRects, view) {
-    const a = project(dungeon, corridor.left, corridor.y, view);
-    const b = project(dungeon, corridor.right, corridor.y, view);
-    let x0 = Math.min(a.mx, b.mx);
-    let x1 = Math.max(a.mx, b.mx);
-    const midY = a.my;
-    const snapPad = 10;
-
-    const fromRect = corridor.fromRoomId ? roomRects.get(String(corridor.fromRoomId)) : null;
-    const toRect = corridor.toRoomId ? roomRects.get(String(corridor.toRoomId)) : null;
-
-    /**
-     * 仅当房间与走廊同层且边距很近时贴齐，避免跨层楼梯廊被拉成超长横条。
-     * @param {ReturnType<typeof roomRect>|null|undefined} rect
-     * @param {'left'|'right'} side
-     */
-    function maybeSnap(rect, side) {
-      if (!rect || Math.abs(rect.my - midY) > 4) return;
-      if (side === 'left') {
-        const edge = rect.x + rect.w;
-        if (Math.abs(edge - x0) <= snapPad) x0 = edge;
-      } else {
-        if (Math.abs(rect.x - x1) <= snapPad) x1 = rect.x;
-      }
+  function collectEdges(dungeon) {
+    /** @type {Map<string, { fromRoomId: string, toRoomId: string }>} */
+    const edgeMap = new Map();
+    /** 登记无向边。 */
+    function add(a, b) {
+      if (!a || !b || a === b) return;
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      if (!edgeMap.has(key)) edgeMap.set(key, { fromRoomId: a, toRoomId: b });
     }
-
-    if (fromRect && toRect && fromRect.x <= toRect.x) {
-      maybeSnap(fromRect, 'left');
-      maybeSnap(toRect, 'right');
-    } else if (fromRect && toRect) {
-      maybeSnap(toRect, 'left');
-      maybeSnap(fromRect, 'right');
-    } else {
-      maybeSnap(fromRect, 'left');
-      maybeSnap(fromRect, 'right');
-      maybeSnap(toRect, 'left');
-      maybeSnap(toRect, 'right');
+    for (const link of dungeon.links || []) {
+      add(link.fromRoomId, link.toRoomId);
     }
-
-    /* 保证隧道在小地图上至少可见（房间框贴死时仍画短廊） */
-    if (x1 - x0 < 8) {
-      const mid = (x0 + x1) * 0.5;
-      x0 = mid - 4;
-      x1 = mid + 4;
-      if (fromRect && toRect && fromRect.x <= toRect.x) {
-        x0 = Math.max(x0, fromRect.x + fromRect.w);
-        x1 = Math.min(x1, toRect.x);
-        if (x1 - x0 < 6) {
-          x0 = fromRect.x + fromRect.w;
-          x1 = x0 + 6;
-        }
-      }
+    for (const c of dungeon.corridors || []) {
+      add(c.fromRoomId, c.toRoomId);
     }
-    if (x1 - x0 < 1) return;
-    const thickness = Math.max(5, (fromRect?.h || toRect?.h || a.rowH * 0.35) * 0.42);
-    const y = midY - thickness * 0.5;
-    g.fillStyle = COLORS.corridor;
-    g.fillRect(x0, y, x1 - x0, thickness);
-    g.strokeStyle = COLORS.corridorStroke;
-    g.lineWidth = 1;
-    g.strokeRect(x0 + 0.5, y + 0.5, x1 - x0 - 1, thickness - 1);
+    for (const s of dungeon.stairs || []) {
+      add(s.fromRoomId, s.toRoomId);
+    }
+    return [...edgeMap.values()];
   }
 
   /**
-   * 画楼梯：竖条按楼梯中点 X 投影，贴齐上下层已绘房间边。
+   * 边是否因 FoW 可见（任一端已探索，或对应廊/梯可见）。
    * @param {object} dungeon
-   * @param {object} stair
-   * @param {Map<string, ReturnType<typeof roomRect>>} roomRects
-   * @param {{ pad: number, mapW: number, mapH: number }} view
+   * @param {{ fromRoomId: string, toRoomId: string }} edge
    */
-  function drawStair(dungeon, stair, roomRects, view) {
-    const midX = (stair.x0 + stair.x1) * 0.5;
-    const lo = project(dungeon, midX, stair.lowerY, view);
-    const hi = project(dungeon, midX, stair.upperY, view);
-    const fromRect = stair.fromRoomId ? roomRects.get(String(stair.fromRoomId)) : null;
-    const toRect = stair.toRoomId ? roomRects.get(String(stair.toRoomId)) : null;
-    const cx = lo.mx;
-
-    let y0 = Math.min(lo.my, hi.my);
-    let y1 = Math.max(lo.my, hi.my);
-    if (toRect) y0 = toRect.y + toRect.h;
-    if (fromRect) y1 = fromRect.y;
-    if (y1 - y0 < 1) return;
-
-    const thickness = 6;
-    const x = cx - thickness * 0.5;
-    g.fillStyle = COLORS.stair;
-    g.fillRect(x, y0, thickness, y1 - y0);
-    g.strokeStyle = COLORS.stairStroke;
-    g.lineWidth = 1;
-    g.strokeRect(x + 0.5, y0 + 0.5, thickness - 1, y1 - y0 - 1);
-    g.strokeStyle = 'rgb(212 212 220 / 0.35)';
-    g.beginPath();
-    for (let y = y0 + 3; y < y1 - 2; y += 4) {
-      g.moveTo(x + 1, y);
-      g.lineTo(x + thickness - 1, y);
+  function isEdgeVisible(dungeon, edge) {
+    const Fow = window.LpDungeonFow;
+    if (!Fow) return true;
+    if (Fow.isRoomExplored?.(edge.fromRoomId) || Fow.isRoomExplored?.(edge.toRoomId)) {
+      return true;
     }
-    g.stroke();
+    for (const c of dungeon.corridors || []) {
+      if (
+        (c.fromRoomId === edge.fromRoomId && c.toRoomId === edge.toRoomId) ||
+        (c.fromRoomId === edge.toRoomId && c.toRoomId === edge.fromRoomId)
+      ) {
+        if (Fow.isCorridorVisible?.(c)) return true;
+      }
+    }
+    for (const s of dungeon.stairs || []) {
+      if (
+        (s.fromRoomId === edge.fromRoomId && s.toRoomId === edge.toRoomId) ||
+        (s.fromRoomId === edge.toRoomId && s.toRoomId === edge.fromRoomId)
+      ) {
+        if (Fow.isStairVisible?.(s)) return true;
+      }
+    }
+    return false;
   }
 
   /**
-   * 将房间/廊/梯绘入静态离屏层（FoW 或尺寸变化时调用）。
+   * 将房间/连线绘入静态离屏层（FoW 或尺寸变化时调用）。
    * @param {PaintCache} cache
    * @param {object} dungeon
    * @param {number} cssW
@@ -376,47 +404,40 @@
     staticCtx.imageSmoothingEnabled = true;
     g = staticCtx;
 
-    const { pad, mapW, mapH } = view;
+    const { mapW, mapH } = view;
     g.fillStyle = COLORS.bg;
     g.fillRect(0, 0, mapW, mapH);
-    const floors = dungeon.floors || [dungeon.bounds.floorY];
-    const rowH = (mapH - pad * 2) / Math.max(1, floors.length);
-    g.strokeStyle = COLORS.grid;
-    g.lineWidth = 1;
-    for (let i = 0; i < floors.length; i += 1) {
-      const y = mapH - pad - (i + 0.5) * rowH;
-      g.beginPath();
-      g.moveTo(pad, y);
-      g.lineTo(mapW - pad, y);
-      g.stroke();
-    }
 
     const Fow = window.LpDungeonFow;
     /** @type {Map<string, ReturnType<typeof roomRect>>} */
     const roomRects = new Map();
     for (const room of dungeon.rooms || []) {
-      if (Fow && !Fow.isRoomExplored?.(room.id)) continue;
       roomRects.set(String(room.id), roomRect(dungeon, room, view));
     }
-    for (const c of dungeon.corridors || []) {
-      if (Fow && !Fow.isCorridorVisible?.(c)) continue;
-      drawCorridor(dungeon, c, roomRects, view);
+
+    for (const edge of collectEdges(dungeon)) {
+      if (!isEdgeVisible(dungeon, edge)) continue;
+      const a = roomRects.get(String(edge.fromRoomId));
+      const b = roomRects.get(String(edge.toRoomId));
+      if (!a || !b) continue;
+      const both =
+        !Fow ||
+        (Fow.isRoomExplored?.(edge.fromRoomId) && Fow.isRoomExplored?.(edge.toRoomId));
+      drawLink(a, b, both, iconScale);
     }
-    for (const s of dungeon.stairs || []) {
-      if (Fow && !Fow.isStairVisible?.(s)) continue;
-      drawStair(dungeon, s, roomRects, view);
-    }
+
     for (const room of dungeon.rooms || []) {
-      if (Fow && !Fow.isRoomExplored?.(room.id)) continue;
+      const explored = !Fow || Fow.isRoomExplored?.(room.id);
+      if (!explored) continue;
       const rect = roomRects.get(String(room.id));
       if (!rect) continue;
       roundRectPath(rect.x, rect.y, rect.w, rect.h, 3 * iconScale);
-      g.fillStyle = COLORS.roomFill;
+      g.fillStyle = roomFill(room.type);
       g.fill();
       g.strokeStyle = COLORS.roomStroke;
       g.lineWidth = 1.25 * iconScale;
       g.stroke();
-      drawRoomIcon(room.type, rect.cx, rect.cy, Math.min(9 * iconScale, rect.h * 0.45));
+      drawRoomIcon(room.type, rect.cx, rect.cy, Math.min(9 * iconScale, rect.h * 0.4));
     }
 
     cache.exploredGen = Fow?.getExploredGen?.() ?? 0;
@@ -485,7 +506,9 @@
       const p = project(dungeon, px, floorY, view);
       drawMarker(p.mx, p.my, COLORS.player, COLORS.playerRing, 4 * markerScale);
       if (labelEl) {
-        labelEl.textContent = `F${p.fi + 1}/${(dungeon.floors || []).length || 1}`;
+        const explored = Fow?.getExploredRoomIds?.()?.length ?? 0;
+        const total = (dungeon.rooms || []).length;
+        labelEl.textContent = `${explored}/${total}`;
       }
     }
 
@@ -496,8 +519,15 @@
         if (remote._lpScene !== 'platform') continue;
         const rx = Number(remote.x);
         if (!Number.isFinite(rx)) continue;
+        const prefer =
+          remote._lpFloorY != null && Number.isFinite(Number(remote._lpFloorY))
+            ? Number(remote._lpFloorY)
+            : undefined;
         const floorY =
-          window.LpPlatform?.platformFloorAt?.(rx) ??
+          window.LpPlatform?.platformFloorAt?.(rx, {
+            preferY: prefer,
+            remember: false,
+          }) ??
           dungeon.spawnFloorY ??
           dungeon.bounds.floorY;
         if (Fow?.isWorldPosVisible && !Fow.isWorldPosVisible(rx, floorY)) continue;

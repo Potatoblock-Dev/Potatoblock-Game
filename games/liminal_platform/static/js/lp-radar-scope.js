@@ -1552,6 +1552,7 @@
     const cx = cssW / 2;
     const cy = cssH / 2;
     const radius = Math.min(cx, cy) - PPI_RADIUS_INSET_PX;
+    /* 线性 PPI：像素半径 / 当前量程。远站压缩在 LpPlatform.radarBlipRouteDist（随量程外扩）。 */
     const scale = radius / rangeWorld;
 
     refreshLockAimFromSticks();

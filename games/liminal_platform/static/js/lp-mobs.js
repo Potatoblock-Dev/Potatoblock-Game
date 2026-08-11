@@ -1,8 +1,11 @@
 /**
- * 小怪：地面「保龄球」沿轨跑到车头/车尾再跳入车厢；空中「气球」经连接处进入后在舱内漂浮。
- * 封闭图形填充经 LpMobBubbleFill（半透明泡泡/流动 + 流动彩虹描边）；视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路。
+ * 小怪：地面「保龄球」沿轨跑到车头/车尾再跳入车厢；巨型投掷保龄沿轨追车并向舱内投球（不进舱）；
+ * 空中「气球」经连接处进入后在舱内漂浮。
+ * 轨面怪经 LpTrack.scrollWithTrack 与轨同相；相对地速另加卷动补偿以保持对火车的接近感。
+ * 封闭图形填充经 LpMobBubbleFill；视觉轨见 LpTrack（TRACK_Y）；本模块只读 Spec / 轨高做寻路。
  * 命中半径即 profile.radius（弹道 / 玩家碰撞随放大同步）。kind 仍为 ground|air（战斗/传感）。
  * 月台前后缓冲（LpPlatform.isNearPlatformMobSafeZone）：轨面/俯冲不朝火车靠拢，波次不刷列车怪；地牢追逐不受影响。
+ * 列车行程 WAVE_PACKS：每程 seed⊕离站站序抽 mixed / bowling / balloon（boss 占位）；allowGround 含投掷种；地牢不受此表约束。
  * 地牢：敌房刷保龄球（贴地穿门追）+ 气球（房内漂浮）；走 LpDungeon.resolveBody，不穿实心墙。
  */
 (() => {
@@ -22,6 +25,40 @@
     hp: 18,
     damage: 12,
     knock: 420,
+    canEnterCabin: true,
+    scrollWithTrack: true,
+  };
+  /**
+   * 巨型追车投掷保龄：更大造型；相对地速高于满巡航卷动，可从后方追上；
+   * 向车厢内投掷小球；永不进舱（canEnterCabin=false）。
+   */
+  const THROWER = {
+    kind: 'ground',
+    species: 'bowling_thrower',
+    label: '巨型保龄球',
+    radius: 44,
+    color: '#3a2430',
+    stroke: '#1a0e14',
+    /**
+     * 相对地面的追车余速（px/s）；再叠加卷动补偿后，满巡航仍可从后方合拢。
+     * 约 0.22×满巡航卷动（~3300）→ 余速 ~720。
+     */
+    speed: 720,
+    jumpDuration: 0.58,
+    jumpPeakArt: 110,
+    hp: 48,
+    damage: 14,
+    knock: 480,
+    canEnterCabin: false,
+    scrollWithTrack: true,
+    /** 两次投掷间隔（秒）。 */
+    throwInterval: 2.1,
+    /** 投出小球半径。 */
+    throwRadius: 12,
+    /** 投球水平初速量级（px/s）；实际按目标距离微调。 */
+    throwSpeed: 640,
+    /** 可贴车抛射的侧翼外距（世界 px）。 */
+    throwStandoff: 70,
   };
   /** 空中气球：战斗角色 air（kind 稳定；species/label 供显示）。 */
   const AIR = {
@@ -36,6 +73,8 @@
     hp: 10,
     damage: 8,
     knock: 360,
+    canEnterCabin: true,
+    scrollWithTrack: false,
   };
 
   /** 保龄球 / 气球泡泡色板（偏暖 vs 偏冷；RGB 供 LpMobBubbleFill）。 */
@@ -79,11 +118,63 @@
      * 原 3；抬到 5，同上。
      */
     maxAir: 5,
+    /** 场上巨型投掷保龄上限（计入 maxGround）。 */
+    maxThrower: 2,
+    /** 地面簇主刷抽成投掷种的概率。 */
+    throwerChance: 0.22,
     /** 开局 / reset 后先进入的阶段：'wave' | 'calm'。 */
     startPhase: 'wave',
     /** 进入 wave 后首次刷怪前的短延迟（秒）。 */
     waveLeadIn: 0.35,
   };
+
+  /** 投掷保龄球弹道（飞向舱内；不随轨卷动）。 */
+  /** @type {Array<{ x: number, y: number, vx: number, vy: number, r: number, damage: number, knock: number, life: number, fromId: string }>} */
+  let thrownBalls = [];
+
+  /**
+   * 列车行程波次包（站→站一程一种组成）。
+   * allowGround / allowAir 门控刷种；weight 相对权重抽选；boss 占位 weight:0，日后加 weight + tickBossPack 即可。
+   */
+  const WAVE_PACKS = {
+    mixed: {
+      id: 'mixed',
+      label: '混合',
+      allowGround: true,
+      allowAir: true,
+      weight: 50,
+    },
+    bowling: {
+      id: 'bowling',
+      label: '仅保龄球',
+      allowGround: true,
+      allowAir: false,
+      weight: 25,
+    },
+    balloon: {
+      id: 'balloon',
+      label: '仅气球',
+      allowGround: false,
+      allowAir: true,
+      weight: 25,
+    },
+    boss: {
+      id: 'boss',
+      label: 'Boss',
+      allowGround: false,
+      allowAir: false,
+      weight: 0,
+      reserved: true,
+    },
+  };
+
+  /** 与 WAVE_PACKS 抽选混用的流盐（避免与地牢/雷达同 hash 撞车）。 */
+  const WAVE_PACK_STREAM = 0x57415645;
+
+  /** @type {typeof WAVE_PACKS[keyof typeof WAVE_PACKS]} */
+  let activeWavePack = WAVE_PACKS.mixed;
+  /** 当前包所绑定的离站站序；-1 表示尚未锁定。 */
+  let activeWavePackLeg = -1;
 
   /**
    * 刷怪距编组侧翼的外扩（世界 px）与雷达环带权重。
@@ -121,6 +212,25 @@
   const RAIL_CENTER_LIFT = 0;
   /** 刷怪相对视野再外扩的半径倍率，避免边缘半露。 */
   const SPAWN_VIEW_PAD = 1.35;
+
+  /**
+   * 地牢刷怪：相对相机 / 玩家的安全距与激活门槛。
+   * 布局点只作候选；真正落点在接近时再算，避免进站视野中央 pop-in。
+   */
+  const DUNGEON_SPAWN = {
+    /** 相对玩家脚点的最小水平间距（世界 px）。 */
+    playerClearance: 160,
+    /** 同房已刷怪之间的最小水平间距。 */
+    minPeerGap: 72,
+    /** 场上地牢怪上限（含未激活排队不占；激活时再检）。 */
+    maxAlive: 12,
+    /** 玩家到房间 AABB 的距离低于此则允许激活。 */
+    activatePlayerDist: 620,
+    /** 房间与视野相交检测时的外扩（世界 px）。 */
+    activateViewPad: 96,
+    /** 候选采样数（左右缘 + 布局点 + 随机）。 */
+    candidateTries: 10,
+  };
 
   /** 保龄球三脚爬行：周期频率（Hz，静止基速）；移动时再乘速度增益。 */
   const CRAWL_HZ = 1.35;
@@ -174,6 +284,17 @@
    * @type {{ left: number, right: number, top: number, bottom: number } | null}
    */
   let lastViewWorld = null;
+  /**
+   * 地牢待激活刷点（进站只入队；接近房间 / 视野边缘再物化）。
+   * @type {Array<{
+   *   spot: object,
+   *   room: object | null,
+   *   floorY: number,
+   *   ceilingY: number,
+   *   species: string,
+   * }>}
+   */
+  let pendingDungeonSpawns = [];
 
   /** 读取车厢规格。 */
   function spec() {
@@ -233,6 +354,43 @@
       y + pad < rect.top ||
       y - pad > rect.bottom
     );
+  }
+
+  /**
+   * 圆是否与视野矩形相交（含半径垫）。
+   * @param {number} x
+   * @param {number} y
+   * @param {number} radius
+   * @param {{ left: number, right: number, top: number, bottom: number } | null} rect
+   */
+  function intersectsView(x, y, radius, rect) {
+    if (!rect) return false;
+    const pad = radius * SPAWN_VIEW_PAD;
+    return !(
+      x + pad < rect.left ||
+      x - pad > rect.right ||
+      y + pad < rect.top ||
+      y - pad > rect.bottom
+    );
+  }
+
+  /**
+   * 列车波次偏好侧翼：卷动前进时偏车头（右），否则偏更靠屏外的一侧。
+   * @param {object} S
+   * @returns {boolean} true = 从左侧翼刷
+   */
+  function preferTrainSpawnFromLeft(S) {
+    const dScroll = Number(window.LpTrack?.getLastScrollDelta?.()) || 0;
+    /* 正卷动：轨面向 −X，旅行朝 +X → 车头/右侧更像「前方」。 */
+    if (dScroll > 0.35) return false;
+    if (dScroll < -0.35) return true;
+    const rect = lastViewWorld;
+    if (!rect || !S?.CARRIAGES?.length) return Math.random() < 0.5;
+    const flanks = trainFlankXs(S, S.scaleArt(180));
+    const leftOutside = rect.left - flanks.left;
+    const rightOutside = flanks.right - rect.right;
+    if (Math.abs(leftOutside - rightOutside) < 40) return Math.random() < 0.5;
+    return leftOutside >= rightOutside;
   }
 
   /**
@@ -322,6 +480,18 @@
       climbSpeed: profile.climbSpeed || profile.diveSpeed || profile.speed,
       jumpDuration: profile.jumpDuration || 0.58,
       jumpPeakArt: profile.jumpPeakArt || 110,
+      /** 是否允许跳入/钻入车厢；投掷种为 false。 */
+      canEnterCabin: profile.canEnterCabin !== false,
+      /**
+       * 轨面锚定：本帧随 LpTrack.scrollWithTrack 平移（与尘土/白标同相）。
+       * 进舱后应关掉；地牢房内默认 false。
+       */
+      scrollWithTrack: !!profile.scrollWithTrack,
+      throwInterval: profile.throwInterval || 0,
+      throwRadius: profile.throwRadius || 12,
+      throwSpeed: profile.throwSpeed || 0,
+      throwStandoff: profile.throwStandoff || 70,
+      throwCd: 0,
       hitCd: 0,
       hitFlash: 0,
       bob: Math.random() * Math.PI * 2,
@@ -338,6 +508,67 @@
       armor: 0,
       ...extra,
     };
+  }
+
+  /**
+   * 当前轨面卷动速率（世界 px/s）；火车前进时为正，锚定物世界 X 每秒减少该值。
+   * @returns {number}
+   */
+  function trackScrollSpeedPx() {
+    const spd = Number(window.LpTrainDrive?.getState?.()?.speed) || 0;
+    const rate = Number(window.LpTrack?.getScrollPxPerSpeed?.()) || 0;
+    return spd * rate;
+  }
+
+  /**
+   * 朝目标奔跑时抵消轨面卷动所需的速度补偿（仅对抗方向）。
+   * 与 scrollWithTrack 联用，使 profile.speed 仍表示「相对火车」的合拢余速。
+   * @param {number} fromX
+   * @param {number} toX
+   * @returns {number}
+   */
+  function trackScrollAssistToward(fromX, toX) {
+    const scrollSpd = trackScrollSpeedPx();
+    if (!(Math.abs(scrollSpd) > 1e-3)) return 0;
+    if (toX > fromX && scrollSpd > 0) return scrollSpd;
+    if (toX < fromX && scrollSpd < 0) return Math.abs(scrollSpd);
+    return 0;
+  }
+
+  /**
+   * 轨面锚定怪本帧随轨平移（LpTrack.scrollWithTrack）。
+   * @param {ReturnType<typeof createMob>} m
+   */
+  function applyMobTrackScroll(m) {
+    if (!m?.scrollWithTrack) return;
+    const fn = window.LpTrack?.scrollWithTrack || window.LpTrack?.applyTrackScroll;
+    fn?.(m);
+  }
+
+  /**
+   * 轨面相对奔跑速度 = 物种余速 + 卷动对抗补偿。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {number} targetX
+   * @param {number} [mul]
+   * @returns {number}
+   */
+  function railRunSpeed(m, targetX, mul = 1) {
+    const base = (Number(m.speed) || 0) * mul;
+    return base + trackScrollAssistToward(m.x, targetX);
+  }
+
+  /** 是否为永不进舱的轨面投掷种。 */
+  function isRailThrower(m) {
+    return m?.species === 'bowling_thrower' || m?.canEnterCabin === false;
+  }
+
+  /** 统计存活某物种数量。 */
+  function countSpecies(species) {
+    let n = 0;
+    for (const m of mobs) {
+      if (isMobCombatActive(m) && m.species === species) n += 1;
+    }
+    return n;
   }
 
   /**
@@ -530,30 +761,39 @@
 
   /**
    * 地面怪：轨面 Y，X = 侧翼外扩（近/中/远）并保证在视野外；入口固定同侧车尾/车头。
+   * 可选投掷种（更大、不进舱）；默认按 WAVE.throwerChance 抽取。
    * @param {object} S
-   * @param {{ fromLeft?: boolean, extra?: number, jitterX?: number } | null | undefined} [opts]
+   * @param {{ fromLeft?: boolean, extra?: number, jitterX?: number, thrower?: boolean } | null | undefined} [opts]
    */
   function spawnGround(S, opts) {
     const cars = S.CARRIAGES;
     if (!cars.length) return null;
-    const fromLeft = opts?.fromLeft != null ? !!opts.fromLeft : Math.random() < 0.5;
+    const fromLeft =
+      opts?.fromLeft != null ? !!opts.fromLeft : preferTrainSpawnFromLeft(S);
     const extra =
       opts?.extra != null && Number.isFinite(opts.extra)
         ? Math.max(0, opts.extra)
         : pickSpawnRangePlan().extra;
+    const wantThrower =
+      opts?.thrower === true ||
+      (opts?.thrower !== false &&
+        countSpecies('bowling_thrower') < (WAVE.maxThrower || 0) &&
+        Math.random() < (WAVE.throwerChance || 0));
+    const profile = wantThrower ? THROWER : GROUND;
     const entry = pickGroundEntry(S, fromLeft ? 'tail' : 'head');
     if (!entry) return null;
     const rect = lastViewWorld;
-    const margin = GROUND.radius * SPAWN_VIEW_PAD + S.scaleArt(24);
+    const margin = profile.radius * SPAWN_VIEW_PAD + S.scaleArt(24);
     let x = flankSpawnX(S, fromLeft, extra, opts?.jitterX);
     if (rect) {
       x = fromLeft
         ? Math.min(x, rect.left - margin)
         : Math.max(x, rect.right + margin);
     }
-    const y = bowlingCenterY(railY(S), GROUND.radius);
-    return createMob(GROUND, x, y, {
+    const y = bowlingCenterY(railY(S), profile.radius);
+    return createMob(profile, x, y, {
       phase: 'rail',
+      scrollWithTrack: true,
       targetX: entry.jumpX,
       targetY: y,
       jumpX: entry.jumpX,
@@ -562,6 +802,7 @@
       carId: entry.carId,
       entryEnd: entry.end,
       spawnBandExtra: extra,
+      throwCd: wantThrower ? 0.6 + Math.random() * 0.8 : 0,
     });
   }
 
@@ -575,7 +816,8 @@
     if (!gaps.length) return null;
     const gap =
       opts?.gap || gaps[Math.floor(Math.random() * gaps.length)];
-    const fromLeft = opts?.fromLeft != null ? !!opts.fromLeft : Math.random() < 0.5;
+    const fromLeft =
+      opts?.fromLeft != null ? !!opts.fromLeft : preferTrainSpawnFromLeft(S);
     const extra =
       opts?.extra != null && Number.isFinite(opts.extra)
         ? Math.max(0, opts.extra)
@@ -620,7 +862,7 @@
    */
   function spawnGroundCluster(S, forcedPlan) {
     const plan = forcedPlan || pickSpawnRangePlan();
-    const fromLeft = Math.random() < 0.5;
+    const fromLeft = preferTrainSpawnFromLeft(S);
     const room = WAVE.maxGround - countKind('ground');
     if (room <= 0) return 0;
     const companions = Math.max(0, plan.companions | 0);
@@ -635,6 +877,8 @@
         fromLeft,
         extra: plan.extra,
         jitterX: jitter,
+        /* 同簇伴侣不抽投掷种，避免侧翼挤两只巨球 */
+        thrower: i === 0 ? undefined : false,
       });
       if (!g) break;
       mobs.push(g);
@@ -653,7 +897,7 @@
     const gaps = listCouplerGaps(S);
     if (!gaps.length) return 0;
     const plan = forcedPlan || pickSpawnRangePlan();
-    const fromLeft = Math.random() < 0.5;
+    const fromLeft = preferTrainSpawnFromLeft(S);
     const gap = gaps[Math.floor(Math.random() * gaps.length)];
     const room = WAVE.maxAir - countKind('air');
     if (room <= 0) return 0;
@@ -694,6 +938,78 @@
     return lo + Math.random() * (hi - lo);
   }
 
+  /**
+   * 混合 worldSeed 与站序（优先复用 LpDungeon.hash2，保证与房间其它派生一致）。
+   * @param {number} worldSeed
+   * @param {number} stationIndex
+   * @returns {number}
+   */
+  function hashSeedStation(worldSeed, stationIndex) {
+    const D = window.LpDungeon;
+    if (D?.hash2) return D.hash2(Number(worldSeed), stationIndex | 0) >>> 0;
+    let h = (Number(worldSeed) >>> 0) ^ Math.imul((stationIndex | 0) + 1, 0x9e3779b9);
+    h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+    return h >>> 0;
+  }
+
+  /**
+   * 由世界种子与离站站序确定性抽选本程波次包 id（忽略 weight≤0 的占位，如 boss）。
+   * @param {number} worldSeed
+   * @param {number} stationIndex
+   * @returns {string}
+   */
+  function pickWavePackId(worldSeed, stationIndex) {
+    const entries = Object.values(WAVE_PACKS).filter((p) => (p.weight | 0) > 0);
+    if (!entries.length) return 'mixed';
+    let total = 0;
+    for (const e of entries) total += e.weight | 0;
+    const h = (hashSeedStation(worldSeed, stationIndex) ^ WAVE_PACK_STREAM) >>> 0;
+    let r = h % total;
+    for (const e of entries) {
+      r -= e.weight | 0;
+      if (r < 0) return e.id;
+    }
+    return entries[entries.length - 1].id;
+  }
+
+  /**
+   * 锁定本程波次包（离站站序）；副作用：写入 activeWavePack / activeWavePackLeg。
+   * @param {number} stationIndex
+   * @returns {typeof WAVE_PACKS[keyof typeof WAVE_PACKS]}
+   */
+  function beginTravelLeg(stationIndex) {
+    const seed = window.LpPlatform?.getWorldSeed?.() ?? 0;
+    const id = pickWavePackId(seed, stationIndex | 0);
+    activeWavePack = WAVE_PACKS[id] || WAVE_PACKS.mixed;
+    activeWavePackLeg = stationIndex | 0;
+    return activeWavePack;
+  }
+
+  /**
+   * 行驶中若站序变化（或尚未锁定）则刷新本程包；停靠时仅 force 才预锁定（便于开局/调试）。
+   * @param {boolean} [force]
+   */
+  function syncTravelWavePack(force) {
+    const station = window.LpPlatform?.getStationIndex?.() ?? 0;
+    if (window.LpPlatform?.isAtPlatform?.()) {
+      if (force) beginTravelLeg(station);
+      return;
+    }
+    if (!force && activeWavePackLeg === (station | 0)) return;
+    beginTravelLeg(station);
+  }
+
+  /**
+   * 预留：boss 程刷怪钩子（当前 pack.weight=0，不会进入）。
+   * 日后在此生成 boss，并让 tickWaveDirector 在 pack.id==='boss' 时调用。
+   * @param {object} _S
+   * @param {number} _dt
+   */
+  function tickBossPack(_S, _dt) {
+    /* reserved */
+  }
+
   /** 进入指定波次阶段并重置该阶段计时。 */
   function enterWavePhase(phase) {
     wavePhase = phase === 'calm' ? 'calm' : 'wave';
@@ -703,6 +1019,7 @@
 
   /** 清除列车波次怪（保留地牢怪）。 */
   function clearTrainWaveMobs() {
+    thrownBalls = [];
     const kept = mobs.filter((m) => m.dungeon);
     if (!mobs.length) return;
     if (!kept.length) {
@@ -715,8 +1032,9 @@
     window.LpAutoSensors?.setHostiles?.(listHostiles());
   }
 
-  /** 清除地牢怪。 */
+  /** 清除地牢怪与待激活刷点。 */
   function clearDungeonMobs() {
+    pendingDungeonSpawns = [];
     const before = mobs.length;
     mobs = mobs.filter((m) => !m.dungeon);
     if (mobs.length !== before) {
@@ -725,19 +1043,247 @@
   }
 
   /**
+   * 房间可走内区 X 界（避开侧墙 + 怪半径）。
+   * @param {object | null | undefined} room
+   * @param {number} radius
+   * @returns {{ left: number, right: number } | null}
+   */
+  function dungeonRoomWalkX(room, radius) {
+    const left = Number(room?.left);
+    const right = Number(room?.right);
+    if (!Number.isFinite(left) || !Number.isFinite(right) || right - left < 8) {
+      return null;
+    }
+    const wall = window.LpDungeon?.WALL_THICK ?? 20;
+    const pad = wall + Math.max(12, radius * 0.85);
+    const innerL = left + pad;
+    const innerR = right - pad;
+    if (innerR <= innerL) return null;
+    return { left: innerL, right: innerR };
+  }
+
+  /**
    * 地牢怪相对房间可走内区的左右界（避开侧墙厚度）。
    * @param {ReturnType<typeof createMob>} m
    * @returns {{ left: number, right: number } | null}
    */
   function dungeonRoomInnerX(m) {
-    const left = Number(m.roomLeft);
-    const right = Number(m.roomRight);
-    if (!Number.isFinite(left) || !Number.isFinite(right) || right - left < 8) {
-      return null;
+    return dungeonRoomWalkX(
+      { left: m.roomLeft, right: m.roomRight },
+      m.radius
+    );
+  }
+
+  /**
+   * 点到轴对齐房间的近似距离（在内为 0）。
+   * @param {object} room
+   * @param {number} px
+   * @param {number} py
+   */
+  function distToRoomAabb(room, px, py) {
+    const cx = Math.min(room.right, Math.max(room.left, px));
+    const cy = Math.min(room.floorY, Math.max(room.ceilingY, py));
+    const dx = px - cx;
+    const dy = py - cy;
+    return Math.hypot(dx, dy);
+  }
+
+  /**
+   * 房间是否已接近到该激活待刷点（玩家靠近或即将入镜）。
+   * @param {object} room
+   * @param {{ x: number, y: number } | null} player
+   * @param {{ left: number, right: number, top: number, bottom: number } | null} rect
+   */
+  function dungeonRoomReadyToActivate(room, player, rect) {
+    if (!room) return true;
+    if (player && Number.isFinite(player.x)) {
+      const py = Number.isFinite(player.y) ? player.y : room.floorY;
+      if (distToRoomAabb(room, player.x, py) <= DUNGEON_SPAWN.activatePlayerDist) {
+        return true;
+      }
     }
-    const wall = window.LpDungeon?.WALL_THICK ?? 20;
-    const pad = wall + m.radius * 0.85;
-    return { left: left + pad, right: right - pad };
+    if (!rect) return false;
+    const pad = DUNGEON_SPAWN.activateViewPad;
+    return !(
+      room.right < rect.left - pad ||
+      room.left > rect.right + pad ||
+      room.floorY < rect.top - pad ||
+      room.ceilingY > rect.bottom + pad
+    );
+  }
+
+  /**
+   * 在房内为地牢怪挑落点：优先屏外 / 远玩家 / 与同伴错开，绝不贴脚。
+   * @param {object | null} room
+   * @param {number} preferX 布局建议 X
+   * @param {number} y 圆心 Y（用于视野判定）
+   * @param {number} radius
+   * @param {{ x: number, y: number } | null} player
+   * @param {{ left: number, right: number, top: number, bottom: number } | null} rect
+   * @returns {number}
+   */
+  function pickDungeonSpawnX(room, preferX, y, radius, player, rect) {
+    const walk = dungeonRoomWalkX(room, radius);
+    if (!walk) return preferX;
+    const peers = [];
+    for (const m of mobs) {
+      if (!m.dungeon || !isMobCombatActive(m)) continue;
+      if (room?.id != null && m.roomId != null && String(m.roomId) !== String(room.id)) {
+        continue;
+      }
+      peers.push(m.x);
+    }
+    /** @type {number[]} */
+    const candidates = [preferX, walk.left + 4, walk.right - 4];
+    if (player && Number.isFinite(player.x)) {
+      candidates.push(
+        player.x < (walk.left + walk.right) * 0.5 ? walk.right - 8 : walk.left + 8
+      );
+    }
+    if (rect) {
+      candidates.push(rect.left - radius * 2, rect.right + radius * 2);
+    }
+    const span = walk.right - walk.left;
+    for (let i = 0; i < DUNGEON_SPAWN.candidateTries; i += 1) {
+      candidates.push(walk.left + Math.random() * span);
+    }
+
+    let bestX = Math.min(walk.right, Math.max(walk.left, preferX));
+    let bestScore = -Infinity;
+    for (const raw of candidates) {
+      const x = Math.min(walk.right, Math.max(walk.left, raw));
+      let score = 0;
+      if (isFullyOutsideView(x, y, radius, rect)) score += 120;
+      else if (!intersectsView(x, y, radius, rect)) score += 40;
+      else score -= 80;
+      if (player && Number.isFinite(player.x)) {
+        const d = Math.abs(x - player.x);
+        if (d < DUNGEON_SPAWN.playerClearance) score -= 200;
+        else score += Math.min(90, d * 0.12);
+      }
+      let peerOk = true;
+      for (const px of peers) {
+        if (Math.abs(x - px) < DUNGEON_SPAWN.minPeerGap) {
+          peerOk = false;
+          break;
+        }
+      }
+      if (!peerOk) score -= 150;
+      if (room?.id != null && window.LpDungeonFow?.isRoomExplored) {
+        if (!window.LpDungeonFow.isRoomExplored(room.id)) score += 12;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestX = x;
+      }
+    }
+    return bestX;
+  }
+
+  /**
+   * 统计场上地牢存活怪数量。
+   * @returns {number}
+   */
+  function countDungeonAlive() {
+    let n = 0;
+    for (const m of mobs) {
+      if (m.dungeon && isMobCombatActive(m)) n += 1;
+    }
+    return n;
+  }
+
+  /**
+   * 将一条地牢刷点物化为实体（落点经 FOV/玩家安全挑选）。
+   * @param {{
+   *   spot: object,
+   *   room: object | null,
+   *   floorY: number,
+   *   ceilingY: number,
+   *   species: string,
+   * }} entry
+   * @param {{ x: number, y: number } | null} player
+   * @returns {boolean}
+   */
+  function materializeDungeonSpawn(entry, player) {
+    if (countDungeonAlive() >= DUNGEON_SPAWN.maxAlive) return false;
+    const { room, floorY, ceilingY, species, spot } = entry;
+    const isBalloon = species === 'balloon' || species === 'air';
+    const profile = isBalloon ? AIR : GROUND;
+    const y = isBalloon
+      ? dungeonBalloonHoverY(floorY, ceilingY, profile.radius)
+      : bowlingCenterY(floorY, profile.radius);
+    const preferX = Number(spot.x) || (room ? (room.left + room.right) * 0.5 : 0);
+    const x = pickDungeonSpawnX(
+      room,
+      preferX,
+      y,
+      profile.radius,
+      player,
+      lastViewWorld
+    );
+    if (
+      player &&
+      Number.isFinite(player.x) &&
+      Math.abs(x - player.x) < DUNGEON_SPAWN.playerClearance * 0.55 &&
+      Math.abs((player.y || floorY) - floorY) < 120
+    ) {
+      return false;
+    }
+    if (lastViewWorld && intersectsView(x, y, profile.radius, lastViewWorld)) {
+      const viewW = lastViewWorld.right - lastViewWorld.left;
+      const midL = lastViewWorld.left + viewW * 0.22;
+      const midR = lastViewWorld.right - viewW * 0.22;
+      if (x > midL && x < midR) return false;
+    }
+    const m = createMob(profile, x, y, {
+      phase: 'dungeon',
+      dungeon: true,
+      floorY,
+      ceilingY,
+      roomId: spot.roomId || room?.id || null,
+      roomLeft: room?.left ?? null,
+      roomRight: room?.right ?? null,
+      targetX: x,
+      targetY: y,
+      vfxSeed: (spot.x || 0) * 0.13 + (spot.floorY || 0) * 0.07,
+    });
+    mobs.push(m);
+    return true;
+  }
+
+  /**
+   * 推进待激活地牢刷点：接近房间或即将入镜时再物化，避免中央 pop-in。
+   * @param {{ x: number, y: number } | null | undefined} player
+   */
+  function tickPendingDungeonSpawns(player) {
+    if (!pendingDungeonSpawns.length) return;
+    const pl =
+      player && Number.isFinite(player.x)
+        ? { x: player.x, y: Number(player.y) || 0 }
+        : null;
+    const rect = lastViewWorld;
+    let changed = false;
+    const rest = [];
+    for (const entry of pendingDungeonSpawns) {
+      if (countDungeonAlive() >= DUNGEON_SPAWN.maxAlive) {
+        rest.push(entry);
+        continue;
+      }
+      const room = entry.room;
+      if (room && !dungeonRoomReadyToActivate(room, pl, rect)) {
+        rest.push(entry);
+        continue;
+      }
+      if (materializeDungeonSpawn(entry, pl)) {
+        changed = true;
+      } else {
+        rest.push(entry);
+      }
+    }
+    pendingDungeonSpawns = rest;
+    if (changed) {
+      window.LpAutoSensors?.setHostiles?.(listHostiles());
+    }
   }
 
   /**
@@ -784,7 +1330,8 @@
   }
 
   /**
-   * 按地牢布局刷敌房怪（保龄球贴地 / 气球房内漂；均追逐玩家）。
+   * 按地牢布局入队敌房刷点（不立刻物化；接近时再按 FOV 落点）。
+   * 物种混合与布局坐标保留；压力仍按物化后的 mob id 一次计。
    * @param {object} layout LpDungeon.generate 结果
    */
   function spawnDungeonFromLayout(layout) {
@@ -796,7 +1343,7 @@
       if (room?.id != null) roomById.set(String(room.id), room);
     }
     for (const spot of layout.spawns) {
-      const room = roomById.get(String(spot.roomId || ''));
+      const room = roomById.get(String(spot.roomId || '')) || null;
       const floorY =
         Number(spot.floorY) ||
         Number(room?.floorY) ||
@@ -806,28 +1353,14 @@
         Number(spot.ceilingY) ||
         Number(room?.ceilingY) ||
         floorY - (window.LpDungeon?.ROOM_H || 634);
-      const x = Number(spot.x) || 0;
-      const species = String(spot.species || 'bowling');
-      const isBalloon = species === 'balloon' || species === 'air';
-      const profile = isBalloon ? AIR : GROUND;
-      const y = isBalloon
-        ? dungeonBalloonHoverY(floorY, ceilingY, profile.radius)
-        : bowlingCenterY(floorY, profile.radius);
-      const m = createMob(profile, x, y, {
-        phase: 'dungeon',
-        dungeon: true,
+      pendingDungeonSpawns.push({
+        spot,
+        room,
         floorY,
         ceilingY,
-        roomId: spot.roomId || room?.id || null,
-        roomLeft: room?.left ?? null,
-        roomRight: room?.right ?? null,
-        targetX: x,
-        targetY: y,
-        vfxSeed: (spot.x || 0) * 0.13 + (spot.floorY || 0) * 0.07,
+        species: String(spot.species || 'bowling'),
       });
-      mobs.push(m);
     }
-    window.LpAutoSensors?.setHostiles?.(listHostiles());
   }
 
   /**
@@ -872,7 +1405,7 @@
   }
 
   /**
-   * 波次导演：推进 wave/calm，仅在 wave 内按间隔尝试刷怪（受 caps 限制）。
+   * 波次导演：推进 wave/calm，仅在 wave 内按间隔尝试刷怪（受 caps + 本程 WAVE_PACK 限制）。
    * 每次尝试按 SPAWN_RANGE 权重在近/中/远刷簇，偏雷达中外环。
    * 月台前后缓冲区内不刷列车接近怪（场上已有怪由 AI 门控改缓退）。
    * @param {object} S
@@ -897,6 +1430,8 @@
       return;
     }
 
+    syncTravelWavePack(false);
+
     phaseTimer -= dt;
     if (phaseTimer <= 0) {
       enterWavePhase(wavePhase === 'wave' ? 'calm' : 'wave');
@@ -906,14 +1441,21 @@
     /* 月台前后缓冲：推进波次时钟但不刷接近火车的怪 */
     if (inPlatformTrainSafeZone()) return;
 
+    /* 预留 boss 程：不走普通地面/空中簇 */
+    if (activeWavePack.id === 'boss') {
+      tickBossPack(S, dt);
+      return;
+    }
+
     spawnTimer -= dt;
     if (spawnTimer > 0) return;
     spawnTimer = nextSpawnInterval();
 
-    if (countKind('ground') < WAVE.maxGround) {
+    const pack = activeWavePack;
+    if (pack.allowGround && countKind('ground') < WAVE.maxGround) {
       spawnGroundCluster(S);
     }
-    if (countKind('air') < WAVE.maxAir) {
+    if (pack.allowAir && countKind('air') < WAVE.maxAir) {
       spawnAirCluster(S);
     }
   }
@@ -943,12 +1485,13 @@
    * @param {number} dt
    */
   function tickGroundRailSafeHold(m, S, dt) {
+    applyMobTrackScroll(m);
     const ry = bowlingCenterY(railY(S), m.radius);
     m.y = ry;
     m.bob += dt * 3.4;
     const away = m.x < trainMidX(S) ? -1 : 1;
     const retreatX = m.x + away * S.scaleArt(120);
-    moveToward(m, retreatX, ry, m.speed * 0.32, dt);
+    moveToward(m, retreatX, ry, railRunSpeed(m, retreatX, 0.32), dt);
     m.y = ry;
   }
 
@@ -1037,12 +1580,15 @@
 
   /**
    * 进入跳入阶段：记录起落点，用抛物线弧进舱（非侧面爬升）。
+   * 同时解除轨面锚定（改钉车厢空间）。
    * @param {ReturnType<typeof createMob>} m
    * @param {object} S
    */
   function beginGroundJump(m, S) {
+    if (m.canEnterCabin === false) return;
     const landY = bowlingCenterY(m.floorY, m.radius);
     m.phase = 'jump';
+    m.scrollWithTrack = false;
     m.jumpT = 0;
     m.jumpFromX = m.x;
     m.jumpFromY = m.y;
@@ -1051,6 +1597,183 @@
     m.jumpPeak = S.scaleArt(m.jumpPeakArt || GROUND.jumpPeakArt);
     m.targetX = m.jumpToX;
     m.targetY = landY;
+  }
+
+  /**
+   * 投掷种贴车外站位 X：停在编组侧翼外，不越过车头/车尾入口。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object} S
+   * @returns {number}
+   */
+  function throwerHoldX(m, S) {
+    const standoff = Number(m.throwStandoff) || THROWER.throwStandoff;
+    const flanks = trainFlankXs(S, m.radius + standoff);
+    const mid = trainMidX(S);
+    return m.x < mid ? flanks.left : flanks.right;
+  }
+
+  /**
+   * 选取舱内投掷落点：优先玩家（若在走道舱内），否则随机一节走道点。
+   * @param {object} S
+   * @param {object|null} player
+   * @returns {{ x: number, y: number } | null}
+   */
+  function pickCabinThrowTarget(S, player) {
+    const cars = S.CARRIAGES;
+    if (!cars?.length) return null;
+    if (player && S.carriageAt?.(player.x)) {
+      return {
+        x: player.x,
+        y: bowlingCenterY(S.FLOOR_Y, 10),
+      };
+    }
+    const car = cars[Math.floor(Math.random() * cars.length)];
+    return {
+      x: car.worldX + S.WALK_LEFT + Math.random() * (S.WALK_RIGHT - S.WALK_LEFT),
+      y: bowlingCenterY(S.FLOOR_Y, 10),
+    };
+  }
+
+  /**
+   * 从投掷种生成一枚飞向舱内的保龄弹（弧线；不随轨卷动）。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object} S
+   * @param {object|null} player
+   */
+  function throwBowlingIntoCabin(m, S, player) {
+    const target = pickCabinThrowTarget(S, player);
+    if (!target) return;
+    const x0 = m.x;
+    const y0 = m.y - m.radius * 0.35;
+    const dx = target.x - x0;
+    const dy = target.y - y0;
+    const dist = Math.hypot(dx, dy) || 1;
+    const flight = Math.max(0.45, Math.min(1.35, dist / Math.max(280, m.throwSpeed || THROWER.throwSpeed)));
+    const vx = dx / flight;
+    const grav = 980;
+    const vy = dy / flight - 0.5 * grav * flight;
+    thrownBalls.push({
+      x: x0,
+      y: y0,
+      vx,
+      vy,
+      r: Number(m.throwRadius) || THROWER.throwRadius,
+      damage: m.damage,
+      knock: m.knock * 0.85,
+      life: flight + 0.85,
+      fromId: m.id,
+      grav,
+    });
+  }
+
+  /**
+   * 巨型投掷保龄：轨面锚定追到侧翼外站位，向舱内投球，永不跳入。
+   * @param {ReturnType<typeof createMob>} m
+   * @param {object} S
+   * @param {number} dt
+   * @param {object|null} player
+   */
+  function tickGroundThrower(m, S, dt, player) {
+    const ry = bowlingCenterY(railY(S), m.radius);
+    m.y = ry;
+    m.bob += dt * 4.4;
+    m.phase = 'rail';
+    m.scrollWithTrack = true;
+    m.canEnterCabin = false;
+
+    if (inPlatformTrainSafeZone()) {
+      tickGroundRailSafeHold(m, S, dt);
+      return;
+    }
+
+    applyMobTrackScroll(m);
+    const holdX = throwerHoldX(m, S);
+    m.targetX = holdX;
+    m.jumpX = holdX;
+    moveToward(m, holdX, ry, railRunSpeed(m, holdX), dt);
+    m.y = ry;
+
+    /* 挡在舱界外：禁止越过侧翼入口进入走道 X */
+    const flanks = trainFlankXs(S, 0);
+    if (m.x > flanks.left && m.x < flanks.right) {
+      m.x = m.x < trainMidX(S) ? flanks.left : flanks.right;
+    }
+
+    m.throwCd = Math.max(0, (m.throwCd || 0) - dt);
+    const near =
+      Math.abs(m.x - holdX) < S.scaleArt(220) ||
+      Math.abs(m.x - flanks.left) < S.scaleArt(280) ||
+      Math.abs(m.x - flanks.right) < S.scaleArt(280);
+    if (m.throwCd <= 0 && near) {
+      throwBowlingIntoCabin(m, S, player);
+      m.throwCd = Number(m.throwInterval) || THROWER.throwInterval;
+    }
+  }
+
+  /**
+   * 推进投掷弹：抛物线飞行，命中玩家（舱内）则回调 onHit。
+   * @param {number} dt
+   * @param {object|null} player
+   * @param {Function|undefined} onHit
+   */
+  function tickThrownBalls(dt, player, onHit) {
+    for (let i = thrownBalls.length - 1; i >= 0; i -= 1) {
+      const b = thrownBalls[i];
+      b.life -= dt;
+      b.vy += (b.grav || 980) * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      let hit = false;
+      if (player && !player.invuln) {
+        const px = player.x;
+        const py = player.y - player.height * 0.45;
+        const dx = b.x - px;
+        const dy = b.y - py;
+        const rx = b.r + player.halfW;
+        const ry = b.r + player.height * 0.45;
+        if ((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1) {
+          const knockDir = dx === 0 ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(-dx) || 1;
+          onHit?.({
+            mobId: b.fromId,
+            kind: 'ground',
+            species: 'bowling_thrower',
+            damage: b.damage,
+            knockVx: knockDir * b.knock,
+            knockVy: -Math.abs(b.knock) * 0.55,
+            fromX: b.x,
+            fromY: b.y,
+          });
+          hit = true;
+        }
+      }
+      const floorY = spec()?.FLOOR_Y;
+      if (hit || b.life <= 0 || (floorY != null && b.y - b.r > floorY + 40)) {
+        thrownBalls.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * 绘制投掷中的保龄小球。
+   * @param {CanvasRenderingContext2D} ctx
+   */
+  function drawThrownBalls(ctx) {
+    const Bub = window.LpMobBubbleFill;
+    for (const b of thrownBalls) {
+      ctx.save();
+      fillStrokeCircle(
+        ctx,
+        Bub,
+        b.x,
+        b.y,
+        b.r,
+        { color: THROWER.color, stroke: THROWER.stroke, radius: b.r },
+        `throw:${b.fromId}:${b.x | 0}`,
+        { palette: BOWLING_PALETTE, count: 4 },
+        0.14
+      );
+      ctx.restore();
+    }
   }
 
   /**
@@ -1082,20 +1805,29 @@
 
   /**
    * 地面：轨面横移到车头/车尾 → 跳入走道 → 舱内游荡。
+   * 轨面阶段随轨卷动；投掷种只追侧翼并投球、不进舱。
    * 月台前后缓冲区内轨面阶段不向火车接近（缓退）。
    * @param {ReturnType<typeof createMob>} m
+   * @param {object} S
+   * @param {number} dt
+   * @param {object|null} [player]
    */
-  function tickGround(m, S, dt) {
+  function tickGround(m, S, dt, player) {
+    if (isRailThrower(m)) {
+      tickGroundThrower(m, S, dt, player || null);
+      return;
+    }
     const ry = bowlingCenterY(railY(S), m.radius);
     if (m.phase === 'rail') {
       if (inPlatformTrainSafeZone()) {
         tickGroundRailSafeHold(m, S, dt);
         return;
       }
+      applyMobTrackScroll(m);
       m.y = ry;
       // 轨面横移时推进 bob，供爬行周期慢速循环。
       m.bob += dt * 5.2;
-      if (moveToward(m, m.jumpX, ry, m.speed, dt)) {
+      if (moveToward(m, m.jumpX, ry, railRunSpeed(m, m.jumpX), dt)) {
         beginGroundJump(m, S);
       }
       return;
@@ -1104,7 +1836,8 @@
       tickGroundJump(m, S, dt);
       return;
     }
-    /* inside：在走道内左右爬 */
+    /* inside：在走道内左右爬（已离轨，不再 scrollWithTrack） */
+    m.scrollWithTrack = false;
     m.bob += dt * 6;
     const bobY = bowlingCenterY(S.FLOOR_Y, m.radius) + Math.sin(m.bob) * 1.5;
     if (moveToward(m, m.targetX, bobY, m.speed * 0.85, dt)) {
@@ -1227,6 +1960,7 @@
 
     const player = ctx.player || null;
     const onHit = ctx.onHit;
+    if (dungeonMode) tickPendingDungeonSpawns(player);
 
     for (const m of mobs) {
       if (!isMobCombatActive(m)) continue;
@@ -1235,7 +1969,7 @@
       const px = m.x;
       const py = m.y;
       if (m.dungeon || m.phase === 'dungeon') tickDungeon(m, dt, player);
-      else if (m.kind === 'ground') tickGround(m, S, dt);
+      else if (m.kind === 'ground') tickGround(m, S, dt, player);
       else tickAir(m, S, dt);
       if (dt > 1e-6) {
         m.vx = (m.x - px) / dt;
@@ -1243,6 +1977,8 @@
       }
       collidePlayer(m, player, onHit);
     }
+
+    tickThrownBalls(dt, player, onHit);
 
     purgeDeadMobs();
     window.LpAutoSensors?.setHostiles?.(listHostiles());
@@ -1611,7 +2347,11 @@
     for (const m of mobs) {
       if (!isMobCombatActive(m)) continue;
       ctx.save();
-      if (m.kind === 'ground' || m.species === 'bowling') {
+      if (
+        m.kind === 'ground' ||
+        m.species === 'bowling' ||
+        m.species === 'bowling_thrower'
+      ) {
         drawBowlingBall(ctx, m, Bub);
       } else {
         drawBalloon(ctx, m, Bub);
@@ -1619,14 +2359,18 @@
       drawHpPip(ctx, m);
       ctx.restore();
     }
+    drawThrownBalls(ctx);
   }
 
   /**
-   * 是否视为「车厢内」：跳入/钻入/舱内游荡（轨面 / 空中俯冲中不算）。
+   * 是否视为「车厢内」：跳入/钻入/舱内游荡（轨面 / 空中俯冲 / 投掷种不算）。
    * @param {ReturnType<typeof createMob>} m
    */
   function isMobInsideCabin(m) {
-    const p = m?.phase;
+    if (!m || m.canEnterCabin === false || m.species === 'bowling_thrower') {
+      return false;
+    }
+    const p = m.phase;
     return p === 'inside' || p === 'jump' || p === 'enter';
   }
 
@@ -1639,11 +2383,14 @@
   }
 
   /**
-   * 可对玩家造成接触伤害：必须存活，且处于跳入/钻入/舱内（避免轨面/俯冲穿地板幽灵击退）。
+   * 可对玩家造成接触伤害：舱内列车怪，或地牢怪（phase dungeon）。
+   * 轨面 / 俯冲中不计，避免穿地板幽灵击退。
    * @param {ReturnType<typeof createMob> | null | undefined} m
    */
   function canMobContactPlayer(m) {
-    return isMobCombatActive(m) && isMobInsideCabin(m);
+    if (!isMobCombatActive(m)) return false;
+    if (m.dungeon || m.phase === 'dungeon') return true;
+    return isMobInsideCabin(m);
   }
 
   /**
@@ -1680,37 +2427,47 @@
   }
 
   /**
-   * 清空小怪并重启波次（调试 / 开局）；开场刷近距一对保压力，再刷中/远簇上雷达外环。
+   * 清空小怪并重启波次（调试 / 开局）；开场刷近距压力 + 中/远簇，均受本程 WAVE_PACK 门控。
    * @param {{ view?: object, viewW?: number, viewH?: number }} [ctx] 可选相机视野，保证开场刷怪也在屏外
    */
   function reset(ctx) {
     mobs = [];
+    thrownBalls = [];
+    pendingDungeonSpawns = [];
     window.LpMobBubbleFill?.reset?.();
     window.LpMobDeathFx?.clear?.();
     rememberView(ctx);
+    syncTravelWavePack(true);
     enterWavePhase(WAVE.startPhase === 'calm' ? 'calm' : 'wave');
     const S = spec();
     if (!S || wavePhase !== 'wave') return;
-    /* 近距开场压力（各 2，不组强制簇）。 */
-    for (let i = 0; i < 2; i += 1) {
-      const g = spawnGround(S, {
-        fromLeft: i === 0,
-        extra:
-          SPAWN_RANGE.nearExtraMin +
-          Math.random() *
-            (SPAWN_RANGE.nearExtraMax - SPAWN_RANGE.nearExtraMin),
-      });
-      if (g) mobs.push(g);
+    const pack = activeWavePack;
+    if (pack.id === 'boss') return;
+    /* 近距开场压力（各最多 2，不组强制簇）；首只优先投掷种。 */
+    if (pack.allowGround) {
+      for (let i = 0; i < 2; i += 1) {
+        const g = spawnGround(S, {
+          fromLeft: i === 0,
+          thrower: i === 0,
+          extra:
+            SPAWN_RANGE.nearExtraMin +
+            Math.random() *
+              (SPAWN_RANGE.nearExtraMax - SPAWN_RANGE.nearExtraMin),
+        });
+        if (g) mobs.push(g);
+      }
     }
-    for (let i = 0; i < 2; i += 1) {
-      const a = spawnAir(S, {
-        fromLeft: i === 0,
-        extra:
-          SPAWN_RANGE.nearExtraMin +
-          Math.random() *
-            (SPAWN_RANGE.nearExtraMax - SPAWN_RANGE.nearExtraMin),
-      });
-      if (a) mobs.push(a);
+    if (pack.allowAir) {
+      for (let i = 0; i < 2; i += 1) {
+        const a = spawnAir(S, {
+          fromLeft: i === 0,
+          extra:
+            SPAWN_RANGE.nearExtraMin +
+            Math.random() *
+              (SPAWN_RANGE.nearExtraMax - SPAWN_RANGE.nearExtraMin),
+        });
+        if (a) mobs.push(a);
+      }
     }
     /* 中距 + 远距开场雷达簇（强制距带，避免再抽到 near）。 */
     const midExtra =
@@ -1719,26 +2476,38 @@
     const farExtra =
       SPAWN_RANGE.farExtraMin +
       Math.random() * (SPAWN_RANGE.farExtraMax - SPAWN_RANGE.farExtraMin);
-    spawnGroundCluster(S, {
-      band: 'mid',
-      extra: midExtra,
-      companions: SPAWN_RANGE.midCompanions,
-    });
-    spawnAirCluster(S, {
-      band: 'far',
-      extra: farExtra,
-      companions: SPAWN_RANGE.farCompanions,
-    });
+    if (pack.allowGround) {
+      spawnGroundCluster(S, {
+        band: 'mid',
+        extra: midExtra,
+        companions: SPAWN_RANGE.midCompanions,
+      });
+    }
+    if (pack.allowAir) {
+      spawnAirCluster(S, {
+        band: 'far',
+        extra: farExtra,
+        companions: SPAWN_RANGE.farCompanions,
+      });
+    }
   }
 
-  /** 调试只读：当前波次阶段与剩余时间。 */
+  /** 调试只读：当前波次阶段、剩余时间与本程包。 */
   function getWaveState() {
     return {
       phase: wavePhase,
       phaseTimer,
       spawnTimer,
+      packId: activeWavePack.id,
+      packLabel: activeWavePack.label,
+      packLeg: activeWavePackLeg,
       config: { ...WAVE },
     };
+  }
+
+  /** 调试只读：当前行程波次包。 */
+  function getActiveWavePack() {
+    return { ...activeWavePack, leg: activeWavePackLeg };
   }
 
   /**
@@ -1787,6 +2556,12 @@
     };
   }
 
+  window.addEventListener('liminal:platform-depart', (ev) => {
+    const from = Number(ev?.detail?.stationIndex);
+    beginTravelLeg(Number.isFinite(from) ? from : 0);
+    enterWavePhase(WAVE.startPhase === 'calm' ? 'calm' : 'wave');
+  });
+
   window.LpMobs = {
     tick,
     draw,
@@ -1795,14 +2570,24 @@
     damageMob,
     probeSegmentHit,
     getWaveState,
+    getActiveWavePack,
+    beginTravelLeg,
     spawnDungeonFromLayout,
     clearDungeonMobs,
     clearTrainWaveMobs,
     /** 可调波次参数（就地改数字即可热调；改 duration 等需等下阶段切换生效）。 */
     WAVE,
+    /** 行程波次包表（可热调 weight；改后下一程 beginTravelLeg 生效）。 */
+    WAVE_PACKS,
     /** 可调刷怪距带（近/中/远外扩与权重；热调后下次刷怪生效）。 */
     SPAWN_RANGE,
+    /** 地牢刷怪 FOV / 密度参数（热调后下一物化生效）。 */
+    DUNGEON_SPAWN,
+    /** 巨型投掷保龄配置（可就地热调 speed / throwInterval）。 */
+    THROWER,
     /** 调试只读。 */
     getMobs: () => mobs.slice(),
+    /** 调试：待激活地牢刷点。 */
+    getPendingDungeonSpawns: () => pendingDungeonSpawns.slice(),
   };
 })();

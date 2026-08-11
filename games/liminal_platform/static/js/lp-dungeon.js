@@ -5,8 +5,7 @@
 (() => {
   /**
    * 车厢足迹（与 carriage-spec 走道宽 × 舱内净空对齐；缺 Spec 时用 WORLD_SCALE=0.88 常量）。
-   * 房间宽 ≈ 1.0–2.0× 走道宽。
-   * 高：地牢无车厢贴图作参照，1× 舱高会显成扁条；用 ≈2.25× 舱高给足净空。
+   * 房间宽 ≈ 1.4–2.45× 走道宽；高约 2.55× 舱高，侧视更大。
    */
   const _car = window.LiminalCarriageSpec;
   const CAR_WALK_W = _car
@@ -15,26 +14,41 @@
   const CAR_CABIN_H = _car ? _car.CABIN_CEIL_INSET : 320 * 0.88; /* ≈282 */
 
   /* 层间空气隙 + 同层走廊保证房间 AABB 互不贴边 */
-  const ROOM_H = Math.round(CAR_CABIN_H * 2.25); /* ≈634：约 2.25× 舱高，避免扁条 */
-  const ROOM_AIR_GAP = 160; /* 上下房间体积之间的空隙 */
-  const FLOOR_GAP = ROOM_H + ROOM_AIR_GAP; /* ≈794：楼层地板间距 */
+  const ROOM_H = Math.round(CAR_CABIN_H * 2.55); /* ≈719 */
+  const ROOM_AIR_GAP = 180;
+  const FLOOR_GAP = ROOM_H + ROOM_AIR_GAP; /* ≈899 */
   const BASE_FLOOR_Y = 720;
-  const ROOM_W_MIN = Math.round(CAR_WALK_W); /* ≈1332：1× 走道宽 */
-  const ROOM_W_SPAN = Math.round(CAR_WALK_W); /* 宽 ≈1332–2664（至 2×） */
-  const CORRIDOR_GAP_MIN = 260; /* 同层房间隔离最小间距（走廊隧道） */
-  const CORRIDOR_GAP_SPAN = 140; /* 走廊 260–400 */
-  const ROOM_PAD = 12; /* 任意两房间 AABB 最小外扩间隔 */
-  const STAIR_LANDING = 72; /* 楼梯前后水平廊 stub */
+  const ROOM_W_MIN = Math.round(CAR_WALK_W * 1.4); /* ≈1865 */
+  const ROOM_W_SPAN = Math.round(CAR_WALK_W * 1.05); /* 宽 ≈1865–3265 */
+  const CORRIDOR_GAP_MIN = 280;
+  const CORRIDOR_GAP_SPAN = 160;
+  const ROOM_PAD = 16;
+  const STAIR_LANDING = 72;
   const STAIR_STEP_W = 36;
   const STAIR_STEP_H = 28;
   const MARGIN = 80;
-  const WALL_THICK = 20; /* 房间侧墙 / 顶板厚度 */
-  const DOOR_H = 220; /* 门洞净高（略高于立绘，与走廊同高） */
-  const CORRIDOR_H = 220; /* 走廊隧道净高 */
+  const WALL_THICK = 20;
+  const DOOR_H = 220;
+  const CORRIDOR_H = 220;
   const PLAYER_HALF_W = 22;
   const PLAYER_BODY_H = 70;
-  /** 最坏 3 层×3 房×2 厢宽 + 廊/梯 ≈28k；留余量 */
-  const MAX_WIDTH = 32000;
+  /** 枢纽发散布局：左右 + 对角可达更宽 */
+  const MAX_WIDTH = 48000;
+  /** 单房最多走廊条数（与草图「最多 3 条」对齐）。 */
+  const MAX_ROOM_DEGREE = 3;
+  /**
+   * 侧视平面 6 向：水平 L/R + 四对角（无纯竖直）。
+   * dc: 列步进；db: 楼层带步进（+1 = 更高 = 更小 floorY）。
+   */
+  const BRANCH_DIRS = [
+    { id: 'E', dc: 1, db: 0 },
+    { id: 'W', dc: -1, db: 0 },
+    { id: 'NE', dc: 1, db: 1 },
+    { id: 'NW', dc: -1, db: 1 },
+    { id: 'SE', dc: 1, db: -1 },
+    { id: 'SW', dc: -1, db: -1 },
+  ];
+  const BRANCH_OPP = { E: 'W', W: 'E', NE: 'SW', SW: 'NE', NW: 'SE', SE: 'NW' };
 
   /** 与服务端 inventory_authority.PLATFORM_LOOT_TABLE 对齐。 */
   const PLATFORM_LOOT_TABLE = [
@@ -147,7 +161,7 @@
     walks.push({ left, right, y });
   }
 
-  /** 在两层之间造阶梯走道（从 lowerY 爬到 upperY，Y 越小越高）。 */
+  /** 在两层之间造阶梯走道（X 增大时从 lowerY 爬到 upperY，Y 越小越高）。 */
   function buildStairs(walks, x0, lowerY, upperY) {
     const rise = lowerY - upperY;
     if (rise <= 0) return x0;
@@ -159,6 +173,190 @@
       x += STAIR_STEP_W;
     }
     return x;
+  }
+
+  /** 在两层之间造下行阶梯（X 增大时从 upperY 落到 lowerY）。 */
+  function buildStairsDown(walks, x0, upperY, lowerY) {
+    const drop = lowerY - upperY;
+    if (drop <= 0) return x0;
+    const steps = Math.max(2, Math.ceil(drop / STAIR_STEP_H));
+    let x = x0;
+    for (let i = 0; i <= steps; i += 1) {
+      const y = upperY + (drop * i) / steps;
+      pushWalk(walks, x, x + STAIR_STEP_W + 4, y);
+      x += STAIR_STEP_W;
+    }
+    return x;
+  }
+
+  /** 估算跨层楼梯水平跨度（含两端 landing；与 buildStairs 步进次数对齐）。 */
+  function estimateStairSpan(rise) {
+    const steps = Math.max(2, Math.ceil(Math.abs(rise) / STAIR_STEP_H));
+    return STAIR_LANDING * 2 + (steps + 1) * STAIR_STEP_W;
+  }
+
+  /** Fisher–Yates 打乱数组（原地）。 */
+  function shuffleInPlace(arr, rng) {
+    for (let i = arr.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = arr[i];
+      arr[i] = arr[j];
+      arr[j] = tmp;
+    }
+    return arr;
+  }
+
+  /**
+   * 按方向在已有房间旁试算新房 AABB（含走廊空隙）。
+   * @param {object} from
+   * @param {{ dc: number, db: number }} dir
+   * @param {number} width
+   * @param {() => number} rng
+   */
+  function tentativeRoomBeside(from, dir, width, rng) {
+    const rise = Math.abs(dir.db) * FLOOR_GAP;
+    const need =
+      dir.db === 0
+        ? CORRIDOR_GAP_MIN + Math.floor(rng() * CORRIDOR_GAP_SPAN)
+        : Math.max(
+            CORRIDOR_GAP_MIN + Math.floor(rng() * CORRIDOR_GAP_SPAN),
+            estimateStairSpan(rise) + 80
+          );
+    const floorY = from.floorY - dir.db * FLOOR_GAP;
+    let left;
+    if (dir.dc > 0) left = from.right + need;
+    else left = from.left - need - width;
+    return {
+      left,
+      right: left + width,
+      floorY,
+      ceilingY: floorY - ROOM_H,
+    };
+  }
+
+  /**
+   * 新房试算体积是否与已有房间隔离。
+   * @param {object} candidate
+   * @param {object[]} rooms
+   */
+  function fitsIsolated(candidate, rooms) {
+    for (const room of rooms) {
+      if (roomsAabbOverlap(candidate, room, ROOM_PAD)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * 铺通两房间：同层水平廊；跨层则两端 stub + 上行/下行楼梯。
+   * @param {object[]} walks
+   * @param {object[]} corridors
+   * @param {object[]} stairs
+   * @param {object} from
+   * @param {object} to
+   */
+  function connectRooms(walks, corridors, stairs, from, to) {
+    const leftRoom = from.left <= to.left ? from : to;
+    const rightRoom = leftRoom === from ? to : from;
+    leftRoom.doorR = true;
+    rightRoom.doorL = true;
+    const fromId = from.id;
+    const toId = to.id;
+
+    if (Math.abs(leftRoom.floorY - rightRoom.floorY) < 2) {
+      pushCorridor(
+        walks,
+        corridors,
+        leftRoom.right,
+        rightRoom.left,
+        leftRoom.floorY,
+        leftRoom.floor,
+        fromId,
+        toId
+      );
+      return;
+    }
+
+    const gapL = leftRoom.right;
+    const gapR = rightRoom.left;
+    const stub = STAIR_LANDING;
+    pushCorridor(walks, corridors, gapL, gapL + stub, leftRoom.floorY, leftRoom.floor, fromId, toId);
+
+    let x = gapL + stub;
+    if (leftRoom.floorY > rightRoom.floorY) {
+      const x1 = buildStairs(walks, x, leftRoom.floorY, rightRoom.floorY);
+      stairs.push({
+        x0: x,
+        x1,
+        lowerY: leftRoom.floorY,
+        upperY: rightRoom.floorY,
+        floorFrom: leftRoom.floor,
+        floorTo: rightRoom.floor,
+        fromRoomId: fromId,
+        toRoomId: toId,
+      });
+      x = x1;
+    } else {
+      const x1 = buildStairsDown(walks, x, leftRoom.floorY, rightRoom.floorY);
+      stairs.push({
+        x0: x,
+        x1,
+        lowerY: rightRoom.floorY,
+        upperY: leftRoom.floorY,
+        floorFrom: leftRoom.floor,
+        floorTo: rightRoom.floor,
+        fromRoomId: fromId,
+        toRoomId: toId,
+      });
+      x = x1;
+    }
+
+    if (x < gapR) {
+      pushCorridor(
+        walks,
+        corridors,
+        x,
+        gapR,
+        rightRoom.floorY,
+        rightRoom.floor,
+        fromId,
+        toId
+      );
+    } else {
+      pushWalk(walks, Math.max(gapR - 12, x - STAIR_STEP_W), gapR, rightRoom.floorY);
+    }
+  }
+
+  /**
+   * 将全部几何沿 X 平移，使最左房间落在 margin 内。
+   * 含 walls：须与 rooms/walks 同移，否则碰撞/绘制墙体停在 shift 前坐标。
+   * @param {object} layout
+   * @param {number} shiftX
+   */
+  function shiftLayoutX(layout, shiftX) {
+    if (!shiftX) return;
+    for (const room of layout.rooms) {
+      room.left += shiftX;
+      room.right += shiftX;
+    }
+    for (const w of layout.walks) {
+      w.left += shiftX;
+      w.right += shiftX;
+    }
+    for (const c of layout.corridors) {
+      c.left += shiftX;
+      c.right += shiftX;
+    }
+    for (const s of layout.stairs) {
+      s.x0 += shiftX;
+      s.x1 += shiftX;
+    }
+    for (const sp of layout.spawns) {
+      sp.x += shiftX;
+    }
+    for (const wall of layout.walls || []) {
+      wall.left += shiftX;
+      wall.right += shiftX;
+    }
   }
 
   /**
@@ -375,179 +573,227 @@
   }
 
   /**
-   * 生成小型地牢布局：房间 AABB 互不贴边，仅走廊 / 楼梯廊连通。
+   * 生成小型地牢：安全屋为根的枢纽/分叉图。
+   * 6 向走廊（水平 + 对角），单房最多 3 条边；房间 AABB 仅经走廊/楼梯连通。
    * @param {number} worldSeed
    * @param {number} stationIndex
    */
   function generate(worldSeed, stationIndex) {
     const sub = hash2(worldSeed, stationIndex);
     const rng = mulberry32(sub);
-    const floorCount = 2 + Math.floor(rng() * 2); /* 2–3 */
     const rooms = [];
     const walks = [];
     const corridors = [];
     const stairs = [];
     const spawns = [];
+    const links = [];
 
-    let maxRight = MARGIN;
-    /** 下一层房间起点（层间串接，避免跨层房间 X 重叠）。 */
-    let cursor = MARGIN + 40 + Math.floor(rng() * 60);
-    const floorYs = [];
-    for (let f = 0; f < floorCount; f += 1) {
-      floorYs.push(BASE_FLOOR_Y - f * FLOOR_GAP);
+    /** @type {Map<string, number>} */
+    const degree = new Map();
+    /** @type {Map<string, Set<string>>} */
+    const usedDirs = new Map();
+    /** @type {Map<string, object>} */
+    const byCell = new Map();
+
+    const targetRooms = 5 + Math.floor(rng() * 4); /* 5–8 */
+    const originX = 20000;
+    const safeW = ROOM_W_MIN + Math.floor(rng() * ROOM_W_SPAN);
+    const safe = {
+      id: 'r0-0',
+      type: 'safehouse',
+      floor: 0,
+      band: 0,
+      col: 0,
+      left: originX,
+      right: originX + safeW,
+      floorY: BASE_FLOOR_Y,
+      ceilingY: BASE_FLOOR_Y - ROOM_H,
+      doorL: false,
+      doorR: false,
+    };
+    rooms.push(safe);
+    degree.set(safe.id, 0);
+    usedDirs.set(safe.id, new Set());
+    byCell.set('0:0', safe);
+    pushWalk(walks, safe.left, safe.right, safe.floorY);
+
+    /** @type {object[]} */
+    const frontier = [safe];
+
+    /**
+     * 从 from 沿 dir 生长一间新房并连廊；失败返回 false。
+     * @param {object} from
+     * @param {(typeof BRANCH_DIRS)[number]} dir
+     */
+    function tryBranch(from, dir) {
+      if ((degree.get(from.id) || 0) >= MAX_ROOM_DEGREE) return false;
+      const fromUsed = usedDirs.get(from.id);
+      if (fromUsed.has(dir.id)) return false;
+
+      const ncol = (from.col || 0) + dir.dc;
+      const nband = (from.band || 0) + dir.db;
+      const cellKey = `${ncol}:${nband}`;
+      if (byCell.has(cellKey)) return false;
+
+      const w = ROOM_W_MIN + Math.floor(rng() * ROOM_W_SPAN);
+      const box = tentativeRoomBeside(from, dir, w, rng);
+      if (!fitsIsolated(box, rooms)) return false;
+
+      const room = {
+        id: `r${nband}-${ncol}`,
+        type: 'enemy',
+        floor: 0,
+        band: nband,
+        col: ncol,
+        left: box.left,
+        right: box.right,
+        floorY: box.floorY,
+        ceilingY: box.ceilingY,
+        doorL: false,
+        doorR: false,
+      };
+      rooms.push(room);
+      degree.set(room.id, 0);
+      usedDirs.set(room.id, new Set());
+      byCell.set(cellKey, room);
+      pushWalk(walks, room.left, room.right, room.floorY);
+
+      connectRooms(walks, corridors, stairs, from, room);
+      links.push({ fromRoomId: from.id, toRoomId: room.id, dir: dir.id });
+
+      degree.set(from.id, (degree.get(from.id) || 0) + 1);
+      degree.set(room.id, 1);
+      fromUsed.add(dir.id);
+      usedDirs.get(room.id).add(BRANCH_OPP[dir.id]);
+
+      if ((degree.get(room.id) || 0) < MAX_ROOM_DEGREE) frontier.push(room);
+      return true;
     }
 
-    /** @type {object[]|null} */
-    let prevFloorRooms = null;
-
-    for (let f = 0; f < floorCount; f += 1) {
-      const floorY = floorYs[f];
-      const floorRooms = [];
-
-      /* 层间：仅楼梯廊连接上一层末房 → 本层首房 */
-      if (f > 0 && prevFloorRooms?.length) {
-        const lowerRoom = prevFloorRooms[prevFloorRooms.length - 1];
-        lowerRoom.doorR = true;
-        const lowerY = floorYs[f - 1];
-        const upperY = floorY;
-        const approachL = lowerRoom.right;
-        const approachR = approachL + STAIR_LANDING;
-        pushCorridor(
-          walks,
-          corridors,
-          approachL,
-          approachR,
-          lowerY,
-          f - 1,
-          lowerRoom.id,
-          null
-        );
-        const stairX0 = approachR;
-        const stairX1 = buildStairs(walks, stairX0, lowerY, upperY);
-        const landL = stairX1;
-        const landR = landL + STAIR_LANDING;
-        pushCorridor(walks, corridors, landL, landR, upperY, f, null, null);
-        stairs.push({
-          x0: stairX0,
-          x1: stairX1,
-          lowerY,
-          upperY,
-          floorFrom: f - 1,
-          floorTo: f,
-          fromRoomId: lowerRoom.id,
-          toRoomId: null,
-        });
-        cursor = landR;
-        maxRight = Math.max(maxRight, landR);
+    let guard = 0;
+    while (rooms.length < targetRooms && frontier.length && guard < 200) {
+      guard += 1;
+      const safeDeg = degree.get(safe.id) || 0;
+      /* 前期优先从安全屋抽枝，形成枢纽；其后偏向前沿分叉 */
+      let fi;
+      const safeFi = frontier.indexOf(safe);
+      if (safeDeg < Math.min(MAX_ROOM_DEGREE, 2) && safeFi >= 0 && rng() < 0.85) {
+        fi = safeFi;
+      } else if (rng() < 0.65) {
+        fi = frontier.length - 1;
+      } else {
+        fi = Math.floor(rng() * frontier.length);
       }
-
-      const roomN = 2 + Math.floor(rng() * 2);
-      for (let r = 0; r < roomN; r += 1) {
-        if (r > 0) {
-          const gap = CORRIDOR_GAP_MIN + Math.floor(rng() * CORRIDOR_GAP_SPAN);
-          const corrL = cursor;
-          const corrR = cursor + gap;
-          floorRooms[r - 1].doorR = true;
-          pushCorridor(
-            walks,
-            corridors,
-            corrL,
-            corrR,
-            floorY,
-            f,
-            floorRooms[r - 1].id,
-            null
-          );
-          cursor = corrR;
-        }
-        const w = ROOM_W_MIN + Math.floor(rng() * ROOM_W_SPAN);
-        const left = cursor;
-        const right = left + w;
-        const room = {
-          id: `r${f}-${r}`,
-          type: 'enemy',
-          floor: f,
-          left,
-          right,
-          floorY,
-          ceilingY: floorY - ROOM_H,
-          doorL: r > 0 || f > 0,
-          doorR: false,
-        };
-        rooms.push(room);
-        floorRooms.push(room);
-        if (r > 0) {
-          corridors[corridors.length - 1].toRoomId = room.id;
-        }
-        if (f > 0 && r === 0) {
-          /* 回填楼梯廊两端：下层接近廊 + 上层落脚廊 + stairs.toRoomId */
-          const landCorr = corridors[corridors.length - 1];
-          const approachCorr = corridors[corridors.length - 2];
-          landCorr.fromRoomId = approachCorr.fromRoomId;
-          landCorr.toRoomId = room.id;
-          approachCorr.toRoomId = room.id;
-          stairs[stairs.length - 1].toRoomId = room.id;
-        }
-        pushWalk(walks, left, right, floorY);
-        cursor = right;
-        maxRight = Math.max(maxRight, right);
+      const from = frontier[fi];
+      if ((degree.get(from.id) || 0) >= MAX_ROOM_DEGREE) {
+        frontier.splice(fi, 1);
+        continue;
       }
+      const dirs = shuffleInPlace(BRANCH_DIRS.slice(), rng);
+      let grew = false;
+      for (const dir of dirs) {
+        if (rooms.length >= targetRooms) break;
+        if ((degree.get(from.id) || 0) >= MAX_ROOM_DEGREE) break;
+        if (tryBranch(from, dir)) {
+          grew = true;
+          break;
+        }
+      }
+      if (!grew) frontier.splice(fi, 1);
+    }
 
-      prevFloorRooms = floorRooms;
+    /* 楼层带 → floor 下标（0 = 最低带 = 最大 floorY） */
+    const floorYs = [...new Set(rooms.map((r) => r.floorY))].sort((a, b) => b - a);
+    for (const room of rooms) {
+      room.floor = floorYs.indexOf(room.floorY);
+    }
+    for (const c of corridors) {
+      let best = 0;
+      let bestD = Infinity;
+      for (let i = 0; i < floorYs.length; i += 1) {
+        const d = Math.abs(floorYs[i] - c.y);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      c.floor = best;
+    }
+    for (const s of stairs) {
+      const from = rooms.find((r) => r.id === s.fromRoomId);
+      const to = rooms.find((r) => r.id === s.toRoomId);
+      if (from) s.floorFrom = from.floor;
+      if (to) s.floorTo = to.floor;
     }
 
     warnIfRoomsNotIsolated(rooms);
 
-    const walls = buildWalls(rooms, corridors);
-
-    /* 分配房间类型：1 安全屋、≥1 仓库、其余敌人 */
-    const order = rooms.map((_, i) => i);
-    for (let i = order.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(rng() * (i + 1));
-      const tmp = order[i];
-      order[i] = order[j];
-      order[j] = tmp;
+    /* 安全屋已固定；其余洗牌分配仓库 / 敌区 */
+    const nonSafe = rooms.filter((r) => r.type !== 'safehouse');
+    shuffleInPlace(nonSafe, rng);
+    if (nonSafe.length) nonSafe[0].type = 'warehouse';
+    for (let i = 1; i < nonSafe.length; i += 1) {
+      nonSafe[i].type = 'enemy';
     }
-    const safeIdx = order[0];
-    const whIdx = order[1] != null ? order[1] : order[0];
-    rooms[safeIdx].type = 'safehouse';
-    rooms[whIdx].type = 'warehouse';
-    for (let i = 0; i < rooms.length; i += 1) {
-      if (rooms[i].type === 'enemy') {
-        const n = 1 + Math.floor(rng() * 3);
-        const pad = WALL_THICK + 40; /* 避开侧墙厚度 + 怪半径余量 */
-        const innerL = rooms[i].left + pad;
-        const innerR = rooms[i].right - pad;
-        for (let s = 0; s < n; s += 1) {
-          const t = (s + 1) / (n + 1);
-          let x = rooms[i].left + (rooms[i].right - rooms[i].left) * t;
-          if (innerR > innerL) {
-            x = Math.min(innerR, Math.max(innerL, x));
-          }
-          /* 气球约 35%；保龄球其余 — 对齐压力表 balloon+3 / bowling+7 */
-          const species = rng() < 0.35 ? 'balloon' : 'bowling';
-          spawns.push({
-            x,
-            floorY: rooms[i].floorY,
-            ceilingY: rooms[i].ceilingY,
-            roomId: rooms[i].id,
-            species,
-          });
-        }
+
+    for (const room of rooms) {
+      if (room.type !== 'enemy') continue;
+      const n = 1 + Math.floor(rng() * 3);
+      const pad = WALL_THICK + 40;
+      const innerL = room.left + pad;
+      const innerR = room.right - pad;
+      /* 偏两侧三分点，减少死中央叠怪；最终落点仍由 LpMobs FOV 物化再调。 */
+      const EDGE_T = [0.2, 0.5, 0.8];
+      for (let s = 0; s < n; s += 1) {
+        const t = EDGE_T[s] != null ? EDGE_T[s] : (s + 1) / (n + 1);
+        let x = room.left + (room.right - room.left) * t;
+        if (innerR > innerL) x = Math.min(innerR, Math.max(innerL, x));
+        const species = rng() < 0.35 ? 'balloon' : 'bowling';
+        spawns.push({
+          x,
+          floorY: room.floorY,
+          ceilingY: room.ceilingY,
+          roomId: room.id,
+          species,
+        });
       }
     }
 
-    const safe = rooms[safeIdx];
-    const warehouse = rooms[whIdx];
-    const spawnX = (safe.left + safe.right) * 0.5;
-    const boardX = safe.left + 70;
-    /* 安全屋右侧：连通列车仓储车厢（与回车点错开） */
-    const vehicleStorageX = Math.max(boardX + 170, safe.right - 90);
+    const walls = buildWalls(rooms, corridors);
+
+    const safeRoom = rooms.find((r) => r.type === 'safehouse') || rooms[0];
+    const warehouse = rooms.find((r) => r.type === 'warehouse') || safeRoom;
+    const spawnX = (safeRoom.left + safeRoom.right) * 0.5;
+    const boardX = safeRoom.left + 70;
+    const vehicleStorageX = Math.max(boardX + 170, safeRoom.right - 90);
     const warehouseX = (warehouse.left + warehouse.right) * 0.5;
 
-    const width = Math.max(1200, maxRight + MARGIN);
-    const height = BASE_FLOOR_Y + 180;
-    const topY = floorYs[floorYs.length - 1] - ROOM_H - 40;
+    let minLeft = Infinity;
+    let maxRight = -Infinity;
+    let minCeil = Infinity;
+    let maxFloor = -Infinity;
+    for (const room of rooms) {
+      minLeft = Math.min(minLeft, room.left);
+      maxRight = Math.max(maxRight, room.right);
+      minCeil = Math.min(minCeil, room.ceilingY);
+      maxFloor = Math.max(maxFloor, room.floorY);
+    }
+    const shiftX = MARGIN + 40 - minLeft;
+    /* walls 与房间同批平移，否则 resolveBody / 绘制错位约 |shiftX| */
+    const layout = { rooms, walks, corridors, stairs, spawns, walls };
+    shiftLayoutX(layout, shiftX);
+    minLeft += shiftX;
+    maxRight += shiftX;
+
+    const width = Math.max(1200, Math.min(MAX_WIDTH, maxRight + MARGIN));
+    const height = Math.max(BASE_FLOOR_Y, maxFloor) + 180;
+    const topY = minCeil - 40;
+    const mapBounds = {
+      minX: minLeft - 40,
+      maxX: maxRight + 40,
+      minY: minCeil - 40,
+      maxY: maxFloor + 40,
+    };
 
     return {
       kind: 'small',
@@ -558,24 +804,26 @@
       topY,
       baseFloorY: BASE_FLOOR_Y,
       floors: floorYs,
+      mapBounds,
+      links,
       rooms,
       corridors,
       walls,
       stairs,
       walks,
       spawns,
-      spawnX,
-      spawnFloorY: safe.floorY,
+      spawnX: spawnX + shiftX,
+      spawnFloorY: safeRoom.floorY,
       spots: [
         {
           id: 'platform-board',
           action: 'boardTrain',
           actionLabel: '返回列车',
-          worldX: boardX,
+          worldX: boardX + shiftX,
           interactRadiusX: 110,
           rect: {
-            x: boardX - 70,
-            y: safe.floorY - 160,
+            x: boardX + shiftX - 70,
+            y: safeRoom.floorY - 160,
             w: 140,
             h: 160,
           },
@@ -584,11 +832,11 @@
           id: 'platform-vehicle-storage',
           action: 'openVehicleStorage',
           actionLabel: '打开车辆仓库',
-          worldX: vehicleStorageX,
+          worldX: vehicleStorageX + shiftX,
           interactRadiusX: 120,
           rect: {
-            x: vehicleStorageX - 80,
-            y: safe.floorY - 140,
+            x: vehicleStorageX + shiftX - 80,
+            y: safeRoom.floorY - 140,
             w: 160,
             h: 140,
           },
@@ -597,10 +845,10 @@
           id: 'platform-dungeon-warehouse',
           action: 'openPlatformStorage',
           actionLabel: '打开地牢仓库',
-          worldX: warehouseX,
+          worldX: warehouseX + shiftX,
           interactRadiusX: 120,
           rect: {
-            x: warehouseX - 80,
+            x: warehouseX + shiftX - 80,
             y: warehouse.floorY - 140,
             w: 160,
             h: 140,
@@ -803,5 +1051,7 @@
     CAR_WALK_W,
     CAR_CABIN_H,
     MAX_WIDTH,
+    MAX_ROOM_DEGREE,
+    BRANCH_DIRS,
   };
 })();

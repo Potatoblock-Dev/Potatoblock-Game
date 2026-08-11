@@ -784,9 +784,15 @@
     }
   }
 
-  /** 脚底相对当前平台顶边的世界 Y → avatar 绘制锚点（与大厅一致：锚点在身中，脚在 +AVATAR_SIZE/2）。 */
-  function stageYFromPhysics(physicsY, entity = avatar, atX = local.x) {
-    const floorY = floorAt(atX) ?? Spec.FLOOR_Y;
+  /**
+   * 脚底相对当前平台顶边的世界 Y → avatar 绘制锚点（与大厅一致：锚点在身中，脚在 +AVATAR_SIZE/2）。
+   * @param {number} physicsY
+   * @param {object} [entity]
+   * @param {number} [atX]
+   * @param {{ preferY?: number, remember?: boolean } | null | undefined} [floorOpts]
+   */
+  function stageYFromPhysics(physicsY, entity = avatar, atX = local.x, floorOpts) {
+    const floorY = floorAt(atX, floorOpts) ?? Spec.FLOOR_Y;
     return (
       floorY
       + physicsY
@@ -805,9 +811,23 @@
     avatar.kneel = local.kneel;
   }
 
-  /** 远端实体的舞台 Y。 */
+  /**
+   * 远端实体的舞台 Y；只读查层并缓存 `_lpFloorY`，不改写本机 lastPlatformFloorY。
+   * @param {object} entity
+   * @param {number} physicsY
+   */
   function remoteStageY(entity, physicsY) {
-    return stageYFromPhysics(physicsY, entity, entity.x);
+    const prefer =
+      entity?._lpFloorY != null && Number.isFinite(Number(entity._lpFloorY))
+        ? Number(entity._lpFloorY)
+        : undefined;
+    const floorY =
+      floorAt(entity.x, { preferY: prefer, remember: false }) ?? Spec.FLOOR_Y;
+    if (Number.isFinite(floorY)) entity._lpFloorY = floorY;
+    return stageYFromPhysics(physicsY, entity, entity.x, {
+      preferY: floorY,
+      remember: false,
+    });
   }
 
   /** 预加载两节车厢贴图。 */
@@ -1075,11 +1095,16 @@
     camFocus.y += dy * ty;
   }
 
-  /** 查询某 x 处最高的可走平台顶边（世界 Y）。月台场景用月台/地牢地板。 */
-  function floorAt(x) {
+  /**
+   * 查询某 x 处可走平台顶边（世界 Y）。月台场景用月台/地牢地板。
+   * @param {number} x
+   * @param {{ preferY?: number, remember?: boolean } | null | undefined} [opts]
+   *        透传给 LpPlatform.platformFloorAt；队友查询须 `remember: false`。
+   */
+  function floorAt(x, opts) {
     if (isPlatformScene()) {
       if (window.LpPlatform.platformFloorAt) {
-        return window.LpPlatform.platformFloorAt(x);
+        return window.LpPlatform.platformFloorAt(x, opts);
       }
       return window.LpPlatform.getPlatformWalkBounds?.().floorY ?? Spec.FLOOR_Y;
     }
@@ -1499,6 +1524,8 @@
 
     const onPlatformScene = window.LpPlatform?.getScene?.() === 'platform';
     if (onPlatformScene) {
+      /* 月台/地牢也铺世界背景（站厅主题），避免场景外一片死黑 */
+      window.LpWorldBackground?.draw?.(ctx);
       window.LpPlatform.draw?.(ctx);
       window.LiminalSession?.drawRemotes?.(ctx, view, dpr);
       const heldItem = window.LpCombat?.getHeldVisibleItem?.()
@@ -1532,6 +1559,11 @@
         window.LpImpactFx?.draw?.(ctx);
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      window.LpStationTransit?.draw?.(ctx, {
+        width: canvas.width,
+        height: canvas.height,
+        dpr,
+      });
       window.LiminalInteract?.drawActivePrompt(ctx, local, view, dpr, formatInteractKey(), {
         showPrompt: !isCoarsePointer() && !isUiOpen(),
         inventoryKeyLabel: formatInventoryKey(),
@@ -1542,6 +1574,8 @@
 
     /* 世界背景（阈限深空）在轨/车之下；屏幕滤镜在世界绘完后、HUD 前 */
     window.LpWorldBackground?.draw?.(ctx);
+    /* 中景视差：慢于轨卷，夹在背景与轨道之间 */
+    window.LpParallaxLayers?.drawMidground?.(ctx);
     /* 轨道在车厢之下；炮管亦在贴图下，白球/车身挡住炮尾；火光/抛壳在贴图之上 */
     window.LpTrack?.draw?.(ctx);
     window.LpGuardTurret?.draw?.(ctx);
@@ -1580,9 +1614,16 @@
     window.LpHummingbirdDrone?.draw?.(ctx);
     window.LpCombat?.draw(ctx);
     window.LpImpactFx?.draw?.(ctx);
+    /* 前景视差：快于轨卷，掠过屏幕边缘，强化速度感 */
+    window.LpParallaxLayers?.drawForeground?.(ctx);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     window.LpViewFilters?.apply?.(ctx, {
+      width: canvas.width,
+      height: canvas.height,
+      dpr,
+    });
+    window.LpStationTransit?.draw?.(ctx, {
       width: canvas.width,
       height: canvas.height,
       dpr,
@@ -1655,6 +1696,8 @@
     window.LpTrainDrive?.tick(dt);
     window.LpPlatform?.tick?.(dt);
     window.LpWorldBackground?.tick?.(dt);
+    window.LpParallaxLayers?.tick?.(dt);
+    window.LpStationTransit?.tick?.(dt);
     window.LpTrack?.tick?.(dt);
     window.LpGroundLoot?.tickTrackScroll?.();
     window.LpCarriageBob?.tick?.(dt);

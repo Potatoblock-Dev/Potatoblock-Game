@@ -208,7 +208,7 @@
       markPosition(dungeon, localX, floorY);
     }
 
-    /* 队友：姿态已同步；在月台场景内按其 x 推算楼层 */
+    /* 队友：姿态已同步；只读推算楼层（remember:false，勿污染本机层记忆） */
     const remotes = window.LiminalSession?.remotes?.();
     if (remotes) {
       for (const remote of remotes.values()) {
@@ -216,8 +216,15 @@
         if (remote._lpScene !== 'platform') continue;
         const rx = Number(remote.x);
         if (!Number.isFinite(rx)) continue;
+        const prefer =
+          remote._lpFloorY != null && Number.isFinite(Number(remote._lpFloorY))
+            ? Number(remote._lpFloorY)
+            : undefined;
         const floorY =
-          window.LpPlatform?.platformFloorAt?.(rx) ??
+          window.LpPlatform?.platformFloorAt?.(rx, {
+            preferY: prefer,
+            remember: false,
+          }) ??
           dungeon.spawnFloorY ??
           dungeon.bounds?.floorY;
         markPosition(dungeon, rx, floorY);

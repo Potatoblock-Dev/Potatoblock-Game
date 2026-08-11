@@ -98,6 +98,34 @@
   }
 
   /**
+   * 本帧随轨平移（与 applyTrackScroll / 尘土 / 白标同相）。
+   * 轨面怪、地面掉落、未来轨面元素统一走此入口。
+   * @param {{ x: number }} entity
+   */
+  function scrollWithTrack(entity) {
+    applyTrackScroll(entity);
+  }
+
+  /**
+   * 把实体钉到轨面坐标（track = world + scrollX），供静止或慢变轨面物复用。
+   * 之后每帧用 syncWorldFromTrackAnchor，或继续用 scrollWithTrack 等价推进。
+   * @param {{ x: number, trackX?: number }} entity
+   */
+  function latchTrackAnchor(entity) {
+    if (!entity) return;
+    entity.trackX = entity.x + scrollX;
+  }
+
+  /**
+   * 由轨面锚点写回世界 X：world = track − scrollX（与月台白标同式）。
+   * @param {{ x: number, trackX?: number }} entity
+   */
+  function syncWorldFromTrackAnchor(entity) {
+    if (!entity || entity.trackX == null) return;
+    entity.x = entity.trackX - scrollX;
+  }
+
+  /**
    * 进站上升沿把月台白标钉到轨面坐标；离站保留锚点直至滚出视野。
    * track = world + scrollX，与轨枕相位 / applyTrackScroll 同相，避免贴编组不动。
    */
@@ -317,6 +345,9 @@
     tick,
     draw,
     applyTrackScroll,
+    scrollWithTrack,
+    latchTrackAnchor,
+    syncWorldFromTrackAnchor,
     /** 调试：当前轨枕卷动相位（世界像素）。 */
     getScrollX() {
       return scrollX;
